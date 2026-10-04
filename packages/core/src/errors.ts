@@ -10,6 +10,10 @@ export const ExitCode = {
   runFailed: 5,
   notFound: 6,
   /** Usage limit reached; retry after reset (EX_TEMPFAIL). */
+  /** A kill switch or paused Bot blocked the action. */
+  blocked: 7,
+  /** The Run is parked waiting for your approval (`orbit approvals`). */
+  waitingApproval: 10,
   rateLimited: 75,
   cancelled: 130,
 } as const;
@@ -23,6 +27,7 @@ export type OrbitErrorCode =
   | 'invalid_input'
   | 'not_found'
   | 'engine_error'
+  | 'blocked'
   | 'internal';
 
 const EXIT_FOR_CODE: Record<OrbitErrorCode, ExitCode> = {
@@ -33,6 +38,7 @@ const EXIT_FOR_CODE: Record<OrbitErrorCode, ExitCode> = {
   invalid_input: ExitCode.usage,
   not_found: ExitCode.notFound,
   engine_error: ExitCode.runFailed,
+  blocked: ExitCode.blocked,
   internal: ExitCode.error,
 };
 

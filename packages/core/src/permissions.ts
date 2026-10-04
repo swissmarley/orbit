@@ -7,9 +7,40 @@ export interface ToolPermissionRequest {
   parentToolUseId: string | null;
 }
 
+import type { Tier } from './enums';
+
+/** Where a decision came from; recorded on the permission.decision event. */
+export interface DecisionMeta {
+  tier?: Tier | null;
+  ruleId?: string | null;
+  approvalId?: string | null;
+}
+
 export type ToolPermissionDecision =
-  | { behavior: 'allow'; reason: string; updatedInput?: Record<string, unknown> }
-  | { behavior: 'deny'; reason: string; interrupt?: boolean };
+  | ({ behavior: 'allow'; reason: string; updatedInput?: Record<string, unknown> } & DecisionMeta)
+  | ({
+      behavior: 'deny';
+      reason: string;
+      /** Stop the engine after this denial (Run parks, or a budget/kill switch fired). */
+      interrupt?: boolean;
+    } & DecisionMeta);
+
+/** A tool finished; Orbit may rewrite its output before the model sees it. */
+export interface ToolResultRequest {
+  toolName: string;
+  toolUseId: string | null;
+  input: Record<string, unknown>;
+  response: unknown;
+}
+
+export interface ToolResultDecision {
+  /** Replacement output (same shape as `response`), e.g. with secrets redacted. */
+  updatedOutput?: unknown;
+  /** Extra context for the model, e.g. "this content is untrusted". */
+  additionalContext?: string;
+}
+
+export type ToolResultHandler = (request: ToolResultRequest) => Promise<ToolResultDecision>;
 
 /**
  * Decides every tool call. Both drivers route PreToolUse through this

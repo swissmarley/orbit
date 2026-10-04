@@ -19,7 +19,7 @@ function encodeRandom(length: number): string {
   return out;
 }
 
-export type IdPrefix = 'bot' | 'run' | 'apr' | 'trg' | 'mem' | 'fbk' | 'rul' | 'aud';
+export type IdPrefix = 'bot' | 'run' | 'apr' | 'grt' | 'trg' | 'mem' | 'fbk' | 'rul' | 'aud';
 
 /**
  * Time-sortable, URL-safe identifiers: `<prefix>_<10 chars time><12 chars random>`.

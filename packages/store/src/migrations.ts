@@ -64,6 +64,95 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX runs_status_idx ON runs (status);
     `,
   },
+  {
+    id: 2,
+    name: 'policy-approvals-audit-controls-secrets',
+    sql: `
+      ALTER TABLE bots ADD COLUMN paused_at TEXT;
+
+      -- Approval cards. status: pending | approved | denied | expired | cancelled
+      CREATE TABLE approvals (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        bot_id TEXT NOT NULL,
+        tool_use_id TEXT,
+        tool_name TEXT NOT NULL,
+        input TEXT NOT NULL,
+        input_hash TEXT NOT NULL,
+        tier TEXT NOT NULL,
+        card TEXT NOT NULL,
+        status TEXT NOT NULL,
+        decision TEXT,
+        created_at TEXT NOT NULL,
+        decided_at TEXT,
+        expires_at TEXT
+      );
+      CREATE INDEX approvals_status_idx ON approvals (status, created_at);
+      CREATE INDEX approvals_run_idx ON approvals (run_id);
+
+      -- One-shot permissions created by an approval, bound to (bot, tool, input hash).
+      CREATE TABLE grants (
+        id TEXT PRIMARY KEY,
+        approval_id TEXT NOT NULL,
+        bot_id TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        tool_name TEXT NOT NULL,
+        input_hash TEXT NOT NULL,
+        updated_input TEXT,
+        created_at TEXT NOT NULL,
+        used_at TEXT
+      );
+      CREATE INDEX grants_lookup_idx ON grants (bot_id, tool_name, input_hash);
+
+      -- Standing, user-authored rules ("always allow" / "never allow"), scoped and expiring.
+      CREATE TABLE rules (
+        id TEXT PRIMARY KEY,
+        bot_id TEXT,
+        tool_pattern TEXT NOT NULL,
+        input_pattern TEXT,
+        effect TEXT NOT NULL,
+        reason TEXT,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT,
+        revoked_at TEXT
+      );
+
+      -- Tamper-evident audit log: each record hashes its predecessor.
+      CREATE TABLE audit (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        ts TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        action TEXT NOT NULL,
+        subject TEXT,
+        data TEXT NOT NULL,
+        prev_hash TEXT NOT NULL,
+        hash TEXT NOT NULL
+      );
+      CREATE TRIGGER audit_no_update BEFORE UPDATE ON audit
+        BEGIN SELECT RAISE(ABORT, 'audit records are append-only'); END;
+      CREATE TRIGGER audit_no_delete BEFORE DELETE ON audit
+        BEGIN SELECT RAISE(ABORT, 'audit records are append-only'); END;
+
+      -- Kill switches and other cross-process controls (global_kill, stop_run:<id>).
+      CREATE TABLE controls (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      -- Encrypted secrets vault (AES-256-GCM); values never stored in plaintext.
+      CREATE TABLE secrets (
+        name TEXT PRIMARY KEY,
+        ciphertext TEXT NOT NULL,
+        iv TEXT NOT NULL,
+        tag TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `,
+  },
 ];
 
 export function migrate(db: Database.Database): number[] {

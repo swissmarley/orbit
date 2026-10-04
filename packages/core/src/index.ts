@@ -8,6 +8,7 @@ export * from './config';
 export * from './enums';
 export * from './errors';
 export * from './events';
+export * from './hash';
 export * from './ids';
 export * from './permissions';
 export * from './projection';

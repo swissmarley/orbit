@@ -28,6 +28,14 @@ export interface RunState {
   usageLimit: { resetsAt: string | null; limitType: string | null; message: string } | null;
   counts: { toolCalls: number; denied: number; subagents: number; messages: number };
   needsAction: string | null;
+  /** Approvals requested by this Run and not yet decided. */
+  pendingApprovals: string[];
+  /** Untrusted content (web, email, external tools) entered the Run. */
+  taintSources: string[];
+  /** Live token usage of the current segment (from usage.turn). */
+  liveUsage: { inputTokens: number; outputTokens: number; turns: number } | null;
+  budgetExceeded: string | null;
+  killedBy: string | null;
 }
 
 export function initialRunState(first: RunEvent): RunState {
@@ -53,12 +61,24 @@ export function initialRunState(first: RunEvent): RunState {
     usageLimit: null,
     counts: { toolCalls: 0, denied: 0, subagents: 0, messages: 0 },
     needsAction: null,
+    pendingApprovals: [],
+    taintSources: [],
+    liveUsage: null,
+    budgetExceeded: null,
+    killedBy: null,
   };
 }
 
 /** Pure reducer: (state, event) → next state. Never mutates its inputs. */
 export function foldRun(prev: RunState | undefined, e: RunEvent): RunState {
-  const s: RunState = prev ? { ...prev, counts: { ...prev.counts } } : initialRunState(e);
+  const s: RunState = prev
+    ? {
+        ...prev,
+        counts: { ...prev.counts },
+        pendingApprovals: [...prev.pendingApprovals],
+        taintSources: [...prev.taintSources],
+      }
+    : initialRunState(e);
   s.lastSeq = e.seq;
   s.lastEventId = e.id;
 
@@ -78,6 +98,7 @@ export function foldRun(prev: RunState | undefined, e: RunEvent): RunState {
       s.endedAt = null;
       s.usageLimit = null;
       s.error = null;
+      s.liveUsage = null;
       break;
     case 'session.init':
       s.sessionId = e.data.sessionId;
@@ -101,6 +122,36 @@ export function foldRun(prev: RunState | undefined, e: RunEvent): RunState {
       break;
     case 'usage':
       s.usage = e.data;
+      break;
+    case 'usage.turn':
+      s.liveUsage = e.data;
+      break;
+    case 'approval.requested':
+      if (!s.pendingApprovals.includes(e.data.approvalId))
+        s.pendingApprovals.push(e.data.approvalId);
+      break;
+    case 'approval.decided':
+      s.pendingApprovals = s.pendingApprovals.filter((id) => id !== e.data.approvalId);
+      break;
+    case 'run.tainted':
+      if (!s.taintSources.includes(e.data.source)) s.taintSources.push(e.data.source);
+      break;
+    case 'budget.exceeded':
+      s.budgetExceeded = e.data.budget;
+      break;
+    case 'run.killed':
+      s.killedBy = e.data.scope;
+      break;
+    case 'run.parked':
+      // Waiting on the human: not ended, not failed.
+      s.status = 'waiting_approval';
+      s.sessionId = e.data.sessionId ?? s.sessionId;
+      break;
+    case 'run.resumed':
+      s.status = 'running';
+      s.sessionId = e.data.sessionId ?? s.sessionId;
+      s.usageLimit = null;
+      s.needsAction = null;
       break;
     case 'run.completed':
       s.status = 'completed';

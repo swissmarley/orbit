@@ -39,3 +39,11 @@ export const RunStatus = z.enum([
 export type RunStatus = z.infer<typeof RunStatus>;
 
 export const TERMINAL_RUN_STATUSES: readonly RunStatus[] = ['completed', 'failed', 'cancelled'];
+
+/**
+ * Risk tiers (default-deny):
+ * READ auto · WRITE_LOCAL auto inside the sandbox · EXTERNAL needs approval ·
+ * FINANCIAL is always handed back to the human (the Bot may only prepare it).
+ */
+export const Tier = z.enum(['READ', 'WRITE_LOCAL', 'EXTERNAL', 'FINANCIAL']);
+export type Tier = z.infer<typeof Tier>;

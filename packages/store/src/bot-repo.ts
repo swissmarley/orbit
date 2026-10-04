@@ -12,6 +12,7 @@ function toBot(row: BotRow): Bot {
     spec: BotSpec.parse(row.spec),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    pausedAt: row.pausedAt ?? null,
   };
 }
 
@@ -37,7 +38,7 @@ export class BotRepo {
         .run();
       this.db.orm.insert(botVersions).values({ botId: id, version: 1, spec, createdAt: ts }).run();
     })();
-    return { id, version: 1, spec, createdAt: ts, updatedAt: ts };
+    return { id, version: 1, spec, createdAt: ts, updatedAt: ts, pausedAt: null };
   }
 
   update(idOrSlug: string, input: BotSpecInput): Bot {
@@ -62,6 +63,14 @@ export class BotRepo {
         .run();
     })();
     return { ...current, version, spec, updatedAt: ts };
+  }
+
+  /** Bot kill switch. Returns the updated Bot. */
+  setPaused(idOrSlug: string, paused: boolean): Bot {
+    const bot = this.get(idOrSlug);
+    const pausedAt = paused ? (bot.pausedAt ?? this.now().toISOString()) : null;
+    this.db.orm.update(bots).set({ pausedAt }).where(eq(bots.id, bot.id)).run();
+    return { ...bot, pausedAt };
   }
 
   find(idOrSlug: string): Bot | undefined {

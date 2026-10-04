@@ -20,6 +20,7 @@ export const bots = sqliteTable(
     spec: text('spec', { mode: 'json' }).notNull(),
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull(),
+    pausedAt: text('paused_at'),
   },
   (t) => [uniqueIndex('bots_slug_idx').on(t.slug)],
 );
@@ -65,3 +66,72 @@ export const runs = sqliteTable(
   },
   (t) => [index('runs_bot_idx').on(t.botId, t.createdAt), index('runs_status_idx').on(t.status)],
 );
+
+export const approvals = sqliteTable('approvals', {
+  id: text('id').primaryKey(),
+  runId: text('run_id').notNull(),
+  botId: text('bot_id').notNull(),
+  toolUseId: text('tool_use_id'),
+  toolName: text('tool_name').notNull(),
+  input: text('input', { mode: 'json' }).notNull(),
+  inputHash: text('input_hash').notNull(),
+  tier: text('tier').notNull(),
+  card: text('card', { mode: 'json' }).notNull(),
+  status: text('status').notNull(),
+  decision: text('decision', { mode: 'json' }),
+  createdAt: text('created_at').notNull(),
+  decidedAt: text('decided_at'),
+  expiresAt: text('expires_at'),
+});
+
+export const grants = sqliteTable('grants', {
+  id: text('id').primaryKey(),
+  approvalId: text('approval_id').notNull(),
+  botId: text('bot_id').notNull(),
+  runId: text('run_id').notNull(),
+  toolName: text('tool_name').notNull(),
+  inputHash: text('input_hash').notNull(),
+  updatedInput: text('updated_input', { mode: 'json' }),
+  createdAt: text('created_at').notNull(),
+  usedAt: text('used_at'),
+});
+
+export const rules = sqliteTable('rules', {
+  id: text('id').primaryKey(),
+  botId: text('bot_id'),
+  toolPattern: text('tool_pattern').notNull(),
+  inputPattern: text('input_pattern'),
+  effect: text('effect').notNull(),
+  reason: text('reason'),
+  createdBy: text('created_by').notNull(),
+  createdAt: text('created_at').notNull(),
+  expiresAt: text('expires_at'),
+  revokedAt: text('revoked_at'),
+});
+
+export const audit = sqliteTable('audit', {
+  seq: integer('seq').primaryKey({ autoIncrement: true }),
+  id: text('id').notNull(),
+  ts: text('ts').notNull(),
+  actor: text('actor').notNull(),
+  action: text('action').notNull(),
+  subject: text('subject'),
+  data: text('data').notNull(),
+  prevHash: text('prev_hash').notNull(),
+  hash: text('hash').notNull(),
+});
+
+export const controls = sqliteTable('controls', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const secrets = sqliteTable('secrets', {
+  name: text('name').primaryKey(),
+  ciphertext: text('ciphertext').notNull(),
+  iv: text('iv').notNull(),
+  tag: text('tag').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});

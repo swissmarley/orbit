@@ -7,7 +7,7 @@ import {
   foldRun,
   replayRun,
 } from '@orbit/core';
-import { and, asc, desc, eq, gt } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, gte } from 'drizzle-orm';
 import type { OrbitDb } from './db';
 import { events, runs } from './schema';
 
@@ -140,6 +140,16 @@ export class EventStore {
       .limit(opts.limit ?? 100)
       .all();
     return rows.map((r) => r.state as RunState);
+  }
+
+  /** Runs of a Bot created at or after `sinceIso` (daily budgets). */
+  runsSince(botId: string, sinceIso: string): RunState[] {
+    return this.db.orm
+      .select()
+      .from(runs)
+      .where(and(eq(runs.botId, botId), gte(runs.createdAt, sinceIso)))
+      .all()
+      .map((r) => r.state as RunState);
   }
 
   /** Re-derive a run's projection from the log (replay). */

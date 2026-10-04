@@ -41,7 +41,16 @@ const happy: RunEvent[] = [
   }),
   envelope(5, {
     type: 'permission.decision',
-    data: { toolUseId: 't1', toolName: 'Write', input: {}, behavior: 'deny', reason: 'no' },
+    data: {
+      toolUseId: 't1',
+      toolName: 'Write',
+      input: {},
+      behavior: 'deny',
+      reason: 'no',
+      tier: 'WRITE_LOCAL',
+      ruleId: null,
+      approvalId: null,
+    },
   }),
   envelope(6, {
     type: 'message.assistant',

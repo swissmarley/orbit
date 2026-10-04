@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { AuthMethod, DriverKind } from './enums';
+import { AuthMethod, DriverKind, Tier } from './enums';
 
 /**
  * The RunEvent model. Every driver message, policy decision and lifecycle
@@ -84,6 +84,46 @@ export const RunEventBody = z.discriminatedUnion('type', [
     input: z.unknown(),
     behavior: z.enum(['allow', 'deny']),
     reason: z.string(),
+    /** Risk tier the policy assigned; null when decided outside the policy engine. */
+    tier: Tier.nullable().default(null),
+    /** Standing rule or one-shot grant that produced the decision. */
+    ruleId: nullableString.default(null),
+    approvalId: nullableString.default(null),
+  }),
+  ev('approval.requested', {
+    approvalId: z.string(),
+    toolUseId: nullableString,
+    toolName: z.string(),
+    tier: Tier,
+    summary: z.string(),
+  }),
+  ev('approval.decided', {
+    approvalId: z.string(),
+    decision: z.enum(['approved', 'denied', 'expired', 'cancelled']),
+    by: z.string(),
+    edited: z.boolean(),
+    reason: nullableString,
+    ruleId: nullableString,
+  }),
+  ev('run.tainted', { source: z.string(), toolUseId: nullableString }),
+  ev('budget.exceeded', {
+    budget: z.enum(['toolCalls', 'wallClock', 'tokens', 'costPerRun', 'costPerDay', 'runsPerDay']),
+    limit: z.number(),
+    actual: z.number(),
+  }),
+  ev('usage.turn', {
+    /** Cumulative for the current driver segment. */
+    inputTokens: z.int().nonnegative(),
+    outputTokens: z.int().nonnegative(),
+    turns: z.int().nonnegative(),
+  }),
+  /** Run stopped by a kill switch or budget before/while running (precedes run.cancelled/failed). */
+  ev('run.killed', { scope: z.enum(['run', 'bot', 'global']), by: z.string() }),
+  /** Driver segment ended while approvals are pending; the Run resumes after decisions. */
+  ev('run.parked', { approvalIds: z.array(z.string()), sessionId: nullableString }),
+  ev('run.resumed', {
+    reason: z.enum(['approval', 'usage_limit', 'manual']),
+    sessionId: nullableString,
   }),
   ev('subagent.started', {
     toolUseId: z.string(),
@@ -138,11 +178,13 @@ export type RunEventBody = z.infer<typeof RunEventBody>;
 export type RunEventType = RunEventBody['type'];
 export type RunEventOf<T extends RunEventType> = Extract<RunEventBody, { type: T }>;
 
+/** Events that end a driver segment (the orchestrator may turn one into run.parked). */
 export const TERMINAL_EVENT_TYPES = [
   'run.completed',
   'run.failed',
   'run.cancelled',
   'run.rate_limited',
+  'run.parked',
 ] as const satisfies readonly RunEventType[];
 export type TerminalEventType = (typeof TERMINAL_EVENT_TYPES)[number];
 
@@ -166,7 +208,16 @@ export type RunEventEnvelope = z.infer<typeof RunEventEnvelope>;
 export const RunEvent = z.intersection(RunEventEnvelope, RunEventBody);
 export type RunEvent = RunEventEnvelope & RunEventBody;
 
-/** Helper for building event bodies with full type inference. */
-export function event<T extends RunEventType>(type: T, data: RunEventOf<T>['data']): RunEventOf<T> {
-  return { type, data } as RunEventOf<T>;
+export type RunEventBodyInput = z.input<typeof RunEventBody>;
+export type RunEventInputOf<T extends RunEventType> = Extract<RunEventBodyInput, { type: T }>;
+
+/**
+ * Build a validated event body (defaults applied). Throws on invalid data, so
+ * malformed events fail where they are created rather than at persistence.
+ */
+export function event<T extends RunEventType>(
+  type: T,
+  data: RunEventInputOf<T>['data'],
+): RunEventOf<T> {
+  return RunEventBody.parse({ type, data }) as RunEventOf<T>;
 }
