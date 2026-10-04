@@ -126,6 +126,7 @@ describe('ApprovalQueue', () => {
           toolName: SEND,
           tier: 'EXTERNAL',
           what: 'send email → ada@example.com',
+          inputHash: a.inputHash,
         },
       });
     });
@@ -229,6 +230,8 @@ describe('ApprovalQueue', () => {
           toolName: SEND,
           decision: status,
           edited: false,
+          inputHash: a.inputHash,
+          editedInputHash: null,
           reason,
           ruleId: null,
         },

@@ -25,13 +25,15 @@ const SHELL_TOOLS = new Set(['Bash', 'BashOutput', 'KillShell', 'KillBash']);
 const UNTRUSTED_BUILTINS = new Set(['WebFetch', 'WebSearch']);
 
 const DRAFT_VERBS = ['draft', 'drafts', 'prepare', 'preview', 'compose', 'suggest'];
-/** Verbs that move money, wherever they appear in the name. */
+/** Verbs that move money or commit to spending it, wherever they appear in the name. */
 const FINANCIAL_VERBS = [
   'pay',
   'purchase',
   'buy',
+  'sell',
   'transfer',
   'charge',
+  'capture',
   'refund',
   'withdraw',
   'trade',
@@ -39,9 +41,41 @@ const FINANCIAL_VERBS = [
   'wire',
   'payout',
   'subscribe',
+  'donate',
+  'tip',
+  'bid',
+  'book',
 ];
-/** Nouns that make a send/create/place action financial (send_payment, create_order). */
-const FINANCIAL_NOUNS = ['payment', 'payments', 'order', 'orders', 'funds', 'money', 'remittance'];
+/** Nouns that make a send/create/approve action financial (send_payment, approve_transaction). */
+const FINANCIAL_NOUNS = [
+  'payment',
+  'payments',
+  'order',
+  'orders',
+  'funds',
+  'money',
+  'remittance',
+  'transaction',
+  'transactions',
+  'invoice',
+  'invoices',
+  'stock',
+  'stocks',
+  'shares',
+  'crypto',
+];
+/** Verbs that commit a financial noun (approve_transaction, finalize_invoice, create_order). */
+const COMMIT_VERBS = [
+  'create',
+  'place',
+  'make',
+  'submit',
+  'execute',
+  'approve',
+  'finalize',
+  'confirm',
+  'issue',
+];
 /** Verbs whose effect leaves the sandbox, wherever they appear (compose_and_send_email). */
 const SEND_VERBS = [
   'send',
@@ -62,7 +96,64 @@ const SEND_VERBS = [
 ];
 /** Words that are verbs only when they lead the name (post_message vs get_post). */
 const LEADING_SEND_VERBS = ['post', 'email', 'message', 'dm', 'reply', 'respond', 'comment'];
-const COMMIT_VERBS = ['create', 'place', 'make', 'submit', 'execute'];
+/** Unambiguous mutating verbs: any of them disqualifies READ (and drafting, except create/save/update/edit). */
+const MUTATING_VERBS = [
+  ...SEND_VERBS,
+  'update',
+  'create',
+  'set',
+  'add',
+  'insert',
+  'modify',
+  'edit',
+  'upsert',
+  'write',
+  'replace',
+  'apply',
+  'execute',
+  'exec',
+  'run',
+  'call',
+  'invoke',
+  'schedule',
+  'approve',
+  'reject',
+  'cancel',
+  'close',
+  'archive',
+  'move',
+  'rename',
+  'assign',
+  'enable',
+  'disable',
+  'start',
+  'stop',
+  'kill',
+  'restart',
+  'install',
+  'grant',
+  'revoke',
+  'save',
+  'put',
+  'patch',
+  'sync',
+  'import',
+  'commit',
+  'push',
+  'accept',
+  'decline',
+  'sign',
+  'place',
+  'make',
+  'unsubscribe',
+  'mute',
+  'block',
+  'ban',
+];
+const DRAFT_HELPER_VERBS = ['create', 'save', 'update', 'edit'];
+/** Joining words mean a compound action; compound names are never READ or WRITE_LOCAL. */
+const CONJUNCTIONS = ['and', 'or', 'then', 'plus', 'also'];
+/** Leading verbs that only read ("query" is not one: it often runs arbitrary statements). */
 const READ_VERBS = [
   'get',
   'list',
@@ -70,7 +161,6 @@ const READ_VERBS = [
   'read',
   'fetch',
   'find',
-  'query',
   'describe',
   'view',
   'lookup',
@@ -134,9 +224,10 @@ export function classifyTool(
     };
   }
   if (SHELL_TOOLS.has(name)) {
+    // Shell output can contain anything fetched from anywhere: allowed calls taint.
     return {
       tier: opts.shellContained ? 'WRITE_LOCAL' : 'EXTERNAL',
-      untrustedSource: null,
+      untrustedSource: name,
       basis: 'shell',
     };
   }
@@ -144,24 +235,35 @@ export function classifyTool(
   if (!mcp) return null;
   const toolWords = words(mcp[2] ?? '');
   const has = (verbs: readonly string[]) => toolWords.some((w) => verbs.includes(w));
-  // Reads and drafts bring third-party content into the Run; the result of an
-  // action (EXTERNAL/FINANCIAL) is just an acknowledgement and does not taint.
+  // Every MCP tool's output comes from a third-party system: allowed calls taint the Run.
   const base = { untrustedSource: name };
-  const ack = { untrustedSource: null };
   const first = toolWords[0] ?? '';
+  const compound = has(CONJUNCTIONS);
   const sends = has(SEND_VERBS) || LEADING_SEND_VERBS.includes(first);
   const financialNoun = has(FINANCIAL_NOUNS);
-  // Order matters (any word can carry the riskiest meaning):
-  //   prepare_and_pay_invoice, transfer_funds        → FINANCIAL (money-moving verb anywhere)
-  //   get_order, read_email, get_post               → READ (leading read verb, nothing sent)
-  //   send_payment, create_order                     → FINANCIAL (sending/creating a financial thing)
-  //   send_draft, compose_and_send_email, post_message → EXTERNAL
-  //   create_draft, prepare_payment, draft_reply     → WRITE_LOCAL (only prepares)
-  if (has(FINANCIAL_VERBS)) return { ...ack, tier: 'FINANCIAL', basis: 'heuristic' };
-  if (READ_VERBS.includes(first) && !sends) return { ...base, tier: 'READ', basis: 'heuristic' };
-  if (sends) return { ...ack, tier: financialNoun ? 'FINANCIAL' : 'EXTERNAL', basis: 'heuristic' };
-  if (COMMIT_VERBS.includes(first) && financialNoun)
-    return { ...ack, tier: 'FINANCIAL', basis: 'heuristic' };
-  if (has(DRAFT_VERBS)) return { ...base, tier: 'WRITE_LOCAL', basis: 'heuristic' };
-  return { ...ack, tier: 'EXTERNAL', basis: 'default' };
+  const mutatingWords = toolWords.filter((w) => MUTATING_VERBS.includes(w));
+  // Ambiguity always resolves to the riskier tier (ADR-009):
+  //   prepare_and_pay_invoice, lookup_then_book_flight  → FINANCIAL (money verb anywhere)
+  //   approve_transaction, create_order, send_payment   → FINANCIAL (commit/send + financial noun)
+  //   get_post, read_email, list_orders                 → READ (leading read verb, nothing else)
+  //   get_or_create_issue, search_and_replace           → EXTERNAL (compound / mutating)
+  //   create_draft, prepare_payment, draft_reply        → WRITE_LOCAL (only prepares)
+  //   schedule_draft, compose_and_send_email, query     → EXTERNAL
+  if (has(FINANCIAL_VERBS)) return { ...base, tier: 'FINANCIAL', basis: 'heuristic' };
+  if (financialNoun && (sends || COMMIT_VERBS.includes(first) || has(COMMIT_VERBS))) {
+    return { ...base, tier: 'FINANCIAL', basis: 'heuristic' };
+  }
+  if (READ_VERBS.includes(first) && !compound && !sends && mutatingWords.length === 0) {
+    return { ...base, tier: 'READ', basis: 'heuristic' };
+  }
+  if (sends) return { ...base, tier: 'EXTERNAL', basis: 'heuristic' };
+  const drafts = has(DRAFT_VERBS);
+  if (drafts && !compound && mutatingWords.every((w) => DRAFT_HELPER_VERBS.includes(w))) {
+    return { ...base, tier: 'WRITE_LOCAL', basis: 'heuristic' };
+  }
+  return {
+    ...base,
+    tier: 'EXTERNAL',
+    basis: mutatingWords.length || compound ? 'heuristic' : 'default',
+  };
 }

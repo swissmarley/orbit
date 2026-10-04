@@ -36,6 +36,8 @@ export interface RunState {
   liveUsage: { inputTokens: number; outputTokens: number; turns: number } | null;
   budgetExceeded: string | null;
   killedBy: string | null;
+  /** Totals across every segment of the Run (budgets are per Run, not per segment). */
+  totals: { tokens: number; turns: number; costUsd: number; activeMs: number };
 }
 
 export function initialRunState(first: RunEvent): RunState {
@@ -66,6 +68,7 @@ export function initialRunState(first: RunEvent): RunState {
     liveUsage: null,
     budgetExceeded: null,
     killedBy: null,
+    totals: { tokens: 0, turns: 0, costUsd: 0, activeMs: 0 },
   };
 }
 
@@ -76,6 +79,7 @@ export function foldRun(prev: RunState | undefined, e: RunEvent): RunState {
         ...prev,
         counts: { ...prev.counts },
         pendingApprovals: [...prev.pendingApprovals],
+        totals: { ...prev.totals },
         taintSources: [...prev.taintSources],
       }
     : initialRunState(e);
@@ -122,6 +126,14 @@ export function foldRun(prev: RunState | undefined, e: RunEvent): RunState {
       break;
     case 'usage':
       s.usage = e.data;
+      s.totals.tokens +=
+        e.data.inputTokens +
+        e.data.outputTokens +
+        e.data.cacheReadTokens +
+        e.data.cacheCreationTokens;
+      s.totals.turns += e.data.numTurns;
+      s.totals.costUsd += e.data.costUsd ?? 0;
+      s.totals.activeMs += e.data.durationMs;
       break;
     case 'usage.turn':
       s.liveUsage = e.data;

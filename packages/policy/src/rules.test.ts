@@ -1,7 +1,7 @@
 import { OrbitError } from '@orbit/core';
 import { type OrbitDb, openDatabase } from '@orbit/store';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { type Rule, RuleStore, ruleMatches } from './rules';
+import { type Rule, RuleStore, isNarrowAllowPattern, ruleMatches } from './rules';
 
 /** Mutable injected clock. */
 function clock(start: string) {
@@ -51,14 +51,14 @@ describe('ruleMatches', () => {
     ],
     [
       'glob over a server',
-      { toolPattern: 'mcp__github__*' },
-      'mcp__github__create_issue',
+      { toolPattern: 'mcp__github__get*' },
+      'mcp__github__get_issue',
       {},
       true,
     ],
     [
       'glob over a server does not leak to another',
-      { toolPattern: 'mcp__github__*' },
+      { toolPattern: 'mcp__github__get*' },
       'mcp__gitlab__create_issue',
       {},
       false,
@@ -206,7 +206,7 @@ describe('RuleStore', () => {
       ],
     ])('refuses %s and persists nothing', (_scenario, args) => {
       expect(() => store.create(...args)).toThrow(OrbitError);
-      expect(() => store.create(...args)).toThrow(/never be allowed|specific tools/);
+      expect(() => store.create(...args)).toThrow(/never be allowed|too broad/);
       expect(store.list({ includeInactive: true })).toEqual([]);
     });
 
@@ -225,7 +225,7 @@ describe('RuleStore', () => {
       [
         'allow rule for a server glob (positive control: specific enough)',
         [
-          { botId: null, toolPattern: 'mcp__github__*', effect: 'allow', createdBy: 'u' },
+          { botId: null, toolPattern: 'mcp__github__get*', effect: 'allow', createdBy: 'u' },
           'EXTERNAL',
         ],
       ],
@@ -324,7 +324,7 @@ describe('RuleStore', () => {
     it('returns only matching active rules in scope, deny rules first', () => {
       const allowNewest = store.create({
         botId: 'bot_1',
-        toolPattern: 'mcp__gmail__*',
+        toolPattern: 'mcp__gmail__send*',
         effect: 'allow',
         createdBy: 'u',
       });
@@ -353,21 +353,21 @@ describe('RuleStore', () => {
       // Not matching: other bot, other tool, revoked, expired.
       store.create({
         botId: 'bot_2',
-        toolPattern: 'mcp__gmail__*',
+        toolPattern: 'mcp__gmail__send*',
         effect: 'deny',
         createdBy: 'u',
       });
       store.create({ botId: null, toolPattern: 'mcp__slack__*', effect: 'deny', createdBy: 'u' });
       const revoked = store.create({
         botId: null,
-        toolPattern: 'mcp__gmail__*',
+        toolPattern: 'mcp__gmail__send*',
         effect: 'deny',
         createdBy: 'u',
       });
       store.revoke(revoked.id);
       store.create({
         botId: null,
-        toolPattern: 'mcp__gmail__*',
+        toolPattern: 'mcp__gmail__send*',
         effect: 'deny',
         createdBy: 'u',
         expiresAt: '2026-10-04T12:00:00.000Z',
@@ -385,5 +385,21 @@ describe('RuleStore', () => {
 
       expect(store.matching('bot_3', 'mcp__gmail__get_message', {})).toEqual([]);
     });
+  });
+});
+
+describe('isNarrowAllowPattern (M2 review M7)', () => {
+  it.each([
+    ['mcp__gmail__send_email', true],
+    ['mcp__github__get*', true],
+    ['Bash', true],
+    ['*', false],
+    ['mcp__*', false],
+    ['mcp__gmail__*', false],
+    ['*_*', false],
+    ['?*', false],
+    ['mcp__*__send_email', false],
+  ])('%s → %s', (pattern, ok) => {
+    expect(isNarrowAllowPattern(pattern)).toBe(ok);
   });
 });

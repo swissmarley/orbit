@@ -45,6 +45,16 @@ function toRule(r: Row): Rule {
   };
 }
 
+/**
+ * Allow rules may only name an exact tool or `mcp__<server>__<prefix>*` with a
+ * literal server and a non-empty literal prefix. Wildcards anywhere else
+ * (`*`, `mcp__*`, `*_*`, `?*`) would silently cover tools nobody reviewed.
+ */
+export function isNarrowAllowPattern(pattern: string): boolean {
+  if (/^[A-Za-z][A-Za-z0-9_]*$/.test(pattern)) return true;
+  return /^mcp__[A-Za-z0-9-]+(?:_[A-Za-z0-9-]+)*__[A-Za-z0-9][A-Za-z0-9_]*\*?$/.test(pattern);
+}
+
 export function ruleMatches(rule: Rule, toolName: string, input: Record<string, unknown>): boolean {
   if (!globToRegExp(rule.toolPattern).test(toolName)) return false;
   if (!rule.inputMatch) return true;
@@ -78,8 +88,11 @@ export class RuleStore {
     if (input.expiresAt && Number.isNaN(Date.parse(input.expiresAt))) {
       throw new OrbitError('invalid_input', `Invalid expiry: ${input.expiresAt}`);
     }
-    if (input.effect === 'allow' && /^\*+$/.test(input.toolPattern)) {
-      throw new OrbitError('invalid_input', 'An allow rule must name specific tools, not "*"');
+    if (input.effect === 'allow' && !isNarrowAllowPattern(input.toolPattern)) {
+      throw new OrbitError(
+        'invalid_input',
+        `Allow rules must name one tool, or one server's tools by prefix (mcp__<server>__<prefix>*); "${input.toolPattern}" is too broad`,
+      );
     }
     const row = {
       id: newId('rul'),

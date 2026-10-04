@@ -15,7 +15,8 @@ export interface OrbitDb {
 
 /** Open (and migrate) the Orbit database. Use ':memory:' for tests. */
 export function openDatabase(path: string): OrbitDb {
-  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
+  // 0700: the database holds approval payloads and the audit log.
+  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const sqlite = new Database(path);
   sqlite.pragma('journal_mode = WAL');
   sqlite.pragma('foreign_keys = ON');

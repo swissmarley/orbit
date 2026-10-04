@@ -1,5 +1,13 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { type RunEventBody, type Tier, OrbitError, event, inputHash, newId } from '@orbit/core';
+import {
+  type Redactor,
+  type RunEventBody,
+  type Tier,
+  OrbitError,
+  event,
+  inputHash,
+  newId,
+} from '@orbit/core';
 import { type OrbitDb, schema } from '@orbit/store';
 import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 import type { ApprovalCard } from './card';
@@ -92,7 +100,7 @@ export class ApprovalQueue {
 
   constructor(
     private readonly db: OrbitDb,
-    private readonly sinks: { audit?: AuditSink; events?: EventSink } = {},
+    private readonly sinks: { audit?: AuditSink; events?: EventSink; redactor?: Redactor } = {},
     private readonly now: () => Date = () => new Date(),
   ) {
     this.rules = new RuleStore(db, now);
@@ -120,10 +128,11 @@ export class ApprovalQueue {
       botId: args.botId,
       toolUseId: args.toolUseId,
       toolName: args.toolName,
-      input: args.input,
+      // Stored and displayed redacted; the grant hash binds the exact raw input.
+      input: this.sinks.redactor ? this.sinks.redactor.redact(args.input) : args.input,
       inputHash: inputHash(args.input),
       tier: args.tier,
-      card: args.card,
+      card: this.sinks.redactor ? this.sinks.redactor.redact(args.card) : args.card,
       status: 'pending',
       decision: null,
       createdAt: this.now().toISOString(),
@@ -135,7 +144,13 @@ export class ApprovalQueue {
       actor: `bot:${args.botId}`,
       action: 'approval.requested',
       subject: row.id,
-      data: { runId: args.runId, toolName: args.toolName, tier: args.tier, what: args.card.what },
+      data: {
+        runId: args.runId,
+        toolName: args.toolName,
+        tier: args.tier,
+        what: args.card.what,
+        inputHash: row.inputHash,
+      },
     });
     this.sinks.events?.append(args.runId, args.botId, [
       event('approval.requested', {
@@ -271,6 +286,10 @@ export class ApprovalQueue {
         toolName: result.toolName,
         decision: result.status,
         edited: result.decision.editedInput !== null,
+        inputHash: result.inputHash,
+        editedInputHash: result.decision.editedInput
+          ? inputHash(result.decision.editedInput)
+          : null,
         reason: result.decision.reason,
         ruleId: result.decision.ruleId,
       },
