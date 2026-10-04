@@ -17,6 +17,8 @@ pnpm test:live          # opt-in: real engine via API key or logged-in `claude`
 pnpm lint:fix && pnpm format
 pnpm orbit doctor       # the CLI (in-process until M3); ORBIT_DRIVER=mock needs no credentials
 ORBIT_DRIVER=mock pnpm orbit bot create --name Demo --goal 'Summarize notes' && pnpm orbit run demo
+pnpm orbit approvals | approve <id> [--edit json] [--always] | deny <id> --reason …
+pnpm orbit stop <run> | bot pause <bot> | kill [--off] | audit verify | secret set NAME < file
 ```
 
 ## Layout
@@ -26,8 +28,10 @@ ORBIT_DRIVER=mock pnpm orbit bot create --name Demo --goal 'Summarize notes' && 
 - `packages/store` SQLite (Drizzle): append-only events, run projections, bots
 - `packages/runtime` orchestrator, scheduler, triggers, drivers (Sdk/Cli/Mock),
   AuthResolver, rate limits
-- `packages/policy` permission tiers, approval queue, budgets, audit
-- `packages/sandbox` Docker / git-worktree workspaces
+- `packages/policy` tiers (ADR-009), PolicyEngine, rules, approval queue + grants,
+  approval cards, hash-chained audit log, secrets vault
+- `packages/sandbox` directory / git-worktree workspaces with Claude Code's native
+  sandbox settings, Docker containers (API-key mode)
 - `packages/memory` memory store, summarizer, feedback
 - `packages/api` Hono REST + SSE + loopback MCP endpoint; `packages/sdk-client`
 - `apps/orbitd` daemon composition root; `apps/orbit-tui` `orbit` bin;

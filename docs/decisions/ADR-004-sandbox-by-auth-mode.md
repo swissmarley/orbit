@@ -26,3 +26,16 @@ credentials cannot be placed in a container.
 - CLI mode has weaker isolation than Docker; this is documented in the
   security model and is acceptable for single-user local use (the only use
   CLI mode allows).
+
+## Implementation notes (M2)
+
+- `@orbit/sandbox` generates the native sandbox settings (writes only to the
+  workspace; reads denied for `~/.claude`, `~/.ssh`, `~/.aws`, gcloud, netrc
+  and Orbit's data; network strict allowlist) and passes them only when the
+  platform supports it (Linux: bwrap + socat; macOS: sandbox-exec), because
+  `failIfUnavailable: true` would otherwise fail every Run.
+- Docker containers run with `--cap-drop ALL`, `no-new-privileges`, CPU,
+  memory and PID limits, `--network none` by default and the host uid.
+  `docker exec` does not forward signals, so the engine is started through a
+  small `sh` wrapper that records its PID; stopping a Run kills it inside the
+  container. Secret values travel only in the `docker exec` process env.

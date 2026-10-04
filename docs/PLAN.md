@@ -2,7 +2,7 @@
 
 > Working name: **Orbit**. Self-hostable platform of always-on, goal-driven AI
 > agents ("Bots") powered by Claude Code and the Claude Agent SDK.
-> Status: **M1 complete; M2 next.**
+> Status: **M2 complete; M3 next.**
 > Owner of this document: lead engineer (Claude). Update it at every milestone.
 
 ## 0. Starting point
@@ -266,13 +266,25 @@ PLAN.md, ADRs, `.claude/agents` + `.claude/skills`.
   **Done when:** with no credentials `orbit run` works via MockDriver; with a
   logged-in `claude` it works via CliDriver; with an API key via SdkDriver.
 
-### M2 — Policy, approvals, audit, sandbox
+### M2 — Policy, approvals, audit, sandbox ✅
 
 - Policy engine (tiers, rules with scope+expiry, taint), approval queue with
   park-and-resume, audit log (hash chain, export), budgets + kill switches
   (runtime-enforced).
-- Hooks wiring for both drivers (SDK callbacks; CLI generated settings +
-  loopback MCP approval tool).
+- Hooks wiring for both drivers (SDK callbacks; CLI generated settings with
+  PreToolUse + PostToolUse through the loopback hook bridge — ADR-008).
+- Shipped: `@orbit/policy` (tier classifier, PolicyEngine, RuleStore,
+  ApprovalQueue with one-shot grants, approval cards with diffs, AuditLog,
+  SecretVault), orchestrator park/resume, budgets (tool calls, wall clock,
+  tokens, cost per run/day, runs per day), kill switches (run, bot, global,
+  cross-process), taint, PostToolUse redaction, `@orbit/sandbox`
+  (directory/worktree + Claude Code native sandbox settings, Docker with
+  limits), CLI: `approvals`, `approve` (edit / always / expiry), `deny`,
+  `resume`, `stop`, `bot pause|resume`, `kill`, `rules`, `audit`
+  (`verify`, `export`), `secret`.
+- Verified live against Claude Code 2.1.289: PostToolUse `updatedToolOutput`
+  hides vault secrets from the model; `continue: false` stops the engine when
+  a Run parks.
 - Sandbox: `WorktreeSandbox` (dev/CLI mode, Claude Code sandbox settings for
   fs/network) and `DockerSandbox` (API-key mode; cpu/mem/pids limits, network
   allowlist via proxy). Docker tests auto-skip without a daemon; CI runs them.
@@ -384,13 +396,17 @@ CI never needs credentials: `ORBIT_DRIVER=mock` is forced in CI.
 Items intentionally postponed from a milestone are listed here with the
 milestone that will pick them up. Shipped code paths contain no TODO stubs.
 
-| Item                                                                                 | From | To                            | Reason                                                                                                                                                     |
-| ------------------------------------------------------------------------------------ | ---- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Live SdkDriver run (`--bare` auth + SDK hook callbacks against the real API)         | M1   | first session with an API key | no API key in the dev environment; covered by the contract suite with an injected `query()`, `pnpm test:live` exercises it automatically when a key is set |
-| `ask` decisions, approval queue, park-and-resume                                     | M1   | M2                            | M1 policy decides allow/deny only                                                                                                                          |
-| PostToolUse redaction of tool output before the model sees it                        | M1   | M2                            | events are already redacted before persistence                                                                                                             |
-| Enforcing the CLI-mode concurrency limit (config exists, default 2)                  | M1   | M3                            | needs the run queue                                                                                                                                        |
-| CLI as a thin client of orbitd                                                       | M1   | M3                            | M1 runs Bots in-process                                                                                                                                    |
-| Redacting Bot specs (goal/instructions) before storing them                          | M1   | M2                            | events are redacted; specs are user-authored                                                                                                               |
-| Live verification of subagent tool calls under CliDriver (`--forward-subagent-text`) | M1   | M6                            | covered by the synthesized fixture; a live Task run costs more usage                                                                                       |
-| Bedrock/Vertex `apiKeySource` values                                                 | M1   | first cloud-provider session  | only login sources are rejected for them until observed                                                                                                    |
+| Item                                                                                                               | From | To                                                   | Reason                                                                                                                                                     |
+| ------------------------------------------------------------------------------------------------------------------ | ---- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Live SdkDriver run (`--bare` auth + SDK hook callbacks against the real API)                                       | M1   | first session with an API key                        | no API key in the dev environment; covered by the contract suite with an injected `query()`, `pnpm test:live` exercises it automatically when a key is set |
+| Enforcing the CLI-mode concurrency limit (config exists, default 2)                                                | M1   | M3                                                   | needs the run queue                                                                                                                                        |
+| CLI as a thin client of orbitd                                                                                     | M1   | M3                                                   | M1 runs Bots in-process                                                                                                                                    |
+| Redacting Bot specs (goal/instructions) before storing them                                                        | M1   | M3                                                   | events are redacted; specs are user-authored                                                                                                               |
+| Live verification of subagent tool calls under CliDriver (`--forward-subagent-text`)                               | M1   | M6                                                   | covered by the synthesized fixture; a live Task run costs more usage                                                                                       |
+| Bedrock/Vertex `apiKeySource` values                                                                               | M1   | first cloud-provider session                         | only login sources are rejected for them until observed                                                                                                    |
+| Docker `allowlist` network via an egress proxy (today: `bridge`, and Bash stays EXTERNAL)                          | M2   | M8                                                   | needs the allowlist proxy                                                                                                                                  |
+| Native engine sandbox verified live (bwrap/socat absent in the dev container; path syntax of `sandbox.filesystem`) | M2   | first session on a machine with bwrap/socat or macOS | settings are generated and only used when the tools are present                                                                                            |
+| Git commits from worktree Bots go through Orbit, not sandboxed Bash                                                | M2   | M7 (GitHub plugin)                                   | `.git` lives outside the writable workspace by design                                                                                                      |
+| Recreate containers when a Bot's sandbox limits or image change                                                    | M2   | M8                                                   | today a running container is reused                                                                                                                        |
+| Key workspaces by Bot id instead of slug (renames)                                                                 | M2   | M3                                                   | rename support arrives with the API                                                                                                                        |
+| Live run of DockerSandbox + SdkDriver (needs an API key and the sandbox image)                                     | M2   | first session with an API key                        | container mechanics are tested against the real Docker daemon                                                                                              |
