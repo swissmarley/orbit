@@ -88,6 +88,10 @@ export default tseslint.config(
         'error',
         { allowNumber: true, allowBoolean: true },
       ],
+      '@typescript-eslint/no-confusing-void-expression': [
+        'error',
+        { ignoreArrowShorthand: true, ignoreVoidReturningFunctions: true },
+      ],
       '@typescript-eslint/no-unused-vars': [
         'error',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
@@ -109,6 +113,9 @@ export default tseslint.config(
     rules: {
       'no-restricted-syntax': ['error', ...envSelectors],
       '@typescript-eslint/no-non-null-assertion': 'off',
+      // fakes are async generators that may not await; generic JSON helpers are fine in tests
+      '@typescript-eslint/require-await': 'off',
+      '@typescript-eslint/no-unnecessary-type-parameters': 'off',
     },
   },
   {
