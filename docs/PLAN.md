@@ -2,7 +2,7 @@
 
 > Working name: **Orbit**. Self-hostable platform of always-on, goal-driven AI
 > agents ("Bots") powered by Claude Code and the Claude Agent SDK.
-> Status: **M2 complete; M3 next.**
+> Status: **M3 complete; M4 next.**
 > Owner of this document: lead engineer (Claude). Update it at every milestone.
 
 ## 0. Starting point
@@ -291,7 +291,7 @@ PLAN.md, ADRs, `.claude/agents` + `.claude/skills`.
   **Done when:** policy/budget/kill-switch/approval tests pass; a Mock run that
   tries an EXTERNAL action parks and resumes after approval.
 
-### M3 — API, sdk-client, scheduler, rate limits
+### M3 — API, sdk-client, scheduler, rate limits ✅
 
 - Hono REST + SSE (`Last-Event-ID` resume, heartbeats), OpenAPI from zod,
   local token auth (token file 0600, loopback bind by default), OIDC only in
@@ -303,6 +303,27 @@ PLAN.md, ADRs, `.claude/agents` + `.claude/skills`.
   auto-resume if Bot allows).
 - `orbitd` app: config, wiring, graceful shutdown, `orbit daemon start|stop`
   (the CLI auto-starts a local daemon on loopback).
+- Shipped (ADR-010): `@orbit/api` (one route/zod contract driving Hono
+  validation, OpenAPI 3.1 via zod's native JSON Schema — checked in as
+  `packages/api/openapi.json` — and the client; `OrbitService` behind it;
+  bearer-token auth, Host allowlist, cross-origin refusal, body limit; SSE
+  `/v1/events` with Last-Event-ID resume and heartbeats), `@orbit/sdk-client`
+  (typed, validated responses, SSE reconnect, local discovery), `orbitd`
+  (single writer, lock per home, loopback only, fresh 0600 token per start,
+  graceful stop, restart recovery), `RunQueue` (priority, per-driver
+  concurrency: CLI 2), `Scheduler` (cron/interval via croner, no missed-fire
+  replay, no overlap), `RateLimitManager` (account-wide hold,
+  `run.resume_scheduled` "resumes at", auto-resume), CLI as a thin client
+  (`orbit daemon start|stop|status|restart`, `queue`, `schedules`,
+  `bot create --cron/--every`; guarded).
+- M2 deferrals closed: compare-and-set on start/resume/stop, approval expiry
+  set by the orchestrator and swept, grants scoped to the next segment,
+  workspaces/containers/branches keyed by Bot id, redacted Bot specs,
+  `PostToolUseFailure` fail-closed (engine stopped before the model reads a
+  secret in a tool error; the hook script fails closed for post hooks).
+- Deviation: webhook (HMAC) and fs/git triggers moved to M7 (with Slack and
+  plugins); hosted mode / OIDC / non-loopback binds to M8 (orbitd refuses
+  them until then).
   **Done when:** API contract tests + SSE resume test + scheduler/queue tests pass.
 
 ### M4 — TUI complete
@@ -399,20 +420,21 @@ milestone that will pick them up. Shipped code paths contain no TODO stubs.
 | Item                                                                                                                                                                                      | From | To                                                   | Reason                                                                                                                                                     |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Live SdkDriver run (`--bare` auth + SDK hook callbacks against the real API)                                                                                                              | M1   | first session with an API key                        | no API key in the dev environment; covered by the contract suite with an injected `query()`, `pnpm test:live` exercises it automatically when a key is set |
-| Enforcing the CLI-mode concurrency limit (config exists, default 2)                                                                                                                       | M1   | M3                                                   | needs the run queue                                                                                                                                        |
-| CLI as a thin client of orbitd                                                                                                                                                            | M1   | M3                                                   | M1 runs Bots in-process                                                                                                                                    |
-| Redacting Bot specs (goal/instructions) before storing them                                                                                                                               | M1   | M3                                                   | events are redacted; specs are user-authored                                                                                                               |
 | Live verification of subagent tool calls under CliDriver (`--forward-subagent-text`)                                                                                                      | M1   | M6                                                   | covered by the synthesized fixture; a live Task run costs more usage                                                                                       |
 | Bedrock/Vertex `apiKeySource` values                                                                                                                                                      | M1   | first cloud-provider session                         | only login sources are rejected for them until observed                                                                                                    |
 | Docker `allowlist` network via an egress proxy (today: `bridge`, and Bash stays EXTERNAL)                                                                                                 | M2   | M8                                                   | needs the allowlist proxy                                                                                                                                  |
 | Native engine sandbox verified live (bwrap/socat absent in the dev container; path syntax of `sandbox.filesystem`)                                                                        | M2   | first session on a machine with bwrap/socat or macOS | settings are generated and only used when the tools are present                                                                                            |
 | Git commits from worktree Bots go through Orbit, not sandboxed Bash                                                                                                                       | M2   | M7 (GitHub plugin)                                   | `.git` lives outside the writable workspace by design                                                                                                      |
 | Recreate containers when a Bot's sandbox limits or image change                                                                                                                           | M2   | M8                                                   | today a running container is reused                                                                                                                        |
-| Key workspaces by Bot id instead of slug (renames)                                                                                                                                        | M2   | M3                                                   | rename support arrives with the API                                                                                                                        |
 | Live run of DockerSandbox + SdkDriver (needs an API key and the sandbox image)                                                                                                            | M2   | first session with an API key                        | container mechanics are tested against the real Docker daemon                                                                                              |
 | M2 review M3: Docker mode keeps the API key out of the container (host-side key-injecting proxy) and gives the engine API egress without general egress; map `/workspace` paths in policy | M2   | M8                                                   | Docker is gated behind `ORBIT_EXPERIMENTAL_DOCKER=1` until then; Bash stays EXTERNAL in containers                                                         |
-| M2 review M4: PostToolUse bridge failure and failed tool output (`PostToolUseFailure`) are not redacted for the model (events still are)                                                  | M2   | M3                                                   | needs a live check of the engine's failure-hook output shape                                                                                               |
 | M2 review M6: keyed (HMAC) audit chain or exported head checkpoints                                                                                                                       | M2   | M8                                                   | chain detects edits/reorders/middle deletions today; whole-chain rewrite needs a key                                                                       |
 | M2 review M1: taint carried through workspace files to later Runs                                                                                                                         | M2   | M6                                                   | belongs with memory/feedback provenance                                                                                                                    |
-| M2 review L3/L4: compare-and-set on resume/stop across processes; approval expiry set by the orchestrator; grants scoped to the next segment                                              | M2   | M3                                                   | orbitd becomes the single writer                                                                                                                           |
 | M2 review L10/L11: secrets shorter than 6 chars are not redacted; `inputMatch` globs on rules                                                                                             | M2   | M7                                                   | no CLI path sets inputMatch yet                                                                                                                            |
+| Live check that `continue: false` from `PostToolUseFailure` stops the engine before its next turn                                                                                         | M3   | first session with usage headroom                    | covered by driver contract tests and the mock driver; the weekly CLI limit is nearly used                                                                  |
+| Webhook triggers (HMAC) and file/git triggers (chokidar)                                                                                                                                  | M3   | M7                                                   | ship with the plugin registry and the Slack trigger; `TriggerRef` already models them                                                                      |
+| Hosted mode: OIDC principals, TLS, non-loopback bind (orbitd refuses all three today)                                                                                                     | M3   | M8                                                   | a bearer token over plain HTTP must not leave the machine                                                                                                  |
+| Origin allowlist (CORS) for the web/desktop App                                                                                                                                           | M3   | M5                                                   | the API refuses every request with an `Origin` header until the App exists                                                                                 |
+| Loopback MCP endpoint `/mcp/orbit` (Orbit tools for Bots: memory, delegation)                                                                                                             | M3   | M6                                                   | its first tools arrive with memory and peer delegation                                                                                                     |
+| Packaged `orbitd` bin (the CLI starts the TypeScript bin through tsx in the dev tree)                                                                                                     | M3   | M8                                                   | packaging milestone                                                                                                                                        |
+| Automatic retry of Runs interrupted by a daemon stop (today: `run.failed: interrupted`, retryable, run it again)                                                                          | M3   | M8                                                   | needs an idempotency story for tool side effects                                                                                                           |

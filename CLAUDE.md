@@ -15,10 +15,13 @@ pnpm test               # vitest, all projects (no credentials needed)
 pnpm test --project @orbit/core      # one package (project name = package.json name)
 pnpm test:live          # opt-in: real engine via API key or logged-in `claude`
 pnpm lint:fix && pnpm format
-pnpm orbit doctor       # the CLI (in-process until M3); ORBIT_DRIVER=mock needs no credentials
+pnpm orbit doctor       # the CLI auto-starts orbitd (loopback); ORBIT_DRIVER=mock needs no credentials
 ORBIT_DRIVER=mock pnpm orbit bot create --name Demo --goal 'Summarize notes' && pnpm orbit run demo
 pnpm orbit approvals | approve <id> [--edit json] [--always] | deny <id> --reason …
 pnpm orbit stop <run> | bot pause <bot> | kill [--off] | audit verify | secret set NAME < file
+pnpm orbit daemon start|stop|status|restart | queue | schedules | bot create … --cron '0 9 * * 1-5'
+pnpm orbitd             # the daemon in the foreground (log otherwise: $ORBIT_HOME/logs/orbitd.log)
+pnpm --filter @orbit/api openapi   # regenerate packages/api/openapi.json after contract changes
 ```
 
 ## Layout
@@ -33,9 +36,14 @@ pnpm orbit stop <run> | bot pause <bot> | kill [--off] | audit verify | secret s
 - `packages/sandbox` directory / git-worktree workspaces with Claude Code's native
   sandbox settings, Docker containers (API-key mode)
 - `packages/memory` memory store, summarizer, feedback
-- `packages/api` Hono REST + SSE + loopback MCP endpoint; `packages/sdk-client`
-- `apps/orbitd` daemon composition root; `apps/orbit-tui` `orbit` bin;
-  `apps/orbit-app` (M5); `plugins/*` (M7)
+- `packages/api` Hono REST + SSE (`src/app.ts`), the route/zod contract
+  (`src/contract.ts`, also `@orbit/api/contract`), OpenAPI, and `OrbitService`
+  (queue, scheduler, rate limits, approval expiry behind the API)
+- `packages/sdk-client` typed client (validated responses), SSE reconnect with
+  Last-Event-ID, local discovery (`$ORBIT_HOME/daemon.json` + `daemon.token`)
+- `apps/orbitd` daemon composition root (single writer, loopback only, token
+  auth); `apps/orbit-tui` `orbit` bin (thin client); `apps/orbit-app` (M5);
+  `plugins/*` (M7)
 - `tools/guards` repo-wide security invariant tests
 
 Dependency direction: `core` ← `store` ← `policy`, `memory`, `sandbox` ← `runtime` ←
@@ -48,6 +56,11 @@ Dependency direction: `core` ← `store` ← `policy`, `memory`, `sandbox` ← `
 - zod schemas are the source of truth for types (`z.infer`) and OpenAPI.
 - Every driver message becomes a `RunEvent` via the one shared normalizer
   (ADR-002). The `events` table is append-only; UI state is a projection.
+- orbitd is the single writer (ADR-010). Clients use `@orbit/sdk-client` only
+  (guarded by `tools/guards/thin-client.test.ts`); a new route goes into the
+  contract table first, then its handler, then `openapi.json`.
+- State transitions that can race (start, resume, stop) append with
+  compare-and-set (`EventStore.append(…, { expectSeq })`).
 - Conventional Commits (`feat(runtime): …`, `test(policy): …`, `docs: …`).
 - No TODO stubs in shipped code paths; record deferrals in `docs/PLAN.md` §7.
 - Deviations from the brief get an ADR in `docs/decisions/`.
@@ -60,7 +73,8 @@ Dependency direction: `core` ← `store` ← `policy`, `memory`, `sandbox` ← `
   `process.env`. CliDriver children never get `ANTHROPIC_API_KEY` /
   `ANTHROPIC_AUTH_TOKEN`; the API key never reaches unrelated children.
 - CliDriver is local single-user only (loopback bind, one principal, not
-  `ORBIT_MODE=hosted`).
+  `ORBIT_MODE=hosted`). orbitd itself binds loopback only and refuses hosted
+  mode until TLS + OIDC (M8); its API needs the 0600 bearer token.
 - No hardcoded model IDs: use `ORBIT_DEFAULT_MODEL` / `ORBIT_TRIAGE_MODEL` or
   aliases (`opus`, `sonnet`, `haiku`).
 - Default-deny tool policy; EXTERNAL actions need approval; FINANCIAL is
@@ -80,6 +94,9 @@ Dependency direction: `core` ← `store` ← `policy`, `memory`, `sandbox` ← `
 
 - Tests sit next to code as `*.test.ts`; live tests are `*.live.test.ts`.
 - CI uses `ORBIT_DRIVER=mock` and no credentials, ever.
+- API tests use `@orbit/api/testing` (in-memory service, injectable clock);
+  CLI tests start orbitd in-process through `Io.startDaemon`. Real-process
+  tests set `ORBIT_PORT=0` (a developer's own orbitd may hold 7420).
 - Tests first for policy, budgets, replay, AuthResolver, driver contract.
 - New guards get a positive-control test that proves they fire.
 
