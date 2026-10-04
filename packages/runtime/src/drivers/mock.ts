@@ -116,16 +116,23 @@ export class MockDriver implements AgentDriver {
       for (const raw of bodies) {
         let body = raw;
         // Tool output passes through Orbit's post-processing (redaction), as with real engines.
-        if (body.type === 'tool.result' && !body.data.isError && allowed.has(body.data.toolUseId)) {
+        if (body.type === 'tool.result' && allowed.has(body.data.toolUseId)) {
           const call = calls.get(body.data.toolUseId);
           const post = await postProcess(req.toolResult, {
             toolName: call?.name ?? 'unknown',
             toolUseId: body.data.toolUseId,
             input: call?.input ?? {},
             response: body.data.content,
+            ...(body.data.isError ? { isError: true } : {}),
           });
-          if (typeof post.updatedOutput === 'string') {
+          if (!body.data.isError && typeof post.updatedOutput === 'string') {
             body = { ...body, data: { ...body.data, content: post.updatedOutput } };
+          }
+          if (post.stop !== undefined) {
+            // Like `continue: false` from a real engine: no further model turn.
+            yield body;
+            yield cancelled();
+            return;
           }
         }
         yield body;

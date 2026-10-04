@@ -14,6 +14,7 @@ Directory = engine version the shapes were taken from.
 | `usage-limit.jsonl`            | synthesized from SDK 0.3.289 types                                     | subscription limit `rejected` → Run pauses              |
 | `subagent-delegation.jsonl`    | synthesized from SDK 0.3.289 types                                     | Task tool → subagent messages with `parent_tool_use_id` |
 | `max-turns.jsonl`              | synthesized from SDK 0.3.289 types                                     | `error_max_turns` result                                |
+| `tool-error-secret.jsonl`      | synthesized from SDK 0.3.289 types                                     | a failed tool whose error text contains a secret        |
 
 Recordings are scrubbed with `scripts/scrub-fixture.ts` (stable UUIDs,
 `/workspace` paths, no signatures, neutral rate-limit numbers). Never commit an

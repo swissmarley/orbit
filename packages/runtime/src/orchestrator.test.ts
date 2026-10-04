@@ -415,6 +415,142 @@ describe('Orchestrator', () => {
   });
 });
 
+describe('Orchestrator — queueing, compare-and-set and M3 scoping', () => {
+  let w: World;
+  beforeEach(() => {
+    w = world();
+  });
+  afterEach(() => {
+    w.db.close();
+    rmSync(w.home, { recursive: true, force: true });
+  });
+
+  it('enqueue records a queued Run with priority and fixture; execute runs it once', async () => {
+    const o = w.orchestrator();
+    const bot = w.bot({ fixture: 'pong', priority: 2 });
+    const manual = o.enqueue(bot, { mockFixture: 'read-then-write-denied' });
+    expect(manual).toMatchObject({ status: 'queued', priority: 12, prompt: 'Do the task' });
+    const cron = o.enqueue(bot, { trigger: { kind: 'cron', source: 'daily' }, prompt: 'check' });
+    expect(cron).toMatchObject({ priority: 2, prompt: 'check' });
+    const done = await o.execute(manual.runId);
+    expect(done.status).toBe('completed');
+    // The fixture chosen at enqueue time was used.
+    expect(types(w.store.listRunEvents(manual.runId))).toContain('permission.decision');
+    await expect(o.execute(manual.runId)).rejects.toMatchObject({ code: 'conflict' });
+  });
+
+  it('a queued Run can be cancelled; a cancelled Run cannot execute', async () => {
+    const o = w.orchestrator();
+    const q = o.enqueue(w.bot({ fixture: 'pong' }));
+    o.stop(q.runId, 'owner');
+    expect(w.store.getRun(q.runId)?.status).toBe('cancelled');
+    await expect(o.execute(q.runId)).rejects.toMatchObject({ code: 'conflict' });
+    const q2 = o.enqueue(w.bot({ fixture: 'pong' }));
+    expect(o.cancelQueued(q2.runId, 'owner').status).toBe('cancelled');
+  });
+
+  it('two concurrent resumes of a parked Run: exactly one wins (compare-and-set)', async () => {
+    const o1 = w.orchestrator();
+    const o2 = w.orchestrator();
+    const parked = await o1.run(w.bot({ fixture: 'send-email' }));
+    const [approval] = w.approvals.list({ status: 'pending' });
+    w.approvals.decide(approval!.id, { approve: true, by: 'owner' });
+    const results = await Promise.allSettled([o1.resume(parked.runId), o2.resume(parked.runId)]);
+    const ok = results.filter((r) => r.status === 'fulfilled');
+    const failed = results.filter((r) => r.status === 'rejected');
+    expect(ok).toHaveLength(1);
+    expect(failed).toHaveLength(1);
+    expect(failed[0]!.reason).toMatchObject({ code: 'conflict' });
+    const events = types(w.store.listRunEvents(parked.runId));
+    expect(events.filter((t) => t === 'run.resumed')).toHaveLength(1);
+    expect(w.store.getRun(parked.runId)?.status).toBe('completed');
+  });
+
+  it('a stop racing a resume: the stop wins once the Run is cancelled; resume conflicts', async () => {
+    const o = w.orchestrator();
+    const parked = await o.run(w.bot({ fixture: 'send-email' }));
+    const [approval] = w.approvals.list({ status: 'pending' });
+    w.approvals.decide(approval!.id, { approve: true, by: 'owner' });
+    o.stop(parked.runId, 'owner');
+    await expect(o.resume(parked.runId)).rejects.toThrow(/only parked or rate-limited/);
+    expect(w.store.getRun(parked.runId)?.status).toBe('cancelled');
+  });
+
+  it('sets approval expiry from the Bot and tells the Bot about expired approvals', async () => {
+    const o = w.orchestrator();
+    const bot = w.bot({
+      fixture: 'send-email',
+      approvals: { parkWindowSeconds: 0, expireAfterHours: 2 },
+    });
+    const parked = await o.run(bot);
+    const [approval] = w.approvals.list({ status: 'pending' });
+    const ttl = Date.parse(approval!.expiresAt!) - Date.parse(approval!.createdAt);
+    expect(Math.abs(ttl - 2 * 3_600_000)).toBeLessThan(5_000);
+    // Force expiry: rewrite expires_at into the past, then sweep.
+    w.db.sqlite.prepare('UPDATE approvals SET expires_at = ?').run('2000-01-01T00:00:00.000Z');
+    expect(w.approvals.expireDue().map((a) => a.id)).toEqual([approval!.id]);
+    expect(w.store.getRun(parked.runId)?.pendingApprovals).toEqual([]);
+    let prompt = '';
+    const spy: AgentDriver = {
+      kind: 'mock',
+      authMethod: 'mock',
+      run: (req) => {
+        prompt = req.prompt;
+        return new MockDriver().run({ ...req, mockFixture: 'pong' });
+      },
+    };
+    await w.orchestrator(spy).resume(parked.runId);
+    expect(prompt).toMatch(/NOT APPROVED \(no decision in time\)/);
+  });
+
+  it('grants are scoped to the next segment: unused ones are revoked when it ends', async () => {
+    const o = w.orchestrator();
+    const parked = await o.run(w.bot({ fixture: 'send-email' }));
+    const [approval] = w.approvals.list({ status: 'pending' });
+    w.approvals.decide(approval!.id, { approve: true, by: 'owner' });
+    // The next segment does not retry the approved call…
+    await o.resume(parked.runId, { mockFixture: 'pong' });
+    // …so the grant is gone: a later segment cannot replay the approval.
+    expect(
+      w.approvals.consumeGrant(parked.runId, approval!.botId, approval!.toolName, approval!.input),
+    ).toBeNull();
+    const revoked = w.db.sqlite
+      .prepare('SELECT COUNT(*) AS n FROM grants WHERE revoked_at IS NOT NULL')
+      .get() as { n: number };
+    expect(revoked.n).toBeGreaterThan(0);
+  });
+
+  it('stops the Run when a failed tool error contains a secret (fail closed)', async () => {
+    const run = await w.orchestrator().run(w.bot({ fixture: 'tool-error-secret' }));
+    expect(run.status).toBe('failed');
+    expect(run.error?.code).toBe('secret_exposure_blocked');
+    const events = w.store.listRunEvents(run.runId);
+    // The assistant turn after the failure never happened.
+    expect(events.some((e) => e.type === 'message.assistant')).toBe(false);
+    // (This test world's EventStore has its own redactor; orbitd shares one.)
+    expect(w.audit.list({ action: 'run.secret_exposure_blocked' })).toHaveLength(1);
+  });
+
+  it('shutdown aborts executing Runs as retryable interruptions', async () => {
+    const w2 = world(':memory:', { delayMs: 50 });
+    try {
+      const o = w2.orchestrator();
+      const pending = o.run(w2.bot({ fixture: 'many-reads' }));
+      await new Promise((r) => setTimeout(r, 30));
+      expect(o.activeRuns()).toHaveLength(1);
+      o.shutdown();
+      const run = await pending;
+      expect(run.status).toBe('failed');
+      expect(run.error).toMatchObject({ code: 'interrupted', retryable: true });
+      await o.drain(1000);
+      expect(o.activeRuns()).toEqual([]);
+    } finally {
+      w2.db.close();
+      rmSync(w2.home, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('Orchestrator across processes', () => {
   it('a decision made by another process (another connection) is seen by a waiting Run', async () => {
     const w = world('orbit.db');

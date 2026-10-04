@@ -45,8 +45,9 @@ export interface PreparedWorkspace {
 
 export type WorkspaceProvider = (bot: Bot, driver: DriverKind) => Promise<PreparedWorkspace>;
 
+/** Keyed by Bot id, so renaming a Bot keeps its workspace. */
 export function workspaceFor(config: OrbitConfig, bot: Bot): string {
-  return join(config.home, 'workspaces', slugify(bot.spec.name));
+  return join(config.home, 'workspaces', bot.id);
 }
 
 /** Default provider: a plain directory, no shell containment (Bash needs approval). */
@@ -77,16 +78,31 @@ export interface OrchestratorDeps {
   now?: () => Date;
 }
 
-export interface StartRunOptions {
+export interface EnqueueOptions {
   prompt?: string;
   trigger?: TriggerRef;
+  /** Default: the Bot's priority, +10 for manual Runs. */
+  priority?: number;
+  mockFixture?: string;
+}
+
+export interface ExecuteOptions {
   signal?: AbortSignal;
   mockFixture?: string;
   onEvent?: (event: RunEvent) => void;
 }
 
+export type StartRunOptions = Omit<EnqueueOptions, 'mockFixture'> & ExecuteOptions;
+
+/** Extra priority of Runs a human started by hand. */
+export const MANUAL_PRIORITY_BOOST = 10;
+
 type StopCause =
   | { kind: 'kill'; scope: 'run' | 'bot' | 'global'; by: string }
+  /** orbitd is shutting down; the Run can be started again later. */
+  | { kind: 'shutdown' }
+  /** A failed tool's error text contained a secret the engine cannot redact. */
+  | { kind: 'exposure'; toolName: string }
   | {
       kind: 'budget';
       budget: 'toolCalls' | 'wallClock' | 'tokens' | 'costPerRun' | 'costPerDay';
@@ -101,6 +117,8 @@ interface Segment {
   resumeSessionId: string | null;
   signal: AbortSignal | undefined;
   mockFixture: string | undefined;
+  /** Compare-and-set for the segment's first event (run.started). */
+  expectSeq: number;
 }
 
 const UNTRUSTED_NOTE = (source: string) =>
@@ -128,55 +146,122 @@ export class Orchestrator {
 
   // ── public API ────────────────────────────────────────────────────────────
 
-  /** Start a new Run of `bot`. Refuses (throws `blocked`) while a kill switch is engaged. */
+  /** Start a new Run of `bot` now (enqueue + execute). Refuses (throws `blocked`) while a kill switch is engaged. */
   async run(botRef: Bot | string, options: StartRunOptions = {}): Promise<RunState> {
-    const bot =
-      typeof botRef === 'string' ? this.deps.bots.get(botRef) : this.deps.bots.get(botRef.id);
-    this.assertMayStart(bot);
     const runId = newId('run');
+    // Observe from the first event (run.queued) on.
     const off = this.observe(() => runId, options.onEvent);
     try {
-      return await this.startNew(runId, bot, options);
+      this.enqueueAs(runId, botRef, {
+        ...(options.prompt !== undefined ? { prompt: options.prompt } : {}),
+        ...(options.trigger ? { trigger: options.trigger } : {}),
+        ...(options.priority !== undefined ? { priority: options.priority } : {}),
+      });
+      const { onEvent: _alreadyObserved, ...rest } = options;
+      return await this.execute(runId, rest);
     } finally {
       off();
     }
   }
 
-  private async startNew(runId: string, bot: Bot, options: StartRunOptions): Promise<RunState> {
+  /**
+   * Record a new Run as queued (run.queued) without starting it. The daemon's
+   * RunQueue executes it when a concurrency slot is free.
+   */
+  enqueue(botRef: Bot | string, options: EnqueueOptions = {}): RunState {
+    return this.enqueueAs(newId('run'), botRef, options);
+  }
+
+  private enqueueAs(runId: string, botRef: Bot | string, options: EnqueueOptions): RunState {
+    const bot = this.deps.bots.get(typeof botRef === 'string' ? botRef : botRef.id);
+    this.assertMayStart(bot);
+    const trigger = options.trigger ?? { kind: 'manual', source: null };
     const prompt = options.prompt?.trim() ? options.prompt.trim() : bot.spec.goal;
-    const append = this.appender(runId, bot.id);
-    append([
-      event('run.queued', { trigger: options.trigger ?? { kind: 'manual', source: null }, prompt }),
-    ]);
-
-    const daily = this.checkDailyBudgets(bot);
-    if (daily) {
-      append([
-        event('budget.exceeded', daily),
-        event('run.failed', {
-          code: 'budget_exceeded',
-          message: `Daily budget reached (${daily.budget}: ${daily.actual} of ${daily.limit})`,
-          retryable: true,
-          sessionId: null,
-        }),
-      ]);
-      this.deps.audit?.append({
-        actor: 'system',
-        action: 'budget.exceeded',
-        subject: runId,
-        data: { botId: bot.id, ...daily },
-      });
-      return this.state(runId);
-    }
-
-    return this.segment({
+    const priority =
+      options.priority ??
+      bot.spec.priority + (trigger.kind === 'manual' ? MANUAL_PRIORITY_BOOST : 0);
+    this.deps.store.append(
       runId,
-      bot,
-      prompt,
-      resumeSessionId: null,
-      signal: options.signal,
-      mockFixture: options.mockFixture,
-    });
+      bot.id,
+      [
+        event('run.queued', {
+          trigger,
+          prompt,
+          priority: Math.max(-100, Math.min(100, Math.trunc(priority))),
+          fixture: options.mockFixture ?? null,
+        }),
+      ],
+      { expectSeq: 0 },
+    );
+    return this.state(runId);
+  }
+
+  /** Execute a queued Run. Exactly one caller wins (compare-and-set on its first event). */
+  async execute(runId: string, options: ExecuteOptions = {}): Promise<RunState> {
+    const queued = this.state(runId);
+    if (queued.status !== 'queued') {
+      throw new OrbitError('conflict', `Run ${runId} is ${queued.status}, not queued`);
+    }
+    const bot = this.deps.bots.get(queued.botId);
+    this.assertMayStart(bot);
+    const off = this.observe(() => runId, options.onEvent);
+    try {
+      const daily = this.checkDailyBudgets(bot);
+      if (daily) {
+        this.deps.store.append(
+          runId,
+          bot.id,
+          [
+            event('budget.exceeded', daily),
+            event('run.failed', {
+              code: 'budget_exceeded',
+              message: `Daily budget reached (${daily.budget}: ${daily.actual} of ${daily.limit})`,
+              retryable: true,
+              sessionId: null,
+            }),
+          ],
+          { expectSeq: queued.lastSeq },
+        );
+        this.deps.audit?.append({
+          actor: 'system',
+          action: 'budget.exceeded',
+          subject: runId,
+          data: { botId: bot.id, ...daily },
+        });
+        return this.state(runId);
+      }
+      return await this.segment({
+        runId,
+        bot,
+        prompt: queued.prompt,
+        resumeSessionId: null,
+        signal: options.signal,
+        mockFixture: options.mockFixture ?? this.queuedFixture(runId),
+        expectSeq: queued.lastSeq,
+      });
+    } finally {
+      off();
+    }
+  }
+
+  /** Cancel a Run that is queued and not executing (compare-and-set). */
+  cancelQueued(runId: string, by: string): RunState {
+    const s = this.state(runId);
+    if (s.status !== 'queued' || this.active.has(runId)) {
+      throw new OrbitError('conflict', `Run ${runId} is ${s.status}, not waiting in the queue`);
+    }
+    this.deps.store.append(
+      runId,
+      s.botId,
+      [event('run.cancelled', { reason: `Removed from the queue by ${by}`, sessionId: null })],
+      { expectSeq: s.lastSeq },
+    );
+    return this.state(runId);
+  }
+
+  private queuedFixture(runId: string): string | undefined {
+    const first = this.deps.store.listRunEvents(runId).find((e) => e.type === 'run.queued');
+    return first?.type === 'run.queued' ? (first.data.fixture ?? undefined) : undefined;
   }
 
   /**
@@ -186,16 +271,20 @@ export class Orchestrator {
    */
   async resume(
     runId: string,
-    options: Omit<StartRunOptions, 'prompt' | 'trigger'> & { prompt?: string } = {},
+    options: ExecuteOptions & { prompt?: string } = {},
   ): Promise<RunState> {
     const state = this.state(runId);
     const bot = this.deps.bots.get(state.botId);
     this.assertMayStart(bot);
     if (state.status !== 'waiting_approval' && state.status !== 'rate_limited') {
       throw new OrbitError(
-        'invalid_input',
+        // Someone else is already running it: a race, not a bad request.
+        state.status === 'running' || state.status === 'queued' ? 'conflict' : 'invalid_input',
         `Run ${runId} is ${state.status}; only parked or rate-limited runs can resume`,
       );
+    }
+    if (this.active.has(runId)) {
+      throw new OrbitError('conflict', `Run ${runId} is already executing`);
     }
     if (state.pendingApprovals.length > 0) {
       throw new OrbitError(
@@ -206,18 +295,20 @@ export class Orchestrator {
     // Budgets are per Run and per day: a resume must not reset them.
     const exhausted = this.exhaustedBudget(bot, state);
     if (exhausted) {
-      this.appender(
+      this.deps.store.append(
         runId,
         bot.id,
-      )([
-        event('budget.exceeded', exhausted),
-        event('run.failed', {
-          code: 'budget_exceeded',
-          message: `Cannot resume: ${exhausted.budget} budget exhausted (${exhausted.actual} of ${exhausted.limit})`,
-          retryable: false,
-          sessionId: state.sessionId,
-        }),
-      ]);
+        [
+          event('budget.exceeded', exhausted),
+          event('run.failed', {
+            code: 'budget_exceeded',
+            message: `Cannot resume: ${exhausted.budget} budget exhausted (${exhausted.actual} of ${exhausted.limit})`,
+            retryable: false,
+            sessionId: state.sessionId,
+          }),
+        ],
+        { expectSeq: state.lastSeq },
+      );
       this.deps.approvals.cancelForRun(runId, 'system');
       return this.state(runId);
     }
@@ -229,14 +320,22 @@ export class Orchestrator {
         : 'Your usage limit has reset. Continue the task from where you stopped.');
     const off = this.observe(() => runId, options.onEvent);
     try {
-      this.appender(runId, bot.id)([event('run.resumed', { reason, sessionId: state.sessionId })]);
+      // Compare-and-set: of two concurrent resumes (or a resume racing a
+      // stop), exactly one appends run.resumed; the other gets `conflict`.
+      const [resumed] = this.deps.store.append(
+        runId,
+        bot.id,
+        [event('run.resumed', { reason, sessionId: state.sessionId })],
+        { expectSeq: state.lastSeq },
+      );
       return await this.segment({
         runId,
         bot,
         prompt,
         resumeSessionId: state.sessionId,
         signal: options.signal,
-        mockFixture: options.mockFixture,
+        mockFixture: options.mockFixture ?? this.queuedFixture(runId),
+        expectSeq: resumed?.seq ?? state.lastSeq + 1,
       });
     } finally {
       off();
@@ -245,23 +344,41 @@ export class Orchestrator {
 
   /** Kill switch for one Run (works across processes via the controls table). */
   stop(runId: string, by: string): void {
-    this.deps.controls.requestStop(runId, by);
-    this.active.get(runId)?.abort({ kind: 'kill', scope: 'run', by });
+    const active = this.active.get(runId);
     this.deps.audit?.append({ actor: by, action: 'killswitch.run', subject: runId, data: {} });
-    // A parked Run is not executing: close it now.
-    const s = this.deps.store.getRun(runId);
-    if (
-      s &&
-      !this.active.has(runId) &&
-      (s.status === 'waiting_approval' || s.status === 'rate_limited')
-    ) {
-      this.deps.approvals.cancelForRun(runId, by);
-      this.deps.store.append(runId, s.botId, [
-        event('run.killed', { scope: 'run', by }),
-        event('run.cancelled', { reason: `Stopped by ${by}`, sessionId: s.sessionId }),
-      ]);
-      this.deps.controls.clearStop(runId);
+    if (active) {
+      this.deps.controls.requestStop(runId, by);
+      active.abort({ kind: 'kill', scope: 'run', by });
+      return;
     }
+    // Not executing here: close a queued, parked or rate-limited Run now,
+    // compare-and-set so a resume or start racing this stop cannot both win.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const s = this.deps.store.getRun(runId);
+      if (!s) throw new OrbitError('not_found', `Run ${runId} not found`);
+      if (s.status !== 'queued' && s.status !== 'waiting_approval' && s.status !== 'rate_limited') {
+        // Executing in another process: its kill-switch poll picks this up.
+        if (s.status === 'running') this.deps.controls.requestStop(runId, by);
+        return;
+      }
+      try {
+        this.deps.store.append(
+          runId,
+          s.botId,
+          [
+            event('run.killed', { scope: 'run', by }),
+            event('run.cancelled', { reason: `Stopped by ${by}`, sessionId: s.sessionId }),
+          ],
+          { expectSeq: s.lastSeq },
+        );
+        this.deps.approvals.cancelForRun(runId, by);
+        this.deps.controls.clearStop(runId);
+        return;
+      } catch (err) {
+        if (!(err instanceof OrbitError && err.code === 'conflict')) throw err;
+      }
+    }
+    throw new OrbitError('conflict', `Run ${runId} kept changing; stop it again`);
   }
 
   /** Kill switch for a Bot: pause it and stop its active Runs. */
@@ -304,6 +421,26 @@ export class Orchestrator {
 
   activeRuns(): string[] {
     return [...this.active.keys()];
+  }
+
+  isActive(runId: string): boolean {
+    return this.active.has(runId);
+  }
+
+  /**
+   * orbitd is stopping: abort every executing Run. Each ends as run.failed
+   * (`interrupted`, retryable) so nothing is left looking alive.
+   */
+  shutdown(): void {
+    for (const a of this.active.values()) a.abort({ kind: 'shutdown' });
+  }
+
+  /** Resolves once no Run is executing (or after `timeoutMs`). */
+  async drain(timeoutMs = 10_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (this.active.size > 0 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
   }
 
   // ── internals ────────────────────────────────────────────────────────────
@@ -407,6 +544,9 @@ export class Orchestrator {
           ? `- APPROVED WITH EDITS: ${ref}. Retry the same call; Orbit will run the version your owner edited.`
           : `- APPROVED: ${ref}. Retry the exact same call now.`;
       }
+      if (a.status === 'expired' || a.status === 'cancelled') {
+        return `- NOT APPROVED (${a.status === 'expired' ? 'no decision in time' : 'cancelled'}): ${ref}. Do not retry it; continue without it or explain what you need.`;
+      }
       return `- DENIED: ${ref}${d?.reason ? ` — your owner said: ${d.reason}` : ''}. Do not retry it; continue without it or explain what you need.`;
     });
     return ['Your owner decided on your pending requests:', ...lines, 'Continue the task.'].join(
@@ -443,6 +583,8 @@ export class Orchestrator {
     const ws = await this.workspaces(bot, driver.kind);
     const model = bot.spec.model ?? config.models.default;
     const budgets = bot.spec.budgets;
+    // Grants decided before this segment are usable in it, and only in it.
+    const segmentStart = this.now().toISOString();
 
     // Per-segment mutable state.
     const controller = new AbortController();
@@ -579,6 +721,10 @@ export class Orchestrator {
         input: req.input,
         tier: outcome.tier,
         card,
+        // Undecided approvals expire (count as not approved) — orbitd sweeps them.
+        expiresAt: new Date(
+          this.now().getTime() + bot.spec.approvals.expireAfterHours * 3_600_000,
+        ).toISOString(),
       });
       const decided = await this.deps.approvals.waitForDecision(
         approval.id,
@@ -636,6 +782,14 @@ export class Orchestrator {
     const toolResult: ToolResultHandler = (req) => {
       const redacted = this.deps.redactor.redact(req.response);
       const changed = JSON.stringify(redacted) !== JSON.stringify(req.response);
+      if (req.isError && changed) {
+        // The engine cannot rewrite a failed tool's error text (PostToolUseFailure
+        // has no updatedToolOutput), so stop before the model's next turn sees it.
+        abort({ kind: 'exposure', toolName: req.toolName });
+        return Promise.resolve({
+          stop: 'Orbit stopped this run: a tool error contained a secret.',
+        });
+      }
       const source = [...taint].find((s) => s === req.toolName);
       return Promise.resolve({
         ...(changed ? { updatedOutput: redacted } : {}),
@@ -643,15 +797,27 @@ export class Orchestrator {
       });
     };
 
-    append([
-      event('run.started', {
-        driver: driver.kind,
-        authMethod: driver.authMethod,
-        model,
-        cwd: ws.path,
-        resumeSessionId: seg.resumeSessionId,
-      }),
-    ]);
+    try {
+      this.deps.store.append(
+        runId,
+        bot.id,
+        [
+          event('run.started', {
+            driver: driver.kind,
+            authMethod: driver.authMethod,
+            model,
+            cwd: ws.path,
+            resumeSessionId: seg.resumeSessionId,
+          }),
+        ],
+        { expectSeq: seg.expectSeq },
+      );
+    } catch (err) {
+      clearTimeout(wallClock);
+      seg.signal?.removeEventListener('abort', onCallerAbort);
+      this.active.delete(runId);
+      throw err;
+    }
 
     let terminal: RunEventBody | null = null;
     try {
@@ -717,6 +883,7 @@ export class Orchestrator {
       clearTimeout(wallClock);
       seg.signal?.removeEventListener('abort', onCallerAbort);
       this.active.delete(runId);
+      this.deps.approvals.revokeGrants(runId, segmentStart);
     }
 
     const sessionId =
@@ -747,6 +914,34 @@ export class Orchestrator {
         event('run.killed', { scope: cause.scope, by: cause.by }),
         event('run.cancelled', {
           reason: `Stopped by ${cause.scope} kill switch (${cause.by})`,
+          sessionId,
+        }),
+      ];
+    }
+    if (cause?.kind === 'shutdown') {
+      this.deps.approvals.cancelForRun(runId, 'system', 'expired');
+      return [
+        event('run.failed', {
+          code: 'interrupted',
+          message: 'orbitd stopped while this run was executing; start it again',
+          retryable: true,
+          sessionId,
+        }),
+      ];
+    }
+    if (cause?.kind === 'exposure') {
+      this.deps.approvals.cancelForRun(runId, 'system', 'expired');
+      this.deps.audit?.append({
+        actor: 'system',
+        action: 'run.secret_exposure_blocked',
+        subject: runId,
+        data: { toolName: cause.toolName },
+      });
+      return [
+        event('run.failed', {
+          code: 'secret_exposure_blocked',
+          message: `The ${cause.toolName} tool failed with an error containing a secret; the run was stopped before the model could read it`,
+          retryable: false,
           sessionId,
         }),
       ];

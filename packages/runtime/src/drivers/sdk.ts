@@ -40,7 +40,12 @@ async function defaultQuery(): Promise<QueryFn> {
 export function buildSdkOptions(
   req: DriverRunRequest,
   o: Pick<SdkDriverOptions, 'env' | 'bare' | 'apiKeyHelper'>,
-  hooks: { preToolUse: HookCallback; postToolUse?: HookCallback; canUseTool: CanUseTool },
+  hooks: {
+    preToolUse: HookCallback;
+    postToolUse?: HookCallback;
+    postToolUseFailure?: HookCallback;
+    canUseTool: CanUseTool;
+  },
   abortController: AbortController,
   onStderr: (line: string) => void,
 ): Options {
@@ -59,6 +64,9 @@ export function buildSdkOptions(
     hooks: {
       PreToolUse: [{ hooks: [hooks.preToolUse] }],
       ...(hooks.postToolUse ? { PostToolUse: [{ hooks: [hooks.postToolUse] }] } : {}),
+      ...(hooks.postToolUseFailure
+        ? { PostToolUseFailure: [{ hooks: [hooks.postToolUseFailure] }] }
+        : {}),
     },
     canUseTool: hooks.canUseTool,
     systemPrompt: req.appendSystemPrompt
@@ -150,6 +158,24 @@ export class SdkDriver implements AgentDriver {
       );
     };
 
+    const postToolUseFailure: HookCallback = async (input) => {
+      if (input.hook_event_name !== 'PostToolUseFailure' || !seq.wasAllowed(input.tool_use_id))
+        return {};
+      return postHookOutput(
+        await postProcess(req.toolResult, {
+          toolName: input.tool_name,
+          toolUseId: input.tool_use_id,
+          input:
+            typeof input.tool_input === 'object' && input.tool_input !== null
+              ? (input.tool_input as Record<string, unknown>)
+              : {},
+          response: input.error,
+          isError: true,
+        }),
+        'PostToolUseFailure',
+      );
+    };
+
     // Backstop: the PreToolUse hook answers allow/deny for every call, so the
     // engine should never need to prompt. If it does, decide the same way.
     const canUseTool: CanUseTool = async (toolName, input, { signal, toolUseID }) => {
@@ -171,7 +197,7 @@ export class SdkDriver implements AgentDriver {
         const options = buildSdkOptions(
           req,
           this.opts,
-          { preToolUse, postToolUse, canUseTool },
+          { preToolUse, postToolUse, postToolUseFailure, canUseTool },
           abortController,
           (d) => {
             stderrTail.push(...d.split('\n').filter((l) => l.trim()));

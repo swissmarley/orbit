@@ -54,7 +54,11 @@ export async function decide(
   };
 }
 
-/** Run the tool-result handler, never failing the tool: errors mean "no change". */
+/**
+ * Run the tool-result handler. Fails closed: if Orbit cannot post-process a
+ * result (redaction may not have happened), the engine is stopped before the
+ * model sees it.
+ */
 export async function postProcess(
   handler: ToolResultHandler | undefined,
   request: ToolResultRequest,
@@ -63,17 +67,30 @@ export async function postProcess(
   try {
     return await handler(request);
   } catch {
-    return {};
+    return { stop: 'Orbit could not post-process a tool result; the run was stopped' };
   }
 }
 
-/** PostToolUse hook output understood by both the CLI and the SDK. */
-export function postHookOutput(d: ToolResultDecision): Record<string, unknown> {
-  if (d.updatedOutput === undefined && d.additionalContext === undefined) return {};
+export type PostHookEvent = 'PostToolUse' | 'PostToolUseFailure';
+
+/**
+ * PostToolUse / PostToolUseFailure hook output understood by both the CLI and
+ * the SDK. A failed tool's error cannot be rewritten (the engine has no
+ * `updatedToolOutput` for failures), so `stop` is the only way to keep it from
+ * the model: `continue: false` ends the engine before its next turn.
+ */
+export function postHookOutput(
+  d: ToolResultDecision,
+  hookEventName: PostHookEvent = 'PostToolUse',
+): Record<string, unknown> {
+  const stop = d.stop !== undefined ? { continue: false, stopReason: d.stop } : {};
+  const updated = hookEventName === 'PostToolUse' ? d.updatedOutput : undefined;
+  if (updated === undefined && d.additionalContext === undefined) return stop;
   return {
+    ...stop,
     hookSpecificOutput: {
-      hookEventName: 'PostToolUse',
-      ...(d.updatedOutput !== undefined ? { updatedToolOutput: d.updatedOutput } : {}),
+      hookEventName,
+      ...(updated !== undefined ? { updatedToolOutput: updated } : {}),
       ...(d.additionalContext !== undefined ? { additionalContext: d.additionalContext } : {}),
     },
   };

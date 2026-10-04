@@ -65,7 +65,7 @@ export function buildCliSettings(
     },
   ];
   return JSON.stringify({
-    hooks: { PreToolUse: hook, PostToolUse: hook },
+    hooks: { PreToolUse: hook, PostToolUse: hook, PostToolUseFailure: hook },
     ...(engineSandbox ? { sandbox: engineSandbox } : {}),
   });
 }
@@ -148,10 +148,12 @@ export class CliDriver implements AgentDriver {
     // each, with the same name and input. Anything else (a Bot that read its
     // hook token and forges requests) is denied without touching the log.
     const registration = this.opts.bridge.register(async (input) => {
-      if (input.hook_event_name === 'PostToolUse') {
+      const hookEvent = input.hook_event_name;
+      if (hookEvent === 'PostToolUse' || hookEvent === 'PostToolUseFailure') {
         // Only post-process calls Orbit allowed; anything else gets no rewrite.
         const id = typeof input.tool_use_id === 'string' ? input.tool_use_id : null;
         if (!id || !seq.wasAllowed(id)) return {};
+        const failed = hookEvent === 'PostToolUseFailure';
         return postHookOutput(
           await postProcess(req.toolResult, {
             toolName: typeof input.tool_name === 'string' ? input.tool_name : 'unknown',
@@ -160,8 +162,10 @@ export class CliDriver implements AgentDriver {
               typeof input.tool_input === 'object' && input.tool_input !== null
                 ? (input.tool_input as Record<string, unknown>)
                 : {},
-            response: input.tool_response,
+            response: failed ? input.error : input.tool_response,
+            ...(failed ? { isError: true } : {}),
           }),
+          hookEvent,
         );
       }
       if (input.hook_event_name !== 'PreToolUse') return reject('Unsupported hook event');

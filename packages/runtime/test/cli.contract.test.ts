@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { CliDriver, HOOK_SCRIPT, buildCliArgs } from '../src/drivers/cli';
+import { CliDriver, HOOK_SCRIPT, buildCliArgs, buildCliSettings } from '../src/drivers/cli';
 import { FIXTURES_DIR } from '../src/drivers/fixtures';
 import { HookBridge } from '../src/drivers/hook-bridge';
 import {
@@ -288,6 +288,36 @@ describe('hook bridge', () => {
     expect(out.hookSpecificOutput.permissionDecisionReason).toMatch(/unavailable/);
     // exit 2 = blocking error in Claude Code: the tool never runs
     expect(result.status).toBe(2);
+  });
+
+  it.each(['PostToolUse', 'PostToolUseFailure'])(
+    'hook script stops the engine when %s cannot be post-processed (fail closed)',
+    (hookEvent) => {
+      const result = spawnSync(process.execPath, [HOOK_SCRIPT], {
+        input: JSON.stringify({ hook_event_name: hookEvent, tool_name: 'Read' }),
+        env: {
+          PATH: process.env.PATH,
+          ORBIT_HOOK_URL: 'http://127.0.0.1:9/hook',
+          ORBIT_HOOK_TOKEN: 'x',
+        },
+        encoding: 'utf8',
+      });
+      const out = JSON.parse(result.stdout) as { continue: boolean; stopReason: string };
+      expect(out.continue).toBe(false);
+      expect(out.stopReason).toMatch(/post-processing unavailable/);
+      expect(result.status).toBe(0);
+    },
+  );
+
+  it('registers PreToolUse, PostToolUse and PostToolUseFailure hooks', () => {
+    const settings = JSON.parse(buildCliSettings('/usr/bin/node', '/x/orbit-hook.mjs')) as {
+      hooks: Record<string, unknown>;
+    };
+    expect(Object.keys(settings.hooks).sort()).toEqual([
+      'PostToolUse',
+      'PostToolUseFailure',
+      'PreToolUse',
+    ]);
   });
 
   it('hook script fails closed when not configured', () => {

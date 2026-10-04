@@ -13,10 +13,12 @@ const REQUEST_TIMEOUT_MS = 570_000;
 let hookEvent = 'PreToolUse';
 
 function failClosed(reason) {
-  // PostToolUse runs after the tool; a failure there must not block anything
-  // (the event-store redactor still applies before persistence).
-  if (hookEvent !== 'PreToolUse') {
-    process.stdout.write('{}');
+  // PostToolUse / PostToolUseFailure run after the tool: Orbit could not
+  // redact the output, so stop the engine before the model reads it.
+  if (hookEvent === 'PostToolUse' || hookEvent === 'PostToolUseFailure') {
+    const message = `Orbit post-processing unavailable (${reason}); run stopped`;
+    process.stdout.write(JSON.stringify({ continue: false, stopReason: message }));
+    process.stderr.write(`${message}\n`);
     process.exit(0);
   }
   const message = `Orbit permission bridge unavailable (${reason}); denied by default`;

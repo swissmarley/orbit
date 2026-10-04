@@ -19,6 +19,7 @@
     "@orbit/policy": "workspace:*",
     "@orbit/sandbox": "workspace:*",
     "@orbit/store": "workspace:*",
+    "croner": "10.0.1",
     "zod": "4.6.5"
   }
 }
