@@ -51,7 +51,7 @@ describe('SandboxManager — docker', () => {
       'run',
       '-d',
       '--name',
-      'orbit-bot-docker-bot',
+      'orbit-bot-bot_test1',
       '--label',
       'orbit.bot=bot_test1',
       '--cpus',
@@ -87,9 +87,9 @@ describe('SandboxManager — docker', () => {
       isolation: 'container',
       shellContained: false,
       engineSandboxSettings: null,
-      docker: { container: 'orbit-bot-docker-bot', workdir: '/workspace' },
+      docker: { container: 'orbit-bot-bot_test1', workdir: '/workspace' },
     });
-    expect(ws.path.endsWith(join('workspaces', 'docker-bot'))).toBe(true);
+    expect(ws.path.endsWith(join('workspaces', 'bot_test1'))).toBe(true);
     expect(statSync(ws.path).mode & 0o777).toBe(0o700);
   });
 
@@ -135,8 +135,8 @@ describe('SandboxManager — docker', () => {
     const m = new SandboxManager({ ...fresh(), run, support: FULL_SUPPORT });
     await m.prepare(dockerBot(), 'sdk');
     expect(run.calls.map((c) => c.args)).toEqual([
-      expect.arrayContaining(['inspect', 'orbit-bot-docker-bot']),
-      ['start', 'orbit-bot-docker-bot'],
+      expect.arrayContaining(['inspect', 'orbit-bot-bot_test1']),
+      ['start', 'orbit-bot-bot_test1'],
     ]);
   });
 
@@ -178,7 +178,7 @@ describe('SandboxManager — docker', () => {
     await m.destroy(bot);
     expect(run.calls.map((c) => c.args)).toEqual([
       expect.arrayContaining(['inspect']),
-      ['rm', '-f', 'orbit-bot-docker-bot'],
+      ['rm', '-f', 'orbit-bot-bot_test1'],
     ]);
     expect(existsSync(ws.path)).toBe(true);
     await m.destroy(bot, { purge: true });
@@ -200,7 +200,7 @@ describe('SandboxManager — directory', () => {
     const bot = makeBot({ name: 'My Dir Bot!', readRoots: ['/srv/shared'] });
     const ws = await m.prepare(bot, 'cli');
     expect(ws.kind).toBe('directory');
-    expect(ws.path.endsWith(join('workspaces', 'my-dir-bot'))).toBe(true);
+    expect(ws.path.endsWith(join('workspaces', 'bot_test1'))).toBe(true);
     expect(statSync(ws.path).mode & 0o777).toBe(0o700);
     expect(ws.isolation).toBe('engine-sandbox');
     expect(ws.shellContained).toBe(false);
@@ -210,6 +210,24 @@ describe('SandboxManager — directory', () => {
     expect(fs.denyRead).toContain(join(dirs.home, '.claude'));
     expect(fs.denyRead).not.toContain(ws.path);
     expect(fs.allowRead).toEqual(['/srv/shared', ws.path]);
+  });
+
+  it('moves a workspace kept under the M2 name slug to its id path, files included', async () => {
+    const dirs = fresh();
+    const m = new SandboxManager({ ...dirs, run: fakeRunner(), support: FULL_SUPPORT });
+    const bot = makeBot({ name: 'Legacy Bot' });
+    const legacy = join(dirs.orbitHome, 'workspaces', 'legacy-bot');
+    mkdirSync(legacy, { recursive: true });
+    writeFileSync(join(legacy, 'notes.md'), 'kept');
+    const ws = await m.prepare(bot, 'cli');
+    expect(ws.path.endsWith(join('workspaces', 'bot_test1'))).toBe(true);
+    expect(existsSync(join(ws.path, 'notes.md'))).toBe(true);
+    expect(existsSync(legacy)).toBe(false);
+  });
+
+  it('refuses Bot ids that are not safe path, container and branch names', () => {
+    const m = new SandboxManager({ ...fresh(), run: fakeRunner(), support: FULL_SUPPORT });
+    expect(() => m.workspacePath(makeBot({}, '../escape'))).toThrow(/cannot name a workspace/);
   });
 
   it('is not shell-contained when the network is an allowlist', async () => {
@@ -237,7 +255,7 @@ describe('SandboxManager — worktree (commands)', () => {
   const repo = '/src/repo';
   const wtBot = () => makeBot({ name: 'WT Bot', sandbox: { kind: 'worktree', repo } });
 
-  it('adds a worktree on branch orbit/<slug>', async () => {
+  it('adds a worktree on branch orbit/<bot id>', async () => {
     const run = fakeRunner((_f, args) =>
       args.includes('--verify')
         ? { code: 1 }
@@ -250,8 +268,8 @@ describe('SandboxManager — worktree (commands)', () => {
     expect(run.calls.map((c) => [c.file, ...c.args])).toEqual([
       ['git', '-C', repo, 'rev-parse', '--git-dir'],
       ['git', '-C', repo, 'worktree', 'list', '--porcelain'],
-      ['git', '-C', repo, 'rev-parse', '--verify', '--quiet', 'refs/heads/orbit/wt-bot'],
-      ['git', '-C', repo, 'worktree', 'add', '-B', 'orbit/wt-bot', ws.path],
+      ['git', '-C', repo, 'rev-parse', '--verify', '--quiet', 'refs/heads/orbit/bot_test1'],
+      ['git', '-C', repo, 'worktree', 'add', '-B', 'orbit/bot_test1', ws.path],
     ]);
     expect(ws.kind).toBe('worktree');
   });
@@ -268,13 +286,13 @@ describe('SandboxManager — worktree (commands)', () => {
       'worktree',
       'add',
       ws.path,
-      'orbit/wt-bot',
+      'orbit/bot_test1',
     ]);
   });
 
   it('is idempotent when the path is already a worktree of the repo', async () => {
     const dirs = fresh();
-    const path = join(dirs.orbitHome, 'workspaces', 'wt-bot');
+    const path = join(dirs.orbitHome, 'workspaces', 'bot_test1');
     mkdirSync(path, { recursive: true });
     writeFileSync(join(path, '.git'), 'gitdir: /src/repo/.git/worktrees/wt-bot\n');
     const run = fakeRunner((_f, args) =>

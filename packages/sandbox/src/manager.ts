@@ -1,6 +1,14 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { type Bot, type DriverKind, OrbitError, slugify } from '@orbit/core';
@@ -109,6 +117,14 @@ function ensurePrivateDir(path: string): void {
   chmodSync(path, 0o700);
 }
 
+/** Bot ids name directories, containers and branches: refuse anything but `[a-z0-9_]`. */
+function safeBotId(bot: Bot): string {
+  if (!/^[a-z0-9_]{1,64}$/.test(bot.id)) {
+    throw new OrbitError('invalid_config', `Bot id "${bot.id}" cannot name a workspace`);
+  }
+  return bot.id;
+}
+
 function realOrSelf(path: string): string {
   try {
     return realpathSync(path);
@@ -185,13 +201,18 @@ export class SandboxManager {
     return this.supportPromise;
   }
 
-  /** Container name for a Bot. */
+  /** Container name for a Bot (keyed by id, so renames keep the container). */
   static containerName(bot: Bot): string {
-    return `${CONTAINER_PREFIX}${slugify(bot.spec.name)}`;
+    return `${CONTAINER_PREFIX}${safeBotId(bot)}`;
   }
 
-  /** Host path of a Bot's workspace (whether or not it exists yet). */
+  /** Host path of a Bot's workspace (whether or not it exists yet), keyed by Bot id. */
   workspacePath(bot: Bot): string {
+    return join(realOrSelf(this.orbitHome), 'workspaces', safeBotId(bot));
+  }
+
+  /** Where M2 kept the workspace (by name slug); moved to the id path on first use. */
+  private legacyWorkspacePath(bot: Bot): string {
     return join(realOrSelf(this.orbitHome), 'workspaces', slugify(bot.spec.name));
   }
 
@@ -234,6 +255,7 @@ export class SandboxManager {
     ensurePrivateDir(this.orbitHome);
     ensurePrivateDir(join(this.orbitHome, 'workspaces'));
     const path = this.workspacePath(bot);
+    await this.adoptLegacyWorkspace(bot, path);
 
     switch (sb.kind) {
       case 'docker':
@@ -245,6 +267,30 @@ export class SandboxManager {
         ensurePrivateDir(path);
         return this.hostWorkspace(bot, 'directory', path);
     }
+  }
+
+  /**
+   * Move a workspace created before workspaces were keyed by id (M2 used the
+   * name slug) to its id path, keeping the Bot's files. Worktrees are moved
+   * with git so the repository's worktree registry stays consistent.
+   */
+  private async adoptLegacyWorkspace(bot: Bot, path: string): Promise<void> {
+    const legacy = this.legacyWorkspacePath(bot);
+    if (legacy === path || existsSync(path) || !existsSync(legacy)) return;
+    const sb = bot.spec.sandbox;
+    if (sb.kind === 'worktree' && sb.repo !== undefined) {
+      const repo = resolve(sb.repo);
+      if ((await this.listWorktrees(repo)).includes(realOrSelf(legacy))) {
+        const r = await this.git(repo, ['worktree', 'move', legacy, path]);
+        if (r.code !== 0) {
+          throw new OrbitError('invalid_config', `git worktree move failed: ${detail(r)}`, {
+            hint: `Move ${legacy} to ${path} by hand (git worktree move), then retry.`,
+          });
+        }
+        return;
+      }
+    }
+    renameSync(legacy, path);
   }
 
   async destroy(bot: Bot, opts: { purge?: boolean } = {}): Promise<void> {
@@ -444,7 +490,7 @@ export class SandboxManager {
     }
     ensurePrivateDir(path);
 
-    const branch = `orbit/${slugify(bot.spec.name)}`;
+    const branch = `orbit/${safeBotId(bot)}`;
     const exists = await this.git(repo, [
       'rev-parse',
       '--verify',

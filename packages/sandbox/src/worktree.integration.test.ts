@@ -58,9 +58,9 @@ describe('SandboxManager — worktree (real git)', () => {
 
   it('creates a worktree on orbit/<slug> and is idempotent', async () => {
     const ws = await m.prepare(bot, 'cli');
-    expect(ws.path).toBe(join(root, 'orbit', 'workspaces', 'git-bot'));
+    expect(ws.path).toBe(join(root, 'orbit', 'workspaces', 'bot_test1'));
     expect(readFileSync(join(ws.path, 'README.md'), 'utf8')).toBe('hello\n');
-    expect(git(ws.path, 'branch', '--show-current').trim()).toBe('orbit/git-bot');
+    expect(git(ws.path, 'branch', '--show-current').trim()).toBe('orbit/bot_test1');
     expect(worktrees()).toContain(ws.path);
 
     const again = await m.prepare(bot, 'cli');
