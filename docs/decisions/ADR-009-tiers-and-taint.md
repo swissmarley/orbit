@@ -36,3 +36,19 @@ them (M7).
 
 - Heuristics err on the side of asking; plugin manifests (M7) remove false
   positives such as reads that need approval.
+
+## Amendments after the M2 safety review
+
+- Every allowed MCP or shell call taints the Run (its output comes from a
+  third-party system), unless a plugin override marks the tool trusted.
+- In a tainted Run, WebFetch and WebSearch ask (they could carry data out in a
+  URL or query); `dangerouslyDisableSandbox` is always denied.
+- READ needs a leading read verb and nothing else (no conjunctions, no
+  mutating verb); WRITE_LOCAL drafting allows only create/save/update/edit as
+  additional verbs; `query` is not a read. The financial vocabulary includes
+  capture, sell, donate, tip, bid, book and commit verbs on financial nouns.
+- Allow rules must name one tool or `mcp__<server>__<prefix>*`; allow rules
+  created from the CLI expire after 7 days unless `--expires never`.
+- Bash stays EXTERNAL everywhere until the native engine sandbox has been
+  verified live (and, in Docker, until the API key is kept out of the
+  container).
