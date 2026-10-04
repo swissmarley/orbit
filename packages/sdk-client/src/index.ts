@@ -1,5 +1,7 @@
 /**
- * @orbit/sdk-client — typed client generated from the orbitd OpenAPI
- * document, plus an SSE helper with auto-reconnect and Last-Event-ID resume.
+ * @orbit/sdk-client — typed client for the orbitd API (derived from the
+ * shared zod contract), SSE event stream with reconnect and Last-Event-ID
+ * resume, and local daemon discovery ($ORBIT_HOME/daemon.json + token).
  */
-export {};
+export * from './client';
+export * from './local';
