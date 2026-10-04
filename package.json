@@ -17,7 +17,8 @@
     "typecheck": "tsc -p tsconfig.json && pnpm -r --parallel --aggregate-output typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:live": "ORBIT_LIVE=1 vitest run --config vitest.live.config.ts"
+    "test:live": "ORBIT_LIVE=1 vitest run --config vitest.live.config.ts",
+    "orbit": "tsx apps/orbit-tui/src/bin.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
