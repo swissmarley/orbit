@@ -9,7 +9,7 @@ import {
   newId,
 } from '@orbit/core';
 import { type OrbitDb, schema } from '@orbit/store';
-import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, lt, lte } from 'drizzle-orm';
 import type { ApprovalCard } from './card';
 import { RuleStore } from './rules';
 
@@ -270,6 +270,7 @@ export class ApprovalQueue {
               updatedInput: h.updated,
               createdAt: ts,
               usedAt: null,
+              revokedAt: null,
             })
             .run();
         }
@@ -349,6 +350,75 @@ export class ApprovalQueue {
     return closed;
   }
 
+  /**
+   * Expire pending approvals whose `expiresAt` has passed (the orchestrator
+   * sets it when it asks). Each becomes `expired` with an approval.decided
+   * event, exactly like a denial without a reason. Returns what expired.
+   */
+  expireDue(): Approval[] {
+    const ts = this.now().toISOString();
+    const due = this.db.orm
+      .select()
+      .from(schema.approvals)
+      .where(
+        and(
+          eq(schema.approvals.status, 'pending'),
+          isNotNull(schema.approvals.expiresAt),
+          lte(schema.approvals.expiresAt, ts),
+        ),
+      )
+      .all()
+      .map(toApproval);
+    const decision: ApprovalDecision = {
+      decision: 'expired',
+      by: 'system',
+      reason: null,
+      editedInput: null,
+      ruleId: null,
+    };
+    const expired: Approval[] = [];
+    for (const a of due) {
+      // Only still-pending rows: a decision may land between the select and here.
+      const changed = this.db.orm
+        .update(schema.approvals)
+        .set({ status: 'expired', decision, decidedAt: ts })
+        .where(and(eq(schema.approvals.id, a.id), eq(schema.approvals.status, 'pending')))
+        .run().changes;
+      if (changed === 0) continue;
+      const closed: Approval = { ...a, status: 'expired', decision, decidedAt: ts };
+      expired.push(closed);
+      this.sinks.audit?.append({
+        actor: 'system',
+        action: 'approval.expired',
+        subject: a.id,
+        data: { runId: a.runId, expiresAt: a.expiresAt },
+      });
+      this.sinks.events?.append(a.runId, a.botId, [this.decidedEvent(closed)]);
+    }
+    return expired;
+  }
+
+  /**
+   * Grants are scoped to the driver segment right after their decision
+   * (M2 review L4): when a segment ends, unused grants of the Run created
+   * before it started are revoked, so an approval cannot be replayed by a
+   * much later segment. Returns how many were revoked.
+   */
+  revokeGrants(runId: string, createdBefore: string): number {
+    return this.db.orm
+      .update(schema.grants)
+      .set({ revokedAt: this.now().toISOString() })
+      .where(
+        and(
+          eq(schema.grants.runId, runId),
+          isNull(schema.grants.usedAt),
+          isNull(schema.grants.revokedAt),
+          lt(schema.grants.createdAt, createdBefore),
+        ),
+      )
+      .run().changes;
+  }
+
   /** Wait for a decision; null when still pending after `timeoutMs` (the Run then parks). */
   async waitForDecision(
     id: string,
@@ -392,6 +462,7 @@ export class ApprovalQueue {
             eq(schema.grants.toolName, toolName),
             eq(schema.grants.inputHash, hash),
             isNull(schema.grants.usedAt),
+            isNull(schema.grants.revokedAt),
           ),
         )
         .get();

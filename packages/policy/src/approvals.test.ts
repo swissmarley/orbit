@@ -457,6 +457,58 @@ describe('ApprovalQueue', () => {
     });
   });
 
+  describe('expireDue (expiry set by the orchestrator)', () => {
+    it('expires only pending approvals past their expiry, with events and audit', () => {
+      const soon = request({ expiresAt: '2026-10-04T13:00:00.000Z' });
+      const later = request({ toolUseId: 'tu_2', expiresAt: '2026-10-05T12:00:00.000Z' });
+      const never = request({ toolUseId: 'tu_3' });
+      const decided = request({ toolUseId: 'tu_4', expiresAt: '2026-10-04T12:30:00.000Z' });
+      q.decide(decided.id, { approve: true, by: 'user:owner' });
+      expect(q.expireDue()).toEqual([]);
+      c.advance(60 * 60_000);
+      s.events.append.mockClear();
+      const expired = q.expireDue();
+      expect(expired.map((a) => a.id)).toEqual([soon.id]);
+      expect(q.get(soon.id)?.status).toBe('expired');
+      expect(q.get(later.id)?.status).toBe('pending');
+      expect(q.get(never.id)?.status).toBe('pending');
+      expect(q.get(decided.id)?.status).toBe('approved');
+      expect(emitted(s.events)).toEqual([
+        expect.objectContaining({
+          type: 'approval.decided',
+          data: expect.objectContaining({
+            approvalId: soon.id,
+            decision: 'expired',
+            by: 'system',
+          }) as unknown,
+        }),
+      ]);
+      expect(s.audit.append).toHaveBeenLastCalledWith(
+        expect.objectContaining({ action: 'approval.expired', subject: soon.id }),
+      );
+      // Idempotent, and a late decision is refused.
+      expect(q.expireDue()).toEqual([]);
+      expect(() => q.decide(soon.id, { approve: true, by: 'user:owner' })).toThrow(/expired/);
+    });
+  });
+
+  describe('revokeGrants (grants scoped to the next segment)', () => {
+    it('revokes unused grants created before a segment started; newer ones survive', () => {
+      const a = request();
+      q.decide(a.id, { approve: true, by: 'user:owner' });
+      const segmentStart = new Date(c.now().getTime() + 1000).toISOString();
+      c.advance(2000);
+      const b = request({ toolUseId: 'tu_2', input: EDITED });
+      q.decide(b.id, { approve: true, by: 'user:owner' });
+      expect(q.revokeGrants('run_1', segmentStart)).toBe(1);
+      expect(q.consumeGrant('run_1', 'bot_1', SEND, ORIGINAL)).toBeNull();
+      expect(q.consumeGrant('run_1', 'bot_1', SEND, EDITED)).toMatchObject({ approvalId: b.id });
+      // Used and other-run grants are untouched.
+      expect(q.revokeGrants('run_1', new Date(c.now().getTime() + 1).toISOString())).toBe(0);
+      expect(q.revokeGrants('run_other', segmentStart)).toBe(0);
+    });
+  });
+
   describe('waitForDecision (in-process)', () => {
     it('returns immediately when already decided', async () => {
       const a = request();
