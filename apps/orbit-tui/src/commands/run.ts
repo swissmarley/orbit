@@ -68,7 +68,7 @@ export async function runBot(
       config: ctx.config,
       store: ctx.store,
       driver: handle.driver,
-      permissionFor: (_bot, workspace) => baselinePolicy(workspace),
+      permissionFor: (_bot, workspace) => baselinePolicy({ workspace, orbitHome: ctx.config.home }),
     });
     let cwd: string | null = null;
     const run = await orchestrator.run(bot, {
