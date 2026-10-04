@@ -1,0 +1,196 @@
+import type {
+  CanUseTool,
+  HookCallback,
+  Options,
+  PermissionResult,
+  SDKMessage,
+} from '@anthropic-ai/claude-agent-sdk';
+import { type AuthMethod, type RunEventBody, event } from '@orbit/core';
+import { type Env, assertChildEnvSafe, buildChildEnv } from '../env';
+import { Channel } from './channel';
+import { Normalizer } from './normalize';
+import { decide, hookOutput } from './permission';
+import { EventSequencer } from './sequencer';
+import type { AgentDriver, DriverRunRequest } from './types';
+
+export type QueryFn = (params: { prompt: string; options: Options }) => AsyncIterable<SDKMessage>;
+
+export interface SdkDriverOptions {
+  authMethod: AuthMethod;
+  /** Source environment; filtered through the sdk-engine allowlist. */
+  env: Env;
+  /**
+   * Start the engine with `--bare`: authentication is strictly
+   * ANTHROPIC_API_KEY / apiKeyHelper / cloud credentials and the subscription
+   * OAuth on disk or in the keychain is never consulted (ADR-005).
+   */
+  bare: boolean;
+  apiKeyHelper: string | null;
+  /** Injected in tests; defaults to the Agent SDK's `query`. */
+  queryFn?: QueryFn;
+}
+
+async function defaultQuery(): Promise<QueryFn> {
+  const sdk = await import('@anthropic-ai/claude-agent-sdk');
+  return sdk.query as QueryFn;
+}
+
+/** Build Agent SDK options for a Run (exported for tests). */
+export function buildSdkOptions(
+  req: DriverRunRequest,
+  o: Pick<SdkDriverOptions, 'env' | 'bare' | 'apiKeyHelper'>,
+  hooks: { preToolUse: HookCallback; canUseTool: CanUseTool },
+  abortController: AbortController,
+  onStderr: (line: string) => void,
+): Options {
+  const env = buildChildEnv('sdk-engine', o.env);
+  assertChildEnvSafe('sdk-engine', env);
+  const options: Options = {
+    cwd: req.cwd,
+    env,
+    abortController,
+    permissionMode: 'default',
+    settingSources: [],
+    strictMcpConfig: true,
+    mcpServers: {},
+    hooks: { PreToolUse: [{ hooks: [hooks.preToolUse] }] },
+    canUseTool: hooks.canUseTool,
+    systemPrompt: req.appendSystemPrompt
+      ? { type: 'preset', preset: 'claude_code', append: req.appendSystemPrompt }
+      : { type: 'preset', preset: 'claude_code' },
+    stderr: onStderr,
+  };
+  if (o.bare) options.extraArgs = { bare: null };
+  if (o.apiKeyHelper) options.settings = { apiKeyHelper: o.apiKeyHelper };
+  if (req.model) options.model = req.model;
+  if (req.maxTurns) options.maxTurns = req.maxTurns;
+  if (req.tools) options.tools = req.tools;
+  if (req.resumeSessionId) options.resume = req.resumeSessionId;
+  else if (req.sessionId) options.sessionId = req.sessionId;
+  return options;
+}
+
+/**
+ * SdkDriver: the Agent SDK with an API key (or Bedrock / Vertex). The only
+ * driver allowed for hosted, shared or networked deployments.
+ */
+export class SdkDriver implements AgentDriver {
+  readonly kind = 'sdk' as const;
+  readonly authMethod: AuthMethod;
+
+  constructor(private readonly opts: SdkDriverOptions) {
+    this.authMethod = opts.authMethod;
+  }
+
+  run(req: DriverRunRequest): AsyncIterable<RunEventBody> {
+    const out = new Channel<RunEventBody>();
+    const seq = new EventSequencer(out);
+    const normalizer = new Normalizer();
+    const abortController = new AbortController();
+    const stderrTail: string[] = [];
+    let finished = false;
+    const finish = (body?: RunEventBody) => {
+      if (finished) return;
+      seq.flush();
+      if (body) out.push(body);
+      finished = true;
+      out.close();
+    };
+    const onAbort = () => abortController.abort();
+    if (req.signal.aborted) onAbort();
+    else req.signal.addEventListener('abort', onAbort, { once: true });
+
+    const preToolUse: HookCallback = async (input, toolUseID, { signal }) => {
+      if (input.hook_event_name !== 'PreToolUse') return {};
+      const toolUseId = input.tool_use_id.length > 0 ? input.tool_use_id : (toolUseID ?? null);
+      const { decision, event: decisionEvent } = await decide(
+        req.permission,
+        {
+          toolName: input.tool_name,
+          input:
+            typeof input.tool_input === 'object' && input.tool_input !== null
+              ? (input.tool_input as Record<string, unknown>)
+              : {},
+          toolUseId,
+          parentToolUseId: null,
+        },
+        signal,
+      );
+      seq.decision(toolUseId, decisionEvent);
+      return hookOutput(decision);
+    };
+
+    // Backstop: the PreToolUse hook answers allow/deny for every call, so the
+    // engine should never need to prompt. If it does, decide the same way.
+    const canUseTool: CanUseTool = async (toolName, input, { signal, toolUseID }) => {
+      const { decision, event: decisionEvent } = await decide(
+        req.permission,
+        { toolName, input, toolUseId: toolUseID, parentToolUseId: null },
+        signal,
+      );
+      seq.decision(toolUseID, decisionEvent);
+      const result: PermissionResult =
+        decision.behavior === 'allow'
+          ? { behavior: 'allow', updatedInput: decision.updatedInput ?? input }
+          : { behavior: 'deny', message: decision.reason, interrupt: decision.interrupt ?? false };
+      return result;
+    };
+
+    const consume = async () => {
+      try {
+        const options = buildSdkOptions(
+          req,
+          this.opts,
+          { preToolUse, canUseTool },
+          abortController,
+          (d) => {
+            stderrTail.push(...d.split('\n').filter((l) => l.trim()));
+            stderrTail.splice(0, Math.max(0, stderrTail.length - 20));
+          },
+        );
+        const queryFn = this.opts.queryFn ?? (await defaultQuery());
+        for await (const message of queryFn({ prompt: req.prompt, options })) {
+          if (finished) break;
+          seq.engine(normalizer.push(message));
+          if (normalizer.terminal) {
+            finish();
+            return;
+          }
+        }
+        const sessionId = normalizer.sessionId ?? req.resumeSessionId ?? req.sessionId;
+        if (req.signal.aborted) {
+          finish(event('run.cancelled', { reason: 'Run was stopped', sessionId }));
+          return;
+        }
+        finish(
+          event('run.failed', {
+            code: 'engine_exit',
+            message:
+              'Agent SDK ended without a result' +
+              (stderrTail.length ? `: ${stderrTail.slice(-5).join(' | ')}` : ''),
+            retryable: false,
+            sessionId,
+          }),
+        );
+      } catch (err) {
+        const sessionId = normalizer.sessionId ?? req.resumeSessionId ?? req.sessionId;
+        if (req.signal.aborted) {
+          finish(event('run.cancelled', { reason: 'Run was stopped', sessionId }));
+          return;
+        }
+        finish(
+          event('run.failed', {
+            code: 'engine_error',
+            message: err instanceof Error ? err.message : String(err),
+            retryable: false,
+            sessionId,
+          }),
+        );
+      } finally {
+        req.signal.removeEventListener('abort', onAbort);
+      }
+    };
+    void consume();
+    return out;
+  }
+}
