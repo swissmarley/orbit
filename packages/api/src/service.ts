@@ -8,7 +8,6 @@ import {
   type RunState,
   type TriggerRef,
   type TriggerSpec,
-  defaultRedactor,
   errorMessage,
   event,
   humanPrincipalCount,
@@ -48,7 +47,14 @@ import {
   validateTriggers,
 } from '@orbit/runtime';
 import { defaultRunner, detectSandboxSupport } from '@orbit/sandbox';
-import { BotRepo, Controls, EventStore, type OrbitDb, TriggerStateRepo } from '@orbit/store';
+import {
+  BotRepo,
+  Controls,
+  EventStore,
+  type OrbitDb,
+  TriggerStateRepo,
+  migrationAppliedAt,
+} from '@orbit/store';
 import type { z } from 'zod';
 import type {
   ApproveBody,
@@ -130,12 +136,12 @@ export class OrbitService {
     this.now = opts.now ?? (() => new Date());
     this.startedAt = this.now().toISOString();
     this.version = opts.version;
-    this.log =
-      opts.log ??
-      ((level, message) =>
-        process.stderr.write(`[orbitd] ${level}: ${defaultRedactor.redactString(message)}\n`));
     // One redactor for the process: API credentials, vault values, hook and API tokens.
     this.redactor = new Redactor(API_CREDENTIALS.map((name) => env[name] ?? ''));
+    // Every log line goes through it (review L1): errors quote git, docker and engine output.
+    const sink: Logger =
+      opts.log ?? ((level, message) => process.stderr.write(`[orbitd] ${level}: ${message}\n`));
+    this.log = (level, message) => sink(level, this.redactor.redactString(message));
     this.store = new EventStore(db, this.redactor);
     this.bots = new BotRepo(db, this.now, this.redactor);
     this.controls = new Controls(db, this.now);
@@ -171,7 +177,12 @@ export class OrbitService {
       },
       redactor: this.redactor,
       audit: this.audit,
-      workspaces: opts.workspaces ?? sandboxWorkspaces(createSandboxManager(config.home, env), env),
+      workspaces:
+        opts.workspaces ??
+        sandboxWorkspaces(
+          createSandboxManager(config.home, env, (bot) => this.m2WorkspaceName(bot)),
+          env,
+        ),
       ...(opts.killPollMs ? { killPollMs: opts.killPollMs } : {}),
       now: this.now,
     });
@@ -202,6 +213,17 @@ export class OrbitService {
       },
       now: this.now,
     });
+  }
+
+  /**
+   * M2 kept workspaces under the Bot's name slug, and M2 could not rename
+   * Bots: only Bots created before migration 3 have one, under their first
+   * name (review L3).
+   */
+  private m2WorkspaceName(bot: Bot): string | null {
+    const m3 = migrationAppliedAt(this.opts.db.sqlite, 3);
+    if (!m3 || bot.createdAt >= m3) return null;
+    return this.bots.versions(bot.id)[0]?.spec.name ?? null;
   }
 
   // ── lifecycle ─────────────────────────────────────────────────────────────
@@ -327,13 +349,45 @@ export class OrbitService {
       if (job.kind === 'start') this.failQueued(job.runId, err);
       throw err;
     }
-    if (job.kind === 'start') {
-      await this.orchestrator.execute(job.runId);
-      return;
+    try {
+      if (job.kind === 'start') {
+        await this.orchestrator.execute(job.runId);
+        return;
+      }
+      const options = this.resumeOptions.get(job.runId) ?? {};
+      this.resumeOptions.delete(job.runId);
+      await this.orchestrator.resume(job.runId, options);
+    } catch (err) {
+      // Review M1: a job that died before its segment ended must not leave the
+      // Run looking queued or running (it would also block its trigger forever).
+      this.closeOrphan(job.runId, err);
+      throw err;
     }
-    const options = this.resumeOptions.get(job.runId) ?? {};
-    this.resumeOptions.delete(job.runId);
-    await this.orchestrator.resume(job.runId, options);
+  }
+
+  /** Fail a Run that claims to be queued or running but executes nowhere. */
+  private closeOrphan(runId: string, err: unknown): void {
+    if (this.orchestrator.isActive(runId)) return;
+    const run = this.store.getRun(runId);
+    if (run?.status !== 'queued' && run?.status !== 'running') return;
+    try {
+      this.store.append(
+        runId,
+        run.botId,
+        [
+          event('run.failed', {
+            code: err instanceof OrbitError ? err.code : 'internal',
+            message: errorMessage(err),
+            retryable: true,
+            sessionId: run.sessionId,
+          }),
+        ],
+        { expectSeq: run.lastSeq },
+      );
+      this.approvals.cancelForRun(runId, 'system', 'expired');
+    } catch {
+      // Someone else closed it first.
+    }
   }
 
   private failQueued(runId: string, err: unknown): void {
@@ -400,11 +454,28 @@ export class OrbitService {
 
   pauseBot(ref: string): Bot {
     const bot = this.orchestrator.pauseBot(ref, OWNER);
-    // Queued Runs of a paused Bot would start the moment it is resumed: cancel them.
-    for (const run of this.store.listRuns({ botId: bot.id, status: ['queued'], limit: 1000 })) {
-      this.cancelWaiting(run.runId);
-    }
+    // Nothing of a paused Bot may continue once it is resumed: queued, parked
+    // and rate-limited Runs are closed too (review L2).
+    this.closeWaiting(bot.id);
     return bot;
+  }
+
+  /** Cancel queued, parked and rate-limited Runs (of one Bot, or all). */
+  private closeWaiting(botId?: string): void {
+    const waiting = this.store.listRuns({
+      ...(botId ? { botId } : {}),
+      status: ['queued', 'waiting_approval', 'rate_limited'],
+      limit: 10_000,
+    });
+    for (const run of waiting) {
+      if (this.queue.isActive(run.runId) || this.orchestrator.isActive(run.runId)) continue;
+      this.queue.remove(run.runId);
+      try {
+        this.orchestrator.stop(run.runId, OWNER);
+      } catch (err) {
+        if (!(err instanceof OrbitError && err.code === 'conflict')) throw err;
+      }
+    }
   }
 
   resumeBot(ref: string): Bot {
@@ -513,7 +584,10 @@ export class OrbitService {
   stopRun(runId: string): RunState {
     this.requireRun(runId);
     this.queue.remove(runId);
-    this.orchestrator.stop(runId, OWNER);
+    // orbitd is the single writer: a `running` Run that no job executes is an
+    // orphan and is closed now instead of waiting for a poll that never comes.
+    const orphaned = !this.queue.isActive(runId) && !this.orchestrator.isActive(runId);
+    this.orchestrator.stop(runId, OWNER, { orphaned });
     return this.requireRun(runId);
   }
 
@@ -619,9 +693,8 @@ export class OrbitService {
   setKill(on: boolean): { engaged: boolean; by: string | null } {
     this.orchestrator.killAll(OWNER, on);
     if (on) {
-      for (const run of this.store.listRuns({ status: ['queued'], limit: 1000 })) {
-        this.cancelWaiting(run.runId);
-      }
+      // "Stop everything": nothing waiting may continue after the release (review L2).
+      this.closeWaiting();
     } else {
       this.queue.pump();
     }

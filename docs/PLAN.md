@@ -321,6 +321,15 @@ PLAN.md, ADRs, `.claude/agents` + `.claude/skills`.
   workspaces/containers/branches keyed by Bot id, redacted Bot specs,
   `PostToolUseFailure` fail-closed (engine stopped before the model reads a
   secret in a tool error; the hook script fails closed for post hooks).
+- Safety review: no CRITICAL/HIGH; all hard constraints PASS. Fixed: M1 a
+  workspace that fails to prepare fails the Run (and `stop` closes orphaned
+  `running` Runs), M2 kill switches re-checked after workspace preparation and
+  on every tool call, L1 daemon log and API errors use the vault-aware
+  redactor (malformed bodies are never echoed), L2 global kill / Bot pause
+  also close parked and rate-limited Runs, L3 M2 workspaces adopted only by
+  Bots created before M3 under their first name, L4 Host header checked as
+  well as the URL, L5 atomic stale-lock takeover and the token written only
+  after listen.
 - Deviation: webhook (HMAC) and fs/git triggers moved to M7 (with Slack and
   plugins); hosted mode / OIDC / non-loopback binds to M8 (orbitd refuses
   them until then).

@@ -531,6 +531,75 @@ describe('Orchestrator — queueing, compare-and-set and M3 scoping', () => {
     expect(w.audit.list({ action: 'run.secret_exposure_blocked' })).toHaveLength(1);
   });
 
+  it('a workspace that cannot be prepared fails the Run (start and resume), never leaves it running', async () => {
+    let failing = false;
+    const o = new Orchestrator({
+      config: OrbitConfig.parse({ home: w.home }),
+      store: w.store,
+      bots: w.bots,
+      controls: w.controls,
+      approvals: w.approvals,
+      policy: new PolicyEngine(w.approvals, w.rules),
+      driver: new MockDriver(),
+      redactor: w.redactor,
+      workspaces: (bot) =>
+        failing
+          ? Promise.reject(new Error('git worktree add failed'))
+          : Promise.resolve({
+              path: join(w.home, bot.id),
+              shellContained: false,
+              engineSandbox: null,
+            }),
+    });
+    const parked = await o.run(w.bot({ fixture: 'send-email' }));
+    failing = true;
+    const started = await o.run(w.bot({ fixture: 'pong' }));
+    expect(started).toMatchObject({
+      status: 'failed',
+      error: { code: 'workspace_unavailable', retryable: true },
+    });
+    const [approval] = w.approvals.list({ status: 'pending' });
+    w.approvals.decide(approval!.id, { approve: true, by: 'owner' });
+    const resumed = await o.resume(parked.runId);
+    expect(resumed.status).toBe('failed');
+    expect(resumed.error?.message).toMatch(/git worktree add failed/);
+    expect(o.activeRuns()).toEqual([]);
+  });
+
+  it('a kill switch engaged while the workspace is prepared stops the Run before the engine starts', async () => {
+    let started = false;
+    const spy: AgentDriver = {
+      kind: 'mock',
+      authMethod: 'mock',
+      run: (req) => {
+        started = true;
+        return new MockDriver().run(req);
+      },
+    };
+    const o = new Orchestrator({
+      config: OrbitConfig.parse({ home: w.home }),
+      store: w.store,
+      bots: w.bots,
+      controls: w.controls,
+      approvals: w.approvals,
+      policy: new PolicyEngine(w.approvals, w.rules),
+      driver: spy,
+      redactor: w.redactor,
+      workspaces: (bot) => {
+        w.controls.setGlobalKill(true, 'owner'); // engaged mid-preparation
+        return Promise.resolve({
+          path: join(w.home, bot.id),
+          shellContained: false,
+          engineSandbox: null,
+        });
+      },
+    });
+    const run = await o.run(w.bot({ fixture: 'pong' }));
+    expect(run.status).toBe('cancelled');
+    expect(run.killedBy).toBe('global');
+    expect(started).toBe(false);
+  });
+
   it('shutdown aborts executing Runs as retryable interruptions', async () => {
     const w2 = world(':memory:', { delayMs: 50 });
     try {

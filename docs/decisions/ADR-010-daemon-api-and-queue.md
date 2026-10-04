@@ -56,7 +56,8 @@ after the last id it received.
   within a priority, a global concurrency limit per driver
   (`limits.maxConcurrentRuns`, CLI default 2), one entry per Run. Holds
   (global kill, paused Bot, usage limit) keep a job waiting; engaging the
-  global kill switch or pausing a Bot cancels its queued Runs outright.
+  global kill switch or pausing a Bot cancels its queued, parked and
+  rate-limited Runs outright, so nothing continues after the release.
 - `Scheduler` (croner): cron and interval triggers in the Bot spec, ticked
   every second. Missed fires while the daemon was down are not replayed, and a
   trigger whose previous Run is still in flight is skipped, so always-on Bots

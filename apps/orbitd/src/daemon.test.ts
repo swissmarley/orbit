@@ -64,6 +64,26 @@ describe('orbitd', () => {
     expect(readFileSync(files.lock, 'utf8')).toBe(String(process.pid));
   });
 
+  it('a daemon that fails to listen leaves no token or address behind', async () => {
+    daemon = await start();
+    const port = new URL(daemon.url).port;
+    const other = mkdtempSync(join(tmpdir(), 'orbitd-other-'));
+    try {
+      await expect(
+        startDaemon({
+          env: { ORBIT_HOME: other, ORBIT_DRIVER: 'mock', PATH: process.env.PATH ?? '' },
+          port: Number(port),
+          log: () => undefined,
+          service: { vaultKeySource: 'file' },
+        }),
+      ).rejects.toMatchObject({ message: /in use/ });
+      const files = daemonFiles(other);
+      expect([files.token, files.info, files.lock].filter((f) => existsSync(f))).toEqual([]);
+    } finally {
+      rmSync(other, { recursive: true, force: true });
+    }
+  });
+
   it('refuses hosted mode and non-loopback binds (token over plain HTTP)', async () => {
     await expect(start({ ORBIT_MODE: 'hosted' })).rejects.toMatchObject({
       code: 'invalid_config',

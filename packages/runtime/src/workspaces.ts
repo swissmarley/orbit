@@ -1,4 +1,4 @@
-import { OrbitError } from '@orbit/core';
+import { type Bot, OrbitError } from '@orbit/core';
 import { SandboxManager, defaultRunner } from '@orbit/sandbox';
 import { type Env, buildChildEnv } from './env';
 import type { WorkspaceProvider } from './orchestrator';
@@ -34,9 +34,15 @@ export function sandboxWorkspaces(manager: SandboxManager, env: Env): WorkspaceP
 }
 
 /** Sandbox manager whose git/docker children never see API credentials. */
-export function createSandboxManager(orbitHome: string, env: Env): SandboxManager {
+export function createSandboxManager(
+  orbitHome: string,
+  env: Env,
+  /** Name a Bot had when M2 created its workspace (see SandboxManagerOptions). */
+  legacyName?: (bot: Bot) => string | null,
+): SandboxManager {
   return new SandboxManager({
     orbitHome,
+    ...(legacyName ? { legacyName } : {}),
     run: defaultRunner(buildChildEnv('tool', env)),
     // A non-default Claude config dir holds the CLI's credentials too.
     extraDenied: env.CLAUDE_CONFIG_DIR ? [env.CLAUDE_CONFIG_DIR] : [],

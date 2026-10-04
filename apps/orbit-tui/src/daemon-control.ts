@@ -13,7 +13,10 @@ const START_TIMEOUT_MS = 15_000;
  * an allowlist ('orbitd': Orbit settings + API credentials, never OAuth
  * tokens). In the dev tree the bin is TypeScript, so tsx is preloaded.
  */
-export function spawnDaemon(env: Record<string, string | undefined>): void {
+export function spawnDaemon(
+  env: Record<string, string | undefined>,
+  spawnFn: typeof spawn = spawn,
+): void {
   const home = defaultHome(env);
   const files = daemonFiles(home);
   mkdirSync(dirname(files.log), { recursive: true, mode: 0o700 });
@@ -21,7 +24,7 @@ export function spawnDaemon(env: Record<string, string | undefined>): void {
   const args = bin.endsWith('.ts') ? ['--import', import.meta.resolve('tsx'), bin] : [bin];
   const log = openSync(files.log, 'a', 0o600);
   try {
-    const child = spawn(process.execPath, args, {
+    const child = spawnFn(process.execPath, args, {
       detached: true,
       stdio: ['ignore', log, log],
       env: buildChildEnv('orbitd', env),

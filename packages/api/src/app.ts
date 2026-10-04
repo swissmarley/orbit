@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
-import { OrbitError, type RunEvent, defaultRedactor, errorMessage } from '@orbit/core';
+import { OrbitError, type RunEvent, errorMessage } from '@orbit/core';
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { streamSSE } from 'hono/streaming';
@@ -50,10 +50,6 @@ function param(params: Record<string, string>, name: string): string {
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
-function errorBody(code: string, message: string, hint: string | null = null): ErrorBody {
-  return { error: { code, message: defaultRedactor.redactString(message), hint } };
-}
-
 function tokenMatches(header: string | undefined, token: string): boolean {
   const presented = /^Bearer (\S+)$/.exec(header ?? '')?.[1];
   if (!presented) return false;
@@ -74,6 +70,10 @@ function matches(e: RunEvent, filter: { runId?: string; botId?: string }): boole
  */
 export function createApp(opts: AppOptions): Hono {
   const { service } = opts;
+  // Error text can quote tool, git or engine output: redact with the vault-aware redactor (L1).
+  const errorBody = (code: string, message: string, hint: string | null = null): ErrorBody => ({
+    error: { code, message: service.redactor.redactString(message), hint },
+  });
   const app = new Hono();
   // Lazy: orbitd knows its port only after it listens.
   const allowedHosts = () => {
@@ -93,7 +93,8 @@ export function createApp(opts: AppOptions): Hono {
       return c.json(errorBody('invalid_input', z.prettifyError(err)), 400);
     }
     if (err instanceof SyntaxError) {
-      return c.json(errorBody('invalid_input', `Malformed JSON body: ${err.message}`), 400);
+      // Never echo the body: JSON.parse quotes it, and it may be a secret (review L1).
+      return c.json(errorBody('invalid_input', 'Malformed JSON body'), 400);
     }
     return c.json(errorBody('internal', errorMessage(err)), 500);
   });
@@ -103,10 +104,13 @@ export function createApp(opts: AppOptions): Hono {
 
   // DNS rebinding and browser guards: only our own host names, no cross-origin callers.
   app.use('*', async (c, next) => {
-    const host = new URL(c.req.url).host.toLowerCase();
     const allowed = allowedHosts();
-    if (allowed.size > 0 && !allowed.has(host)) {
-      return c.json(errorBody('forbidden', `Host ${host} is not served here`), 403);
+    // Both the request URL (absolute-form targets) and the Host header (review L4).
+    for (const host of [new URL(c.req.url).host, c.req.header('host') ?? '']) {
+      const h = host.toLowerCase();
+      if (allowed.size > 0 && h !== '' && !allowed.has(h)) {
+        return c.json(errorBody('forbidden', `Host ${h} is not served here`), 403);
+      }
     }
     // Browsers always send Origin on cross-site requests; Orbit's clients never do.
     // (The M5 app gets an explicit origin allowlist.)

@@ -140,6 +140,12 @@ function detail(r: CommandResult): string {
 export interface SandboxManagerOptions {
   /** Further paths sandboxed commands may never read (e.g. CLAUDE_CONFIG_DIR). */
   extraDenied?: readonly string[];
+  /**
+   * The name a Bot had when M2 created its workspace (`<home>/workspaces/<slug>`),
+   * or null when it never had one. Only those workspaces are adopted, so a new
+   * or renamed Bot can never take over another Bot's old files. Default: none.
+   */
+  legacyName?: (bot: Bot) => string | null;
   /** Orbit's data directory; workspaces live in `<orbitHome>/workspaces`. */
   orbitHome: string;
   /** The user's home directory (credential stores are denied relative to it). */
@@ -182,10 +188,12 @@ export class SandboxManager {
   private readonly dockerClientEnv: Record<string, string>;
   private readonly containerUser: string | null;
   private readonly extraDenied: readonly string[];
+  private readonly legacyName: (bot: Bot) => string | null;
   private supportPromise: Promise<SandboxSupport> | undefined;
 
   constructor(opts: SandboxManagerOptions) {
     this.extraDenied = opts.extraDenied ?? [];
+    this.legacyName = opts.legacyName ?? (() => null);
     this.orbitHome = resolve(opts.orbitHome);
     this.home = resolve(opts.home ?? homedir());
     this.run = opts.run;
@@ -211,9 +219,10 @@ export class SandboxManager {
     return join(realOrSelf(this.orbitHome), 'workspaces', safeBotId(bot));
   }
 
-  /** Where M2 kept the workspace (by name slug); moved to the id path on first use. */
-  private legacyWorkspacePath(bot: Bot): string {
-    return join(realOrSelf(this.orbitHome), 'workspaces', slugify(bot.spec.name));
+  /** Where M2 kept the workspace (by name slug), if this Bot had one. */
+  private legacyWorkspacePath(bot: Bot): string | null {
+    const name = this.legacyName(bot);
+    return name === null ? null : join(realOrSelf(this.orbitHome), 'workspaces', slugify(name));
   }
 
   async prepare(bot: Bot, driver: DriverKind): Promise<Workspace> {
@@ -276,7 +285,7 @@ export class SandboxManager {
    */
   private async adoptLegacyWorkspace(bot: Bot, path: string): Promise<void> {
     const legacy = this.legacyWorkspacePath(bot);
-    if (legacy === path || existsSync(path) || !existsSync(legacy)) return;
+    if (legacy === null || legacy === path || existsSync(path) || !existsSync(legacy)) return;
     const sb = bot.spec.sandbox;
     if (sb.kind === 'worktree' && sb.repo !== undefined) {
       const repo = resolve(sb.repo);

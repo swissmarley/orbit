@@ -7,5 +7,5 @@ export { Controls } from './controls';
 export * as schema from './schema';
 export { openDatabase, type OrbitDb } from './db';
 export { EventStore, type AppendGuard, type EventListener } from './event-store';
-export { MIGRATIONS, migrate } from './migrations';
+export { MIGRATIONS, migrate, migrationAppliedAt } from './migrations';
 export { TriggerStateRepo, type TriggerFire } from './trigger-state';

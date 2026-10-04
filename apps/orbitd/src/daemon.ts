@@ -1,9 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import {
-  closeSync,
   existsSync,
+  linkSync,
   mkdirSync,
-  openSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -55,28 +54,61 @@ function pidAlive(pid: number): boolean {
   }
 }
 
-/** One daemon per ORBIT_HOME: an exclusive lock file holding the owner's pid. */
+function readPid(path: string): number | null {
+  try {
+    const pid = Number(readFileSync(path, 'utf8').trim());
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+const alreadyRunning = (pid: number) =>
+  new OrbitError('blocked', `orbitd is already running for this ORBIT_HOME (pid ${pid})`, {
+    hint: 'Use it (`orbit daemon status`) or stop it first (`orbit daemon stop`).',
+  });
+
+/**
+ * One daemon per ORBIT_HOME: an exclusive lock file holding the owner's pid.
+ * Creation is atomic with its content (hard link of a complete temp file),
+ * and a stale lock is moved aside with rename, so of two starters racing over
+ * a crashed daemon's lock exactly one wins (review L5).
+ */
 function acquireLock(path: string): () => void {
-  for (let attempt = 0; attempt < 2; attempt++) {
+  const unique = () => `${path}.${process.pid}.${randomBytes(4).toString('hex')}`;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const tmp = unique();
+    writeFileSync(tmp, String(process.pid), { mode: 0o600 });
     try {
-      const fd = openSync(path, 'wx', 0o600);
-      writeFileSync(fd, String(process.pid));
-      closeSync(fd);
-      return () => rmSync(path, { force: true });
+      linkSync(tmp, path);
+      return () => {
+        if (readPid(path) === process.pid) rmSync(path, { force: true });
+      };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-      const pid = Number(readFileSync(path, 'utf8').trim());
-      if (Number.isInteger(pid) && pid > 0 && pidAlive(pid)) {
-        throw new OrbitError(
-          'blocked',
-          `orbitd is already running for this ORBIT_HOME (pid ${pid})`,
-          {
-            hint: 'Use it (`orbit daemon status`) or stop it first (`orbit daemon stop`).',
-          },
-        );
-      }
-      rmSync(path, { force: true }); // stale lock from a crashed daemon
+    } finally {
+      rmSync(tmp, { force: true });
     }
+    const holder = readPid(path);
+    if (holder !== null && pidAlive(holder)) throw alreadyRunning(holder);
+    const aside = unique();
+    try {
+      renameSync(path, aside);
+    } catch {
+      continue; // someone else moved it first
+    }
+    const moved = readPid(aside);
+    if (moved !== null && moved !== holder && pidAlive(moved)) {
+      // We grabbed a fresh lock another starter just took: give it back.
+      try {
+        linkSync(aside, path);
+      } catch {
+        // it re-created one meanwhile
+      }
+      rmSync(aside, { force: true });
+      throw alreadyRunning(moved);
+    }
+    rmSync(aside, { force: true });
   }
   throw new OrbitError('internal', `Cannot acquire ${path}`);
 }
@@ -107,9 +139,14 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   const releaseLock = acquireLock(files.lock);
   let cleanup = releaseLock;
   try {
+    // Written only once we listen: a daemon that fails to start must not
+    // replace the token of the one already running (review L5).
     const token = randomBytes(32).toString('hex');
-    writePrivate(files.token, `${token}\n`);
     const db = openDatabase(join(config.home, 'orbit.db'));
+    cleanup = () => {
+      db.close();
+      releaseLock();
+    };
     const service = new OrbitService({
       config,
       env: opts.env,
@@ -148,6 +185,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         ),
       );
     });
+    writePrivate(files.token, `${token}\n`);
     const host = config.api.host.includes(':') ? `[${config.api.host}]` : config.api.host;
     const url = `http://${host}:${port}`;
     service.url = url;

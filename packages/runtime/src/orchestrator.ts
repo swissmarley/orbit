@@ -345,7 +345,12 @@ export class Orchestrator {
   }
 
   /** Kill switch for one Run (works across processes via the controls table). */
-  stop(runId: string, by: string): void {
+  stop(
+    runId: string,
+    by: string,
+    /** orbitd (the single writer) knows a `running` Run executes nowhere: close it. */
+    options: { orphaned?: boolean } = {},
+  ): void {
     const active = this.active.get(runId);
     this.deps.audit?.append({ actor: by, action: 'killswitch.run', subject: runId, data: {} });
     if (active) {
@@ -358,7 +363,13 @@ export class Orchestrator {
     for (let attempt = 0; attempt < 3; attempt++) {
       const s = this.deps.store.getRun(runId);
       if (!s) throw new OrbitError('not_found', `Run ${runId} not found`);
-      if (s.status !== 'queued' && s.status !== 'waiting_approval' && s.status !== 'rate_limited') {
+      const orphan = s.status === 'running' && options.orphaned === true;
+      if (
+        !orphan &&
+        s.status !== 'queued' &&
+        s.status !== 'waiting_approval' &&
+        s.status !== 'rate_limited'
+      ) {
         // Executing in another process: its kill-switch poll picks this up.
         if (s.status === 'running') this.deps.controls.requestStop(runId, by);
         return;
@@ -491,6 +502,19 @@ export class Orchestrator {
     }
   }
 
+  /** Which kill switch (if any) stops this Run right now. */
+  private blockedBy(
+    botId: string,
+    runId: string,
+  ): { scope: 'run' | 'bot' | 'global'; by: string } | null {
+    const global = this.deps.controls.globalKill();
+    if (global) return { scope: 'global', by: global };
+    const stop = this.deps.controls.stopRequested(runId);
+    if (stop) return { scope: 'run', by: stop };
+    if (this.deps.bots.find(botId)?.pausedAt) return { scope: 'bot', by: 'owner' };
+    return null;
+  }
+
   private checkDailyBudgets(
     bot: Bot,
     countRuns = true,
@@ -595,7 +619,46 @@ export class Orchestrator {
     const driver = this.driver;
     const append = this.appender(runId, bot.id);
     const prior = this.state(runId);
-    const ws = await this.workspaces(bot, driver.kind);
+    let ws: PreparedWorkspace;
+    try {
+      ws = await this.workspaces(bot, driver.kind);
+    } catch (err) {
+      // Review M1: never leave a Run looking queued or running when nothing executes.
+      this.deps.store.append(
+        runId,
+        bot.id,
+        [
+          event('run.failed', {
+            code: 'workspace_unavailable',
+            message: `The Bot's workspace could not be prepared: ${err instanceof Error ? err.message : String(err)}`,
+            retryable: true,
+            sessionId: prior.sessionId,
+          }),
+        ],
+        { expectSeq: seg.expectSeq },
+      );
+      this.deps.approvals.cancelForRun(runId, 'system', 'expired');
+      return this.state(runId);
+    }
+    // Review M2: a kill switch engaged while the workspace was prepared wins.
+    const blockedBy = this.blockedBy(bot.id, runId);
+    if (blockedBy) {
+      this.deps.store.append(
+        runId,
+        bot.id,
+        [
+          event('run.killed', blockedBy),
+          event('run.cancelled', {
+            reason: `Stopped by ${blockedBy.scope} kill switch (${blockedBy.by})`,
+            sessionId: prior.sessionId,
+          }),
+        ],
+        { expectSeq: seg.expectSeq },
+      );
+      this.deps.approvals.cancelForRun(runId, blockedBy.by);
+      this.deps.controls.clearStop(runId);
+      return this.state(runId);
+    }
     const model = bot.spec.model ?? config.models.default;
     const budgets = bot.spec.budgets;
     // Grants decided before this segment are usable in it, and only in it.
@@ -639,6 +702,9 @@ export class Orchestrator {
     wallClock.unref();
 
     const permission: PermissionHandler = async (req, signal) => {
+      // Check the switches on every call, not only on the kill-switch poll.
+      const blocked = stopCause ? null : this.blockedBy(bot.id, runId);
+      if (blocked) abort({ kind: 'kill', ...blocked });
       if (stopCause)
         return { behavior: 'deny', reason: 'This run is being stopped', interrupt: true };
       toolCalls += 1;

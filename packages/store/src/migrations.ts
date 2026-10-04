@@ -172,6 +172,13 @@ export const MIGRATIONS: Migration[] = [
   },
 ];
 
+/** When migration `id` was applied to this database, or null. */
+export function migrationAppliedAt(db: Database.Database, id: number): string | null {
+  const row = db.prepare('SELECT applied_at FROM schema_migrations WHERE id = ?').get(id) as
+    { applied_at: string } | undefined;
+  return row?.applied_at ?? null;
+}
+
 export function migrate(db: Database.Database): number[] {
   db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
     id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)`);

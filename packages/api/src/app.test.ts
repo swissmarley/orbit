@@ -457,6 +457,74 @@ describe('orbitd API — approvals, controls and housekeeping', () => {
   });
 });
 
+describe('orbitd API — safety review fixes', () => {
+  it('stop closes a Run left "running" that nothing executes (orphan)', async () => {
+    h = current = harness();
+    await createBot({ name: 'Notes', mock: { fixture: 'pong' } });
+    const q = h.service.orchestrator.enqueue('notes');
+    h.service.store.append(q.runId, q.botId, [
+      {
+        type: 'run.started',
+        data: {
+          driver: 'mock',
+          authMethod: 'mock',
+          model: 'opus',
+          cwd: h.home,
+          resumeSessionId: null,
+        },
+      },
+    ]);
+    const stopped = await h.json<RunState>('POST', `/v1/runs/${q.runId}/stop`);
+    expect(stopped.body.status).toBe('cancelled');
+  });
+
+  it('the global kill switch and Bot pause also close parked Runs (nothing resumes after release)', async () => {
+    h = current = harness();
+    await createBot({
+      name: 'Mailer',
+      mock: { fixture: 'send-email' },
+      approvals: { parkWindowSeconds: 0 },
+    });
+    const a = (await h.json<RunState>('POST', '/v1/bots/mailer/runs', {})).body;
+    const b = (await h.json<RunState>('POST', '/v1/bots/mailer/runs', {})).body;
+    await settle();
+    await h.json('POST', '/v1/kill', { on: true });
+    expect(h.service.store.getRun(a.runId)?.status).toBe('cancelled');
+    await h.json('POST', '/v1/kill', { on: false });
+    await h.json('POST', '/v1/bots/mailer/pause');
+    expect(h.service.store.getRun(b.runId)?.status).toBe('cancelled');
+    expect(h.service.approvals.list({ status: 'pending' })).toEqual([]);
+  });
+
+  it('error bodies never echo request bodies or vault values', async () => {
+    h = current = harness();
+    await h.json('PUT', '/v1/secrets/DB_PASSWORD', { value: 'correct-horse-battery' });
+    const res = await h.app.request('/v1/secrets/OTHER', {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      body: '{"value": "correct-horse-battery-staple" oops',
+    });
+    expect(res.status).toBe(400);
+    const text = await res.text();
+    expect(text).not.toContain('correct-horse');
+    expect(text).toMatch(/Malformed JSON body/);
+  });
+
+  it('checks the Host header too, not only the request URL', async () => {
+    h = current = harness();
+    const { createApp } = await import('./app');
+    const strict = createApp({
+      service: h.service,
+      token: TOKEN,
+      allowedHosts: ['127.0.0.1:7420'],
+    });
+    const res = await strict.request('http://127.0.0.1:7420/v1/health', {
+      headers: { host: 'evil.example:7420' },
+    });
+    expect(res.status).toBe(403);
+  });
+});
+
 describe('orbitd API — restart recovery', () => {
   it('fails Runs left running, re-queues queued ones', async () => {
     h = current = harness({ start: false });

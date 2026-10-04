@@ -214,8 +214,14 @@ describe('SandboxManager — directory', () => {
 
   it('moves a workspace kept under the M2 name slug to its id path, files included', async () => {
     const dirs = fresh();
-    const m = new SandboxManager({ ...dirs, run: fakeRunner(), support: FULL_SUPPORT });
-    const bot = makeBot({ name: 'Legacy Bot' });
+    // Renamed since M2: the workspace is found by the name it had then.
+    const m = new SandboxManager({
+      ...dirs,
+      run: fakeRunner(),
+      support: FULL_SUPPORT,
+      legacyName: (b) => (b.id === 'bot_test1' ? 'Legacy Bot' : null),
+    });
+    const bot = makeBot({ name: 'Renamed Bot' });
     const legacy = join(dirs.orbitHome, 'workspaces', 'legacy-bot');
     mkdirSync(legacy, { recursive: true });
     writeFileSync(join(legacy, 'notes.md'), 'kept');
@@ -223,6 +229,17 @@ describe('SandboxManager — directory', () => {
     expect(ws.path.endsWith(join('workspaces', 'bot_test1'))).toBe(true);
     expect(existsSync(join(ws.path, 'notes.md'))).toBe(true);
     expect(existsSync(legacy)).toBe(false);
+  });
+
+  it("never adopts another Bot's old workspace (no legacy name → fresh directory)", async () => {
+    const dirs = fresh();
+    const m = new SandboxManager({ ...dirs, run: fakeRunner(), support: FULL_SUPPORT });
+    const legacy = join(dirs.orbitHome, 'workspaces', 'legacy-bot');
+    mkdirSync(legacy, { recursive: true });
+    writeFileSync(join(legacy, 'notes.md'), 'not yours');
+    const ws = await m.prepare(makeBot({ name: 'Legacy Bot' }, 'bot_newcomer'), 'cli');
+    expect(existsSync(join(ws.path, 'notes.md'))).toBe(false);
+    expect(existsSync(join(legacy, 'notes.md'))).toBe(true);
   });
 
   it('refuses Bot ids that are not safe path, container and branch names', () => {
