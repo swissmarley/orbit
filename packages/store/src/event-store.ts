@@ -1,13 +1,16 @@
 import {
+  OrbitError,
   type Redactor,
   type RunEvent,
   RunEventBody,
   type RunState,
+  type RunStatus,
   defaultRedactor,
   foldRun,
+  normalizeRunState,
   replayRun,
 } from '@orbit/core';
-import { and, asc, desc, eq, gt, gte } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, gte, inArray } from 'drizzle-orm';
 import type { OrbitDb } from './db';
 import { events, runs } from './schema';
 
@@ -32,6 +35,15 @@ export interface AppendOptions {
 
 export type EventListener = (event: RunEvent) => void;
 
+export interface AppendGuard {
+  /**
+   * Compare-and-set: append only if the Run's last seq is exactly this
+   * (0 = the Run must not exist yet). Otherwise throws a `conflict` error and
+   * writes nothing — two processes cannot both resume or stop the same Run.
+   */
+  expectSeq?: number;
+}
+
 /**
  * Append-only event log with a synchronously maintained run projection.
  * Every body is validated and redacted before it is written; nothing that
@@ -55,16 +67,27 @@ export class EventStore {
     return () => this.listeners.delete(listener);
   }
 
-  append(runId: string, botId: string, bodies: readonly RunEventBody[]): RunEvent[] {
+  append(
+    runId: string,
+    botId: string,
+    bodies: readonly RunEventBody[],
+    guard: AppendGuard = {},
+  ): RunEvent[] {
     if (bodies.length === 0) return [];
     const validated = bodies.map((b) => RunEventBody.parse(this.redactor.redact(b)));
     const { orm } = this.db;
 
     const written = this.db.sqlite.transaction(() => {
       const existing = orm.select().from(runs).where(eq(runs.id, runId)).get();
-      let state = existing ? (existing.state as RunState) : undefined;
+      let state = existing ? normalizeRunState(existing.state as RunState) : undefined;
       if (state && state.botId !== botId) {
         throw new Error(`run ${runId} belongs to bot ${state.botId}, not ${botId}`);
+      }
+      if (guard.expectSeq !== undefined && (state?.lastSeq ?? 0) !== guard.expectSeq) {
+        throw new OrbitError(
+          'conflict',
+          `Run ${runId} changed concurrently (at seq ${state?.lastSeq ?? 0}, expected ${guard.expectSeq})`,
+        );
       }
       let seq = state?.lastSeq ?? 0;
       const out: RunEvent[] = [];
@@ -116,12 +139,22 @@ export class EventStore {
       .map(toEvent);
   }
 
-  /** Global feed after a given event id (SSE Last-Event-ID resume). */
-  listEventsAfter(afterId: number, limit = 500): RunEvent[] {
+  /** Global feed after a given event id (SSE Last-Event-ID resume), optionally for one Run or Bot. */
+  listEventsAfter(
+    afterId: number,
+    limit = 500,
+    filter: { runId?: string; botId?: string } = {},
+  ): RunEvent[] {
     return this.db.orm
       .select()
       .from(events)
-      .where(gt(events.id, afterId))
+      .where(
+        and(
+          gt(events.id, afterId),
+          filter.runId ? eq(events.runId, filter.runId) : undefined,
+          filter.botId ? eq(events.botId, filter.botId) : undefined,
+        ),
+      )
       .orderBy(asc(events.id))
       .limit(limit)
       .all()
@@ -130,16 +163,32 @@ export class EventStore {
 
   getRun(runId: string): RunState | undefined {
     const row = this.db.orm.select().from(runs).where(eq(runs.id, runId)).get();
-    return row ? (row.state as RunState) : undefined;
+    return row ? normalizeRunState(row.state as RunState) : undefined;
   }
 
-  listRuns(opts: { botId?: string; limit?: number } = {}): RunState[] {
-    const q = this.db.orm.select().from(runs);
-    const rows = (opts.botId ? q.where(eq(runs.botId, opts.botId)) : q)
-      .orderBy(desc(runs.createdAt))
+  listRuns(
+    opts: { botId?: string; status?: readonly RunStatus[]; limit?: number } = {},
+  ): RunState[] {
+    const conds = [
+      opts.botId ? eq(runs.botId, opts.botId) : undefined,
+      opts.status ? inArray(runs.status, [...opts.status]) : undefined,
+    ].filter((c) => c !== undefined);
+    return this.db.orm
+      .select()
+      .from(runs)
+      .where(conds.length ? and(...conds) : undefined)
+      .orderBy(desc(runs.createdAt), desc(runs.id))
       .limit(opts.limit ?? 100)
-      .all();
-    return rows.map((r) => r.state as RunState);
+      .all()
+      .map((r) => normalizeRunState(r.state as RunState));
+  }
+
+  /** Newest event id in the log (0 when empty): where a live feed starts. */
+  lastEventId(): number {
+    const row = this.db.sqlite.prepare('SELECT MAX(id) AS id FROM events').get() as {
+      id: number | null;
+    };
+    return row.id ?? 0;
   }
 
   /** Runs of a Bot created at or after `sinceIso` (daily budgets). */
@@ -149,7 +198,7 @@ export class EventStore {
       .from(runs)
       .where(and(eq(runs.botId, botId), gte(runs.createdAt, sinceIso)))
       .all()
-      .map((r) => r.state as RunState);
+      .map((r) => normalizeRunState(r.state as RunState));
   }
 
   /** Re-derive a run's projection from the log (replay). */

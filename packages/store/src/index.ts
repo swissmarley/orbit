@@ -6,5 +6,6 @@ export { BotRepo } from './bot-repo';
 export { Controls } from './controls';
 export * as schema from './schema';
 export { openDatabase, type OrbitDb } from './db';
-export { EventStore, type EventListener } from './event-store';
+export { EventStore, type AppendGuard, type EventListener } from './event-store';
 export { MIGRATIONS, migrate } from './migrations';
+export { TriggerStateRepo, type TriggerFire } from './trigger-state';

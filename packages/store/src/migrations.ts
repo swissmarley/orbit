@@ -153,6 +153,23 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    id: 3,
+    name: 'daemon-queue-scheduler',
+    sql: `
+      -- Grants are scoped to the driver segment after their decision (M2 review L4).
+      ALTER TABLE grants ADD COLUMN revoked_at TEXT;
+      -- Last fire of each scheduled trigger, so restarts neither double-fire nor reset intervals.
+      CREATE TABLE trigger_state (
+        key TEXT PRIMARY KEY,
+        bot_id TEXT NOT NULL,
+        last_fired_at TEXT NOT NULL,
+        last_run_id TEXT
+      );
+      CREATE INDEX trigger_state_bot_idx ON trigger_state (bot_id);
+      CREATE INDEX approvals_expiry_idx ON approvals (status, expires_at);
+    `,
+  },
 ];
 
 export function migrate(db: Database.Database): number[] {

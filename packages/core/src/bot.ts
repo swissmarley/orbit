@@ -40,6 +40,36 @@ export const BotSandbox = z.object({
 });
 export type BotSandbox = z.infer<typeof BotSandbox>;
 
+const triggerBase = {
+  /** Shown in schedules and recorded as the Run's trigger source. */
+  name: z.string().trim().min(1).max(80).optional(),
+  /** Task for Runs started by this trigger (default: the Bot's goal). */
+  prompt: z.string().trim().min(1).max(4000).optional(),
+  enabled: z.boolean().default(true),
+};
+
+/** Standard 5-field cron expression (6 with seconds), validated by the scheduler. */
+export const CronTrigger = z.object({
+  kind: z.literal('cron'),
+  cron: z.string().trim().min(1).max(120),
+  /** IANA time zone; default: the daemon's local zone. */
+  timezone: z.string().trim().min(1).optional(),
+  ...triggerBase,
+});
+
+/** Every N minutes, measured from the previous fire (or from when it was first seen). */
+export const IntervalTrigger = z.object({
+  kind: z.literal('interval'),
+  everyMinutes: z
+    .int()
+    .min(1)
+    .max(31 * 24 * 60),
+  ...triggerBase,
+});
+
+export const TriggerSpec = z.discriminatedUnion('kind', [CronTrigger, IntervalTrigger]);
+export type TriggerSpec = z.infer<typeof TriggerSpec>;
+
 /**
  * User-authored Bot configuration. Later milestones extend it with triggers,
  * policy, budgets, plugins and memory settings; every field added must have a
@@ -66,10 +96,20 @@ export const BotSpec = z.object({
       parkWindowSeconds: z.int().min(0).max(600).default(30),
       /** Resume the Run automatically once every pending approval is decided. */
       autoResume: z.boolean().default(true),
+      /** Undecided approvals expire (count as denied) after this many hours. */
+      expireAfterHours: z
+        .number()
+        .positive()
+        .max(30 * 24)
+        .default(72),
     })
     .prefault({}),
-  /** Resume after a subscription usage limit resets (scheduler, M3). */
+  /** Resume after a subscription usage limit resets (RateLimitManager). */
   autoResumeAfterUsageLimit: z.boolean().default(true),
+  /** Scheduled triggers (cron, interval); manual Runs need no trigger. */
+  triggers: z.array(TriggerSpec).max(20).default([]),
+  /** Queue priority of this Bot's Runs (higher first). Manual Runs get +10. */
+  priority: z.int().min(-10).max(10).default(0),
   /** Extra directories the Bot may read (never write). */
   readRoots: z.array(z.string().min(1)).default([]),
 });

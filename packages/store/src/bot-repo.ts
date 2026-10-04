@@ -1,4 +1,12 @@
-import { type Bot, BotSpec, type BotSpecInput, OrbitError, newId, slugify } from '@orbit/core';
+import {
+  type Bot,
+  BotSpec,
+  type BotSpecInput,
+  OrbitError,
+  type Redactor,
+  newId,
+  slugify,
+} from '@orbit/core';
 import { and, asc, eq, or } from 'drizzle-orm';
 import type { OrbitDb } from './db';
 import { botVersions, bots } from './schema';
@@ -21,10 +29,17 @@ export class BotRepo {
   constructor(
     private readonly db: OrbitDb,
     private readonly now: () => Date = () => new Date(),
+    /** Specs are user-authored but may contain pasted secrets: stored redacted. */
+    private readonly redactor?: Redactor,
   ) {}
 
-  create(input: BotSpecInput): Bot {
+  private parseSpec(input: BotSpecInput): BotSpec {
     const spec = BotSpec.parse(input);
+    return this.redactor ? BotSpec.parse(this.redactor.redact(spec)) : spec;
+  }
+
+  create(input: BotSpecInput): Bot {
+    const spec = this.parseSpec(input);
     const slug = slugify(spec.name);
     if (this.find(slug)) {
       throw new OrbitError('invalid_input', `A bot named "${spec.name}" already exists`);
@@ -43,7 +58,7 @@ export class BotRepo {
 
   update(idOrSlug: string, input: BotSpecInput): Bot {
     const current = this.get(idOrSlug);
-    const spec = BotSpec.parse(input);
+    const spec = this.parseSpec(input);
     const slug = slugify(spec.name);
     const clash = this.find(slug);
     if (clash && clash.id !== current.id) {

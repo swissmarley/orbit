@@ -1,3 +1,4 @@
+import { Redactor } from '@orbit/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BotRepo } from './bot-repo';
 import { type OrbitDb, openDatabase } from './db';
@@ -33,5 +34,40 @@ describe('BotRepo', () => {
 
   it('reports missing bots with a not_found error', () => {
     expect(() => repo.get('nope')).toThrow(expect.objectContaining({ code: 'not_found' }));
+  });
+
+  it('stores specs redacted when given a redactor', () => {
+    const redacting = new BotRepo(db, () => new Date(), new Redactor(['hunter2-secret-value']));
+    const bot = redacting.create({
+      name: 'Leaky',
+      goal: 'Use token hunter2-secret-value to call the API',
+      instructions: 'key sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAA',
+    });
+    expect(bot.spec.goal).not.toContain('hunter2-secret-value');
+    const raw = JSON.stringify(
+      db.sqlite.prepare('SELECT spec FROM bots UNION ALL SELECT spec FROM bot_versions').all(),
+    );
+    expect(raw).not.toContain('hunter2-secret-value');
+    expect(raw).not.toContain('sk-ant-api03-AAAA');
+    expect(raw).toContain('[REDACTED:');
+  });
+
+  it('accepts cron and interval triggers with defaults', () => {
+    const bot = repo.create({
+      name: 'Sched',
+      goal: 'g',
+      triggers: [
+        { kind: 'cron', cron: '0 9 * * 1-5' },
+        { kind: 'interval', everyMinutes: 30, prompt: 'check in' },
+      ],
+    });
+    expect(bot.spec.triggers).toEqual([
+      { kind: 'cron', cron: '0 9 * * 1-5', enabled: true },
+      { kind: 'interval', everyMinutes: 30, prompt: 'check in', enabled: true },
+    ]);
+    expect(bot.spec.priority).toBe(0);
+    expect(() =>
+      repo.create({ name: 'Bad', goal: 'g', triggers: [{ kind: 'interval', everyMinutes: 0 }] }),
+    ).toThrow();
   });
 });

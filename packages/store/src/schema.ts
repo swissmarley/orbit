@@ -94,6 +94,14 @@ export const grants = sqliteTable('grants', {
   updatedInput: text('updated_input', { mode: 'json' }),
   createdAt: text('created_at').notNull(),
   usedAt: text('used_at'),
+  revokedAt: text('revoked_at'),
+});
+
+export const triggerState = sqliteTable('trigger_state', {
+  key: text('key').primaryKey(),
+  botId: text('bot_id').notNull(),
+  lastFiredAt: text('last_fired_at').notNull(),
+  lastRunId: text('last_run_id'),
 });
 
 export const rules = sqliteTable('rules', {

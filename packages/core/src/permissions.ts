@@ -30,7 +30,10 @@ export interface ToolResultRequest {
   toolName: string;
   toolUseId: string | null;
   input: Record<string, unknown>;
+  /** Output on success; the error text when the tool failed (`isError`). */
   response: unknown;
+  /** The tool failed (PostToolUseFailure): its error cannot be rewritten, only stopped. */
+  isError?: boolean;
 }
 
 export interface ToolResultDecision {
@@ -38,6 +41,8 @@ export interface ToolResultDecision {
   updatedOutput?: unknown;
   /** Extra context for the model, e.g. "this content is untrusted". */
   additionalContext?: string;
+  /** Stop the engine before the model sees this result (fail closed); the reason. */
+  stop?: string;
 }
 
 export type ToolResultHandler = (request: ToolResultRequest) => Promise<ToolResultDecision>;

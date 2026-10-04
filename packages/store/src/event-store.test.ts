@@ -132,4 +132,42 @@ describe('EventStore', () => {
     expect(store.listRuns().map((r) => r.runId)).toEqual(['run_b', 'run_a']);
     expect(store.listRuns({ botId: 'bot_1' }).map((r) => r.runId)).toEqual(['run_a']);
   });
+
+  it('compare-and-set append refuses a stale writer and writes nothing', () => {
+    const first = store.append('run_a', 'bot_1', run.slice(0, 2), { expectSeq: 0 });
+    expect(first).toHaveLength(2);
+    expect(() => store.append('run_a', 'bot_1', run.slice(0, 1), { expectSeq: 0 })).toThrow(
+      expect.objectContaining({ code: 'conflict' }),
+    );
+    expect(() => store.append('run_a', 'bot_1', run.slice(2, 3), { expectSeq: 1 })).toThrow(
+      /changed concurrently/,
+    );
+    expect(store.listRunEvents('run_a')).toHaveLength(2);
+    store.append('run_a', 'bot_1', run.slice(2, 3), { expectSeq: 2 });
+    expect(store.getRun('run_a')?.lastSeq).toBe(3);
+  });
+
+  it('filters runs by status and the feed by run or bot', () => {
+    store.append('run_a', 'bot_1', run);
+    store.append('run_b', 'bot_2', run.slice(0, 1));
+    expect(store.listRuns({ status: ['queued'] }).map((r) => r.runId)).toEqual(['run_b']);
+    expect(store.listRuns({ status: ['completed', 'queued'] })).toHaveLength(2);
+    expect(store.listEventsAfter(0, 100, { runId: 'run_b' }).map((e) => e.runId)).toEqual([
+      'run_b',
+    ]);
+    expect(store.listEventsAfter(0, 100, { botId: 'bot_1' })).toHaveLength(5);
+    expect(store.lastEventId()).toBe(6);
+  });
+
+  it('normalizes projections stored before newer fields existed', () => {
+    store.append('run_a', 'bot_1', run.slice(0, 1));
+    const row = db.sqlite.prepare('SELECT state FROM runs').get() as { state: string };
+    const old = JSON.parse(row.state) as Record<string, unknown>;
+    delete old.resumeAt;
+    delete old.priority;
+    db.sqlite.prepare('UPDATE runs SET state = ?').run(JSON.stringify(old));
+    expect(store.getRun('run_a')).toMatchObject({ resumeAt: null, priority: 0 });
+    store.append('run_a', 'bot_1', run.slice(1, 2));
+    expect(store.getRun('run_a')).toMatchObject({ resumeAt: null, status: 'running' });
+  });
 });

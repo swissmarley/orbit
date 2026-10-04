@@ -20,7 +20,17 @@ function ev<T extends string, S extends z.ZodRawShape>(type: T, data: S) {
 }
 
 export const TriggerRef = z.object({
-  kind: z.enum(['manual', 'cron', 'webhook', 'slack', 'file', 'git', 'delegation', 'resume']),
+  kind: z.enum([
+    'manual',
+    'cron',
+    'interval',
+    'webhook',
+    'slack',
+    'file',
+    'git',
+    'delegation',
+    'resume',
+  ]),
   source: nullableString,
 });
 export type TriggerRef = z.infer<typeof TriggerRef>;
@@ -44,7 +54,14 @@ export const UsageLimitStatus = z.enum(['allowed', 'allowed_warning', 'rejected'
 
 export const RunEventBody = z.discriminatedUnion('type', [
   // ── lifecycle (orchestrator) ────────────────────────────────────────────
-  ev('run.queued', { trigger: TriggerRef, prompt: z.string() }),
+  ev('run.queued', {
+    trigger: TriggerRef,
+    prompt: z.string(),
+    /** Higher runs first; FIFO within a priority (RunQueue). */
+    priority: z.int().min(-100).max(100).default(0),
+    /** MockDriver scenario chosen for this Run (demo mode and tests). */
+    fixture: nullableString.default(null),
+  }),
   ev('run.started', {
     driver: DriverKind,
     authMethod: AuthMethod,
@@ -124,6 +141,11 @@ export const RunEventBody = z.discriminatedUnion('type', [
   ev('run.resumed', {
     reason: z.enum(['approval', 'usage_limit', 'manual']),
     sessionId: nullableString,
+  }),
+  /** The Run will resume by itself at `at` (e.g. when a usage limit resets). */
+  ev('run.resume_scheduled', {
+    at: z.iso.datetime(),
+    reason: z.enum(['usage_limit']),
   }),
   ev('subagent.started', {
     toolUseId: z.string(),

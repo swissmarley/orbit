@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RunEvent, type RunEventBody } from './events';
-import { foldRun, replayRun } from './projection';
+import { RunState, foldRun, normalizeRunState, replayRun } from './projection';
 
 let id = 0;
 function envelope(seq: number, body: RunEventBody): RunEvent {
@@ -18,7 +18,7 @@ function envelope(seq: number, body: RunEventBody): RunEvent {
 const happy: RunEvent[] = [
   envelope(1, {
     type: 'run.queued',
-    data: { trigger: { kind: 'manual', source: null }, prompt: 'hi' },
+    data: { trigger: { kind: 'manual', source: null }, prompt: 'hi', priority: 0, fixture: null },
   }),
   envelope(2, {
     type: 'run.started',
@@ -108,5 +108,43 @@ describe('run projection', () => {
     expect(s.endedAt).toBeNull();
     expect(s.usageLimit?.resetsAt).toBe('2026-10-04T15:00:00.000Z');
     expect(s.error).toBeNull();
+  });
+});
+
+describe('resume scheduling and older projections', () => {
+  it('tracks resumeAt until the Run resumes', () => {
+    const base = happy.slice(0, 3);
+    const limited = replayRun([
+      ...base,
+      envelope(4, {
+        type: 'run.rate_limited',
+        data: {
+          resetsAt: '2026-10-04T15:00:00.000Z',
+          limitType: 'five_hour',
+          message: 'limit',
+          sessionId: 's1',
+        },
+      }),
+      envelope(5, {
+        type: 'run.resume_scheduled',
+        data: { at: '2026-10-04T15:00:30.000Z', reason: 'usage_limit' },
+      }),
+    ])!;
+    expect(limited.status).toBe('rate_limited');
+    expect(limited.resumeAt).toBe('2026-10-04T15:00:30.000Z');
+    const resumed = foldRun(
+      limited,
+      envelope(6, { type: 'run.resumed', data: { reason: 'usage_limit', sessionId: 's1' } }),
+    );
+    expect(resumed.resumeAt).toBeNull();
+    expect(resumed.status).toBe('running');
+  });
+
+  it('fills fields missing from projections stored before they existed', () => {
+    const stored = replayRun(happy)!;
+    const { resumeAt: _r, priority: _p, ...old } = stored;
+    const normalized = normalizeRunState(old as RunState);
+    expect(normalized).toEqual(stored);
+    expect(RunState.parse(normalized)).toEqual(stored);
   });
 });
