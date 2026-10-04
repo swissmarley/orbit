@@ -12,6 +12,10 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@orbit/core": "workspace:*"
+    "@napi-rs/keyring": "2.1.0",
+    "@orbit/core": "workspace:*",
+    "@orbit/store": "workspace:*",
+    "diff": "9.0.0",
+    "drizzle-orm": "0.45.3"
   }
 }

@@ -118,71 +118,95 @@ function targetsOf(toolName: string, input: Record<string, unknown>): string[] {
 const allow = (reason: string): ToolPermissionDecision => ({ behavior: 'allow', reason });
 const deny = (reason: string): ToolPermissionDecision => ({ behavior: 'deny', reason });
 
+export interface FileAccessContext {
+  workspace: string;
+  readRoots: readonly string[];
+  sensitive: readonly string[];
+}
+
+export function fileAccessContext(o: BaselinePolicyOptions): FileAccessContext {
+  const workspace = realish(resolve(o.workspace));
+  return {
+    workspace,
+    readRoots: [workspace, ...(o.readRoots ?? []).map((r) => realish(resolve(r)))],
+    sensitive: sensitiveRoots(o.home ?? homedir(), o.orbitHome),
+  };
+}
+
 /**
- * Baseline default-deny policy (M1):
+ * Path confinement for built-in file tools. Returns a deny reason, or null
+ * when every path argument is acceptable (or the tool has no path).
+ */
+export function checkFileAccess(
+  toolName: string,
+  input: Record<string, unknown>,
+  ctx: FileAccessContext,
+): string | null {
+  const { workspace, readRoots, sensitive } = ctx;
+  const isSensitive = (abs: string) =>
+    !within(workspace, abs) && sensitive.some((s) => within(s, abs));
+  if (READ_TOOLS.has(toolName)) {
+    for (const t of targetsOf(toolName, input)) {
+      if (t.includes('..')) return `Path traversal is not allowed (${t})`;
+      const abs = resolveTarget(workspace, t);
+      if (abs === null) return `Home-relative paths are not allowed (${t})`;
+      if (isSensitive(abs)) return `Reading credential or system paths is not allowed (${t})`;
+      // Glob patterns: check the literal prefix before the first wildcard.
+      const literal = abs.split(/[*?[{]/)[0] ?? abs;
+      if (!readRoots.some((r) => within(r, literal) || within(r, dirname(literal)))) {
+        return `Reads outside the Bot workspace are not allowed (${t})`;
+      }
+    }
+    return null;
+  }
+  if (LOCAL_WRITE_TOOLS.has(toolName)) {
+    const targets = targetsOf(toolName, input);
+    if (targets.length === 0) return 'File write without a path';
+    for (const t of targets) {
+      const abs = resolveTarget(workspace, t);
+      if (abs === null) return `Home-relative paths are not allowed (${t})`;
+      if (!within(workspace, abs)) return `Writes outside the Bot workspace are not allowed (${t})`;
+      const rel = relative(workspace, abs);
+      const first = rel.split(sep)[0] ?? '';
+      if (
+        PROTECTED_WORKSPACE_NAMES.has(basename(abs)) ||
+        PROTECTED_WORKSPACE_DIRS.includes(first)
+      ) {
+        return `Bots may not edit engine configuration or instructions (${rel})`;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Baseline default-deny policy (M1, kept for tests and demos):
  * - read tools may only look inside the workspace (plus explicit read roots),
  *   never at credential stores, /proc or Orbit's own data;
  * - file writes only inside the workspace, never to engine config files;
  * - `~` paths, shell, network, MCP and unknown tools are denied.
- * M2's tiered policy engine and approval queue build on the same contract.
+ * The tiered PolicyEngine (engine.ts) supersedes it for real Runs.
  */
 export function baselinePolicy(options: BaselinePolicyOptions | string): PermissionHandler {
   const o: BaselinePolicyOptions = typeof options === 'string' ? { workspace: options } : options;
-  const workspace = realish(resolve(o.workspace));
-  const readRoots = [workspace, ...(o.readRoots ?? []).map((r) => realish(resolve(r)))];
-  const sensitive = sensitiveRoots(o.home ?? homedir(), o.orbitHome);
-
-  const isSensitive = (abs: string) =>
-    !within(workspace, abs) && sensitive.some((s) => within(s, abs));
-
+  const ctx = fileAccessContext(o);
   return (request) => {
     const { toolName, input } = request;
     if (SAFE_TOOLS.has(toolName)) return Promise.resolve(allow('No filesystem or network access'));
     if (DELEGATION_TOOLS.has(toolName)) {
       return Promise.resolve(allow('Delegation to a subagent (its tool calls are checked too)'));
     }
-
-    if (READ_TOOLS.has(toolName)) {
-      for (const t of targetsOf(toolName, input)) {
-        if (t.includes('..')) return Promise.resolve(deny(`Path traversal is not allowed (${t})`));
-        const abs = resolveTarget(workspace, t);
-        if (abs === null)
-          return Promise.resolve(deny(`Home-relative paths are not allowed (${t})`));
-        if (isSensitive(abs))
-          return Promise.resolve(deny(`Reading credential or system paths is not allowed (${t})`));
-        // Glob patterns: check the literal prefix before the first wildcard.
-        const literal = abs.split(/[*?[{]/)[0] ?? abs;
-        if (!readRoots.some((r) => within(r, literal) || within(r, dirname(literal)))) {
-          return Promise.resolve(deny(`Reads outside the Bot workspace are not allowed (${t})`));
-        }
-      }
-      return Promise.resolve(allow('Read inside the Bot workspace'));
+    if (READ_TOOLS.has(toolName) || LOCAL_WRITE_TOOLS.has(toolName)) {
+      const denied = checkFileAccess(toolName, input, ctx);
+      if (denied) return Promise.resolve(deny(denied));
+      return Promise.resolve(
+        allow(
+          READ_TOOLS.has(toolName)
+            ? 'Read inside the Bot workspace'
+            : 'File write inside the Bot workspace',
+        ),
+      );
     }
-
-    if (LOCAL_WRITE_TOOLS.has(toolName)) {
-      const targets = targetsOf(toolName, input);
-      if (targets.length === 0) return Promise.resolve(deny('File write without a path'));
-      for (const t of targets) {
-        const abs = resolveTarget(workspace, t);
-        if (abs === null)
-          return Promise.resolve(deny(`Home-relative paths are not allowed (${t})`));
-        if (!within(workspace, abs)) {
-          return Promise.resolve(deny(`Writes outside the Bot workspace are not allowed (${t})`));
-        }
-        const rel = relative(workspace, abs);
-        const first = rel.split(sep)[0] ?? '';
-        if (
-          PROTECTED_WORKSPACE_NAMES.has(basename(abs)) ||
-          PROTECTED_WORKSPACE_DIRS.includes(first)
-        ) {
-          return Promise.resolve(
-            deny(`Bots may not edit engine configuration or instructions (${rel})`),
-          );
-        }
-      }
-      return Promise.resolve(allow('File write inside the Bot workspace'));
-    }
-
     return Promise.resolve(
       deny(`${toolName || 'unnamed tool'} is not permitted by the default-deny policy`),
     );
