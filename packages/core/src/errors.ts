@@ -32,6 +32,9 @@ export type OrbitErrorCode =
   | 'conflict'
   /** The local daemon is not running or not reachable. */
   | 'daemon_unavailable'
+  /** The API refused the client's token, host or origin. */
+  | 'unauthorized'
+  | 'forbidden'
   | 'internal';
 
 const EXIT_FOR_CODE: Record<OrbitErrorCode, ExitCode> = {
@@ -45,6 +48,8 @@ const EXIT_FOR_CODE: Record<OrbitErrorCode, ExitCode> = {
   blocked: ExitCode.blocked,
   conflict: ExitCode.error,
   daemon_unavailable: ExitCode.error,
+  unauthorized: ExitCode.error,
+  forbidden: ExitCode.error,
   internal: ExitCode.error,
 };
 

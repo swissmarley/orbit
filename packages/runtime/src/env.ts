@@ -10,7 +10,12 @@ export type ChildKind =
   /** The Agent SDK engine (SdkDriver, API-key/cloud mode). */
   | 'sdk-engine'
   /** Anything else: MCP servers, hooks we spawn, tools, sandboxes, probes. */
-  | 'tool';
+  | 'tool'
+  /**
+   * orbitd started by the CLI: Orbit itself, so it receives Orbit's settings
+   * and the API credentials it hands to the SDK engine — never OAuth tokens.
+   */
+  | 'orbitd';
 
 export type Env = Record<string, string | undefined>;
 
@@ -84,6 +89,9 @@ const SDK_ENGINE: readonly string[] = [
 ];
 const SDK_ENGINE_PREFIXES: readonly string[] = ['VERTEX_REGION_'];
 
+/** Orbit's own configuration variables (ORBIT_HOME, ORBIT_DRIVER, …). */
+const ORBITD_PREFIXES: readonly string[] = ['ORBIT_'];
+
 /** Never present in any child environment Orbit builds. */
 export const ALWAYS_DENIED: readonly string[] = [
   'CLAUDE_CODE_OAUTH_TOKEN',
@@ -104,17 +112,18 @@ export const API_CREDENTIALS: readonly string[] = [
 function allowed(kind: ChildKind): { names: Set<string>; prefixes: readonly string[] } {
   const names = new Set<string>([...BASE, ...NETWORK]);
   const prefixes = [...BASE_PREFIXES];
-  if (kind === 'cli-engine') CLI_ENGINE.forEach((n) => names.add(n));
-  if (kind === 'sdk-engine') {
+  if (kind === 'cli-engine' || kind === 'orbitd') CLI_ENGINE.forEach((n) => names.add(n));
+  if (kind === 'sdk-engine' || kind === 'orbitd') {
     SDK_ENGINE.forEach((n) => names.add(n));
     prefixes.push(...SDK_ENGINE_PREFIXES);
   }
+  if (kind === 'orbitd') prefixes.push(...ORBITD_PREFIXES);
   return { names, prefixes };
 }
 
 function deniedFor(kind: ChildKind): Set<string> {
   const denied = new Set(ALWAYS_DENIED);
-  if (kind !== 'sdk-engine') API_CREDENTIALS.forEach((n) => denied.add(n));
+  if (kind !== 'sdk-engine' && kind !== 'orbitd') API_CREDENTIALS.forEach((n) => denied.add(n));
   return denied;
 }
 

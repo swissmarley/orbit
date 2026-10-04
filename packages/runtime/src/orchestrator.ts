@@ -138,8 +138,10 @@ export class Orchestrator {
   private readonly now: () => Date;
   private readonly workspaces: WorkspaceProvider;
   private killTimer: NodeJS.Timeout | undefined;
+  private driver: AgentDriver;
 
   constructor(private readonly deps: OrchestratorDeps) {
+    this.driver = deps.driver;
     this.now = deps.now ?? (() => new Date());
     this.workspaces = deps.workspaces ?? directoryWorkspaces(deps.config);
   }
@@ -419,6 +421,18 @@ export class Orchestrator {
     });
   }
 
+  /**
+   * Swap the engine driver (orbitd resolves auth lazily). Segments already
+   * executing keep the driver they started with.
+   */
+  setDriver(driver: AgentDriver): void {
+    this.driver = driver;
+  }
+
+  get driverKind(): DriverKind {
+    return this.driver.kind;
+  }
+
   activeRuns(): string[] {
     return [...this.active.keys()];
   }
@@ -577,7 +591,8 @@ export class Orchestrator {
 
   private async segment(seg: Segment): Promise<RunState> {
     const { runId, bot } = seg;
-    const { driver, config } = this.deps;
+    const { config } = this.deps;
+    const driver = this.driver;
     const append = this.appender(runId, bot.id);
     const prior = this.state(runId);
     const ws = await this.workspaces(bot, driver.kind);

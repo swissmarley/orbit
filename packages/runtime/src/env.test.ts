@@ -177,6 +177,43 @@ describe('buildChildEnv: tool (MCP servers, hooks, sandboxes, probes)', () => {
   });
 });
 
+describe('buildChildEnv: orbitd (the daemon the CLI starts)', () => {
+  const env = buildChildEnv('orbitd', {
+    ...DIRTY,
+    ORBIT_HOME: '/home/tester/.orbit',
+    ORBIT_DRIVER: 'mock',
+  });
+
+  it('gets Orbit settings, API / cloud credentials and CLAUDE_CONFIG_DIR', () => {
+    expect(env).toMatchObject({
+      ORBIT_HOME: '/home/tester/.orbit',
+      ORBIT_DRIVER: 'mock',
+      ANTHROPIC_API_KEY: SECRETS.ANTHROPIC_API_KEY,
+      AWS_SECRET_ACCESS_KEY: SECRETS.AWS_SECRET_ACCESS_KEY,
+      CLAUDE_CONFIG_DIR: '/home/tester/.claude-alt',
+      PATH: BASICS.PATH,
+    });
+  });
+
+  it('never gets OAuth or session tokens, unrelated secrets or loader hooks', () => {
+    expectNoValues(
+      env,
+      OAUTH_LIKE.map((k) => SECRETS[k]),
+    );
+    expectNoValues(env, [
+      SECRETS.GITHUB_TOKEN,
+      SECRETS.MY_SECRET,
+      SECRETS.NPM_TOKEN,
+      SECRETS.OPENAI_API_KEY,
+    ]);
+    expect(env.NODE_OPTIONS).toBeUndefined();
+    expect(env.LD_PRELOAD).toBeUndefined();
+    expect(() => {
+      buildChildEnv('orbitd', {}, { CLAUDE_CODE_OAUTH_TOKEN: 'x' });
+    }).toThrow(EnvPolicyError);
+  });
+});
+
 describe('buildChildEnv: shared behaviour', () => {
   it.each(KINDS)('%s passes the allowlisted basics through unchanged', (kind) => {
     expect(buildChildEnv(kind, DIRTY)).toMatchObject(BASICS);
