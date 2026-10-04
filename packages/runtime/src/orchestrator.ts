@@ -15,6 +15,7 @@ import {
   type ToolResultHandler,
   type TriggerRef,
   event,
+  inputHash,
   isTerminalEvent,
   newId,
   slugify,
@@ -86,7 +87,12 @@ export interface StartRunOptions {
 
 type StopCause =
   | { kind: 'kill'; scope: 'run' | 'bot' | 'global'; by: string }
-  | { kind: 'budget'; budget: 'toolCalls' | 'wallClock' | 'tokens'; limit: number; actual: number };
+  | {
+      kind: 'budget';
+      budget: 'toolCalls' | 'wallClock' | 'tokens' | 'costPerRun' | 'costPerDay';
+      limit: number;
+      actual: number;
+    };
 
 interface Segment {
   runId: string;
@@ -196,6 +202,24 @@ export class Orchestrator {
         'invalid_input',
         `Run ${runId} still waits on ${state.pendingApprovals.join(', ')}`,
       );
+    }
+    // Budgets are per Run and per day: a resume must not reset them.
+    const exhausted = this.exhaustedBudget(bot, state);
+    if (exhausted) {
+      this.appender(
+        runId,
+        bot.id,
+      )([
+        event('budget.exceeded', exhausted),
+        event('run.failed', {
+          code: 'budget_exceeded',
+          message: `Cannot resume: ${exhausted.budget} budget exhausted (${exhausted.actual} of ${exhausted.limit})`,
+          retryable: false,
+          sessionId: state.sessionId,
+        }),
+      ]);
+      this.deps.approvals.cancelForRun(runId, 'system');
+      return this.state(runId);
     }
     const reason = state.status === 'waiting_approval' ? 'approval' : 'usage_limit';
     const prompt =
@@ -318,14 +342,16 @@ export class Orchestrator {
 
   private checkDailyBudgets(
     bot: Bot,
+    countRuns = true,
   ): { budget: 'runsPerDay' | 'costPerDay'; limit: number; actual: number } | null {
     const today = this.deps.store.runsSince(bot.id, startOfUtcDay(this.now()));
     const b = bot.spec.budgets;
     // The Run just queued is included in `today`.
-    if (today.length > b.maxRunsPerDay)
+    if (countRuns && today.length > b.maxRunsPerDay)
       return { budget: 'runsPerDay', limit: b.maxRunsPerDay, actual: today.length };
     if (b.maxCostUsdPerDay !== null) {
-      const spent = today.reduce((sum, r) => sum + (r.usage?.costUsd ?? 0), 0);
+      // All segments of every Run started today.
+      const spent = today.reduce((sum, r) => sum + r.totals.costUsd, 0);
       if (spent >= b.maxCostUsdPerDay)
         return {
           budget: 'costPerDay',
@@ -336,16 +362,52 @@ export class Orchestrator {
     return null;
   }
 
+  /** Budgets a resume would exceed: per-Run totals and per-day cost. */
+  private exhaustedBudget(
+    bot: Bot,
+    state: RunState,
+  ): {
+    budget: 'wallClock' | 'tokens' | 'costPerRun' | 'costPerDay';
+    limit: number;
+    actual: number;
+  } | null {
+    const b = bot.spec.budgets;
+    if (state.totals.activeMs >= b.maxWallClockMinutes * 60_000) {
+      return {
+        budget: 'wallClock',
+        limit: b.maxWallClockMinutes,
+        actual: Number((state.totals.activeMs / 60_000).toFixed(2)),
+      };
+    }
+    if (b.maxTokensPerRun !== null && state.totals.tokens >= b.maxTokensPerRun) {
+      return { budget: 'tokens', limit: b.maxTokensPerRun, actual: state.totals.tokens };
+    }
+    if (b.maxCostUsdPerRun !== null && state.totals.costUsd >= b.maxCostUsdPerRun) {
+      return {
+        budget: 'costPerRun',
+        limit: b.maxCostUsdPerRun,
+        actual: Number(state.totals.costUsd.toFixed(4)),
+      };
+    }
+    const daily = this.checkDailyBudgets(bot, false);
+    return daily?.budget === 'costPerDay'
+      ? { budget: 'costPerDay', limit: daily.limit, actual: daily.actual }
+      : null;
+  }
+
   private decisionsPrompt(runId: string): string {
     const decided = this.deps.approvals.list({ runId }).filter((a) => a.status !== 'pending');
     const lines = decided.slice(-10).map((a) => {
       const d = a.decision;
+      // Only Orbit-controlled text here (tool name, ids, the owner's own words):
+      // the card summary is derived from model-written input.
+      const ref = `${a.toolName} (${a.id})`;
       if (a.status === 'approved') {
         return d?.editedInput
-          ? `- APPROVED WITH EDITS: ${a.card.what}. Retry the same call; Orbit will run the edited version: ${JSON.stringify(d.editedInput)}`
-          : `- APPROVED: ${a.card.what}. Retry the exact same call now.`;
+          ? `- APPROVED WITH EDITS: ${ref}. Retry the same call; Orbit will run the version your owner edited.`
+          : `- APPROVED: ${ref}. Retry the exact same call now.`;
       }
-      return `- DENIED: ${a.card.what}${d?.reason ? ` — reason: ${d.reason}` : ''}. Do not retry it; continue without it or explain what you need.`;
+      return `- DENIED: ${ref}${d?.reason ? ` — your owner said: ${d.reason}` : ''}. Do not retry it; continue without it or explain what you need.`;
     });
     return ['Your owner decided on your pending requests:', ...lines, 'Continue the task.'].join(
       '\n',
@@ -400,11 +462,13 @@ export class Orchestrator {
       orbitHome: config.home,
     });
 
+    const isStopping = (): boolean => stopCause !== null;
     const onCallerAbort = () => abort({ kind: 'kill', scope: 'run', by: 'caller' });
     if (seg.signal?.aborted) onCallerAbort();
     seg.signal?.addEventListener('abort', onCallerAbort, { once: true });
     this.active.set(runId, { botId: bot.id, abort });
     this.ensureKillPolling();
+    const wallClockMs = budgets.maxWallClockMinutes * 60_000;
     const wallClock = setTimeout(
       () =>
         abort({
@@ -413,7 +477,7 @@ export class Orchestrator {
           limit: budgets.maxWallClockMinutes,
           actual: budgets.maxWallClockMinutes,
         }),
-      budgets.maxWallClockMinutes * 60_000,
+      Math.max(0, wallClockMs - prior.totals.activeMs),
     );
     wallClock.unref();
 
@@ -448,6 +512,27 @@ export class Orchestrator {
           append([
             event('run.tainted', { source: outcome.untrustedSource, toolUseId: req.toolUseId }),
           ]);
+          this.deps.audit?.append({
+            actor: `bot:${bot.id}`,
+            action: 'run.tainted',
+            subject: runId,
+            data: { source: outcome.untrustedSource },
+          });
+        }
+        if (outcome.ruleId || outcome.approvalId) {
+          // The moment an approved or rule-covered action actually runs.
+          this.deps.audit?.append({
+            actor: `bot:${bot.id}`,
+            action: outcome.approvalId ? 'policy.allowed_by_approval' : 'policy.allowed_by_rule',
+            subject: runId,
+            data: {
+              toolName: req.toolName,
+              tier: outcome.tier,
+              ruleId: outcome.ruleId,
+              approvalId: outcome.approvalId,
+              inputHash: inputHash(outcome.updatedInput ?? req.input),
+            },
+          });
         }
         const d: ToolPermissionDecision = {
           behavior: 'allow',
@@ -460,14 +545,12 @@ export class Orchestrator {
         return d;
       }
       if (outcome.decision === 'deny') {
-        if (outcome.tier !== 'READ' && outcome.tier !== 'WRITE_LOCAL') {
-          this.deps.audit?.append({
-            actor: `bot:${bot.id}`,
-            action: 'policy.denied',
-            subject: runId,
-            data: { toolName: req.toolName, tier: outcome.tier, reason: outcome.reason },
-          });
-        }
+        this.deps.audit?.append({
+          actor: `bot:${bot.id}`,
+          action: 'policy.denied',
+          subject: runId,
+          data: { toolName: req.toolName, tier: outcome.tier, reason: outcome.reason },
+        });
         return {
           behavior: 'deny',
           reason: outcome.reason,
@@ -502,15 +585,34 @@ export class Orchestrator {
         bot.spec.approvals.parkWindowSeconds * 1000,
         signal,
       );
+      // A kill switch or budget may have fired while we waited.
+      if (isStopping()) {
+        return { behavior: 'deny', reason: 'This run is being stopped', interrupt: true };
+      }
       if (decided?.status === 'approved') {
         const grant = this.deps.approvals.consumeGrant(runId, bot.id, req.toolName, req.input);
+        if (!grant) {
+          return { behavior: 'deny', reason: 'The approval was already used', tier: outcome.tier };
+        }
         const d: ToolPermissionDecision = {
           behavior: 'allow',
           reason: 'Approved by owner',
           tier: outcome.tier,
           approvalId: approval.id,
         };
-        if (grant?.updatedInput) d.updatedInput = grant.updatedInput;
+        const edited = decided.decision?.editedInput;
+        if (edited) d.updatedInput = edited;
+        this.deps.audit?.append({
+          actor: `bot:${bot.id}`,
+          action: 'policy.allowed_by_approval',
+          subject: runId,
+          data: {
+            toolName: req.toolName,
+            tier: outcome.tier,
+            approvalId: approval.id,
+            inputHash: inputHash(edited ?? req.input),
+          },
+        });
         return d;
       }
       if (decided?.status === 'denied') {
@@ -567,7 +669,10 @@ export class Orchestrator {
         toolResult,
         signal: controller.signal,
         engineSandbox: ws.engineSandbox,
-        maxBudgetUsd: budgets.maxCostUsdPerRun,
+        maxBudgetUsd:
+          budgets.maxCostUsdPerRun === null
+            ? null
+            : Math.max(0.01, budgets.maxCostUsdPerRun - prior.totals.costUsd),
         spawnEngine: ws.spawnEngine,
         mockFixture: seg.mockFixture ?? bot.spec.mock?.fixture,
       })) {
@@ -578,8 +683,19 @@ export class Orchestrator {
         append([body]);
         if (body.type === 'message.assistant' && !body.data.parentToolUseId)
           lastAssistantText = body.data.text;
+        if (body.type === 'usage') {
+          const total = prior.totals.costUsd + (body.data.costUsd ?? 0);
+          if (budgets.maxCostUsdPerRun !== null && total > budgets.maxCostUsdPerRun) {
+            abort({
+              kind: 'budget',
+              budget: 'costPerRun',
+              limit: budgets.maxCostUsdPerRun,
+              actual: Number(total.toFixed(4)),
+            });
+          }
+        }
         if (body.type === 'usage.turn' && budgets.maxTokensPerRun !== null) {
-          const used = body.data.inputTokens + body.data.outputTokens;
+          const used = prior.totals.tokens + body.data.inputTokens + body.data.outputTokens;
           if (used > budgets.maxTokensPerRun) {
             abort({
               kind: 'budget',
@@ -664,6 +780,9 @@ export class Orchestrator {
     ) {
       return [event('run.parked', { approvalIds: stillPending, sessionId })];
     }
+    // A Run that failed cannot use its pending approvals any more.
+    if (terminal.type === 'run.failed')
+      this.deps.approvals.cancelForRun(runId, 'system', 'expired');
     return [terminal];
   }
 }

@@ -222,6 +222,24 @@ describe('Orchestrator', () => {
   });
 
   describe('untrusted content', () => {
+    it('asks before a web request once the Run is tainted (exfiltration guard)', async () => {
+      const bot = w.bot({ fixture: 'web-then-send' });
+      const run = await w.orchestrator().run(bot);
+      // The first WebFetch runs untainted; the send afterwards asks.
+      expect(run.taintSources).toEqual(['WebFetch']);
+      const asks = w.approvals.list({ runId: run.runId });
+      expect(asks.map((a) => a.toolName)).toEqual(['mcp__gmail__send_email']);
+    });
+
+    it('audits approved actions when they actually run', async () => {
+      const o = w.orchestrator();
+      const parked = await o.run(w.bot({ fixture: 'send-email' }));
+      const [approval] = w.approvals.list({ status: 'pending' });
+      w.approvals.decide(approval!.id, { approve: true, by: 'owner' });
+      await o.resume(parked.runId);
+      expect(w.audit.list({ action: 'policy.allowed_by_approval' })).toHaveLength(1);
+    });
+
     it('taints the Run and requires approval despite a standing allow rule', async () => {
       w.rules.create({
         botId: null,
@@ -285,6 +303,26 @@ describe('Orchestrator', () => {
       expect(second.status).toBe('failed');
       expect(second.budgetExceeded).toBe('runsPerDay');
       expect(types(w.store.listRunEvents(second.runId))).not.toContain('run.started');
+    });
+
+    it('a resume cannot reset per-Run budgets (tokens accumulate across segments)', async () => {
+      const o = w.orchestrator();
+      const bot = w.bot({ fixture: 'usage-limit', budgets: { maxTokensPerRun: 50 } });
+      const limited = await o.run(bot);
+      expect(limited.status).toBe('rate_limited');
+      expect(limited.totals.tokens).toBe(70);
+      const resumed = await o.resume(limited.runId);
+      expect(resumed.status).toBe('failed');
+      expect(resumed.budgetExceeded).toBe('tokens');
+      expect(types(w.store.listRunEvents(limited.runId))).not.toContain('run.resumed');
+    });
+
+    it('enforces the per-Run cost budget from usage events', async () => {
+      const run = await w
+        .orchestrator()
+        .run(w.bot({ fixture: 'pong', budgets: { maxCostUsdPerRun: 0.001 } }));
+      expect(run.status).toBe('failed');
+      expect(run.budgetExceeded).toBe('costPerRun');
     });
 
     it('refuses new Runs beyond the daily cost budget', async () => {
