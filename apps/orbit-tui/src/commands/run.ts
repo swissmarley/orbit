@@ -1,9 +1,8 @@
-import { ExitCode, type RunEvent, type RunState, OrbitError } from '@orbit/core';
-import type { Orchestrator } from '@orbit/runtime';
+import { ExitCode, OrbitError, type RunEvent, type RunState } from '@orbit/core';
+import type { OrbitClient } from '@orbit/sdk-client';
 import type { Context } from '../context';
 import { painter } from '../io';
-import { renderEvent, renderRunRow } from '../render';
-import { doctorExitCode } from './doctor';
+import { formatLocalTime, renderEvent, renderRunRow } from '../render';
 
 export function exitCodeForRun(run: RunState): number {
   switch (run.status) {
@@ -20,79 +19,72 @@ export function exitCodeForRun(run: RunState): number {
   }
 }
 
-/**
- * Resolve auth, start the engine and run `fn` with a live orchestrator,
- * streaming events to the terminal (or NDJSON). Ctrl-C stops the Run.
- */
-export async function withEngine(
-  ctx: Context,
-  o: { json?: boolean },
-  fn: (
-    orchestrator: Orchestrator,
-    opts: { signal: AbortSignal; onEvent: (e: RunEvent) => void },
-  ) => Promise<RunState>,
-): Promise<number> {
-  const resolution = await ctx.resolveAuth();
-  const p = painter(ctx.io);
-  if (!resolution.driver) {
-    const message =
-      resolution.refusal?.message ?? resolution.onboarding?.reason ?? 'No driver available';
-    if (o.json) {
-      ctx.io.out(
-        JSON.stringify({
-          error: {
-            code: resolution.refusal?.code ?? 'auth_required',
-            message,
-            onboarding: resolution.onboarding,
-          },
-        }),
-      );
-    } else {
-      ctx.io.err(`${p('red', '✘')} ${message}`);
-      resolution.onboarding?.steps.forEach((s, i) => ctx.io.err(`  ${i + 1}. ${s}`));
-    }
-    return doctorExitCode(resolution);
-  }
-  for (const w of resolution.warnings) if (!o.json) ctx.io.err(`${p('yellow', '⚠')} ${w.message}`);
+/** Events that end a driver segment: the CLI stops following there. */
+const SEGMENT_END = new Set<RunEvent['type']>([
+  'run.completed',
+  'run.failed',
+  'run.cancelled',
+  'run.parked',
+  'run.rate_limited',
+]);
 
-  const handle = await ctx.createDriver(resolution);
+/**
+ * Stream a Run's events (from orbitd's SSE feed) until its current segment
+ * ends, then report and map the outcome to an exit code. Ctrl-C asks orbitd
+ * to stop the Run; a second Ctrl-C just detaches.
+ */
+export async function follow(
+  ctx: Context,
+  client: OrbitClient,
+  runId: string,
+  after: number,
+  o: { json?: boolean },
+): Promise<number> {
+  const p = painter(ctx.io);
   const controller = new AbortController();
   let interrupts = 0;
   const offInterrupt = ctx.io.onInterrupt(() => {
     interrupts += 1;
     if (interrupts === 1) {
-      if (!o.json) ctx.io.err(p('yellow', '\nStopping run… (Ctrl-C again to force quit)'));
-      controller.abort();
+      if (!o.json) ctx.io.err(p('yellow', '\nStopping run… (Ctrl-C again to detach)'));
+      void client.runs.stop(runId).catch(() => undefined);
     } else {
-      process.exit(ExitCode.cancelled);
+      controller.abort();
     }
   });
+  let cwd: string | null = null;
   try {
-    if (!o.json) ctx.io.out(p('dim', `· ${resolution.label}`));
-    let cwd: string | null = null;
-    const run = await fn(ctx.orchestrator(handle), {
-      signal: controller.signal,
-      onEvent: (e) => {
-        if (o.json) {
-          ctx.io.out(JSON.stringify(e));
-          return;
-        }
+    for await (const e of client.events({ run: runId, after, signal: controller.signal })) {
+      if (o.json) ctx.io.out(JSON.stringify(e));
+      else {
         if (e.type === 'run.started') cwd = e.data.cwd;
         const line = renderEvent(e, p, cwd);
         if (line !== null) ctx.io.out(line);
-      },
-    });
-    if (!o.json) {
-      if (run.status === 'waiting_approval') {
-        ctx.io.out(`  Review with ${p('bold', 'orbit approvals')}; approving resumes the run.`);
       }
-      ctx.io.out(p('dim', `  run ${run.runId} · replay with: orbit logs ${run.runId}`));
+      if (SEGMENT_END.has(e.type)) break;
     }
-    return exitCodeForRun(run);
   } finally {
     offInterrupt();
-    await handle.close();
   }
+  const run = await client.runs.get(runId);
+  if (!o.json) {
+    if (controller.signal.aborted) {
+      ctx.io.out(p('dim', `  detached; the run continues in orbitd · orbit logs ${runId}`));
+      return ExitCode.ok;
+    }
+    if (run.status === 'waiting_approval') {
+      ctx.io.out(`  Review with ${p('bold', 'orbit approvals')}; approving resumes the run.`);
+    }
+    if (run.status === 'rate_limited') {
+      ctx.io.out(
+        run.resumeAt
+          ? `  It resumes by itself at ${p('bold', formatLocalTime(run.resumeAt))} (or: orbit resume ${runId}).`
+          : `  Resume it later with ${p('bold', `orbit resume ${runId}`)}.`,
+      );
+    }
+    ctx.io.out(p('dim', `  run ${run.runId} · replay with: orbit logs ${run.runId}`));
+  }
+  return exitCodeForRun(run);
 }
 
 export async function runBot(
@@ -100,15 +92,16 @@ export async function runBot(
   botRef: string,
   o: { prompt?: string; fixture?: string; json?: boolean },
 ): Promise<number> {
-  const bot = ctx.bots.get(botRef);
-  if (!o.json) ctx.io.out(painter(ctx.io)('bold', `▶ ${bot.spec.name}`));
-  return withEngine(ctx, o, (orchestrator, opts) =>
-    orchestrator.run(bot, {
-      ...(o.prompt ? { prompt: o.prompt } : {}),
-      ...(o.fixture ? { mockFixture: o.fixture } : {}),
-      ...opts,
-    }),
-  );
+  const client = await ctx.client();
+  const bot = await client.bots.get(botRef);
+  const p = painter(ctx.io);
+  if (!o.json) ctx.io.out(p('bold', `▶ ${bot.spec.name}`));
+  const run = await client.runs.start(bot.id, {
+    ...(o.prompt ? { prompt: o.prompt } : {}),
+    ...(o.fixture ? { fixture: o.fixture } : {}),
+  });
+  // run.started shows the driver and auth method; `orbit doctor` explains them.
+  return follow(ctx, client, run.runId, 0, o);
 }
 
 export async function resumeRun(
@@ -116,21 +109,20 @@ export async function resumeRun(
   runId: string,
   o: { json?: boolean; fixture?: string },
 ): Promise<number> {
-  const state = ctx.store.getRun(runId);
-  if (!state) throw new OrbitError('not_found', `Run ${runId} not found`);
+  const client = await ctx.client();
   if (!o.json) ctx.io.out(painter(ctx.io)('bold', `▶ resuming ${runId}`));
-  return withEngine(ctx, o, (orchestrator, opts) =>
-    orchestrator.resume(runId, { ...(o.fixture ? { mockFixture: o.fixture } : {}), ...opts }),
-  );
+  const before = await client.runs.get(runId);
+  await client.runs.resume(runId, o.fixture ? { fixture: o.fixture } : {});
+  return follow(ctx, client, runId, before.lastEventId, o);
 }
 
-export function runsList(
+export async function runsList(
   ctx: Context,
   o: { bot?: string; json?: boolean; limit?: string },
-): number {
-  const botId = o.bot ? ctx.bots.get(o.bot).id : undefined;
-  const runs = ctx.store.listRuns({
-    ...(botId ? { botId } : {}),
+): Promise<number> {
+  const client = await ctx.client();
+  const runs = await client.runs.list({
+    ...(o.bot ? { bot: o.bot } : {}),
     limit: o.limit ? Number(o.limit) : 20,
   });
   if (o.json) {
@@ -144,8 +136,9 @@ export function runsList(
 }
 
 /** Replay a Run from the immutable event log. */
-export function logs(ctx: Context, runId: string, o: { json?: boolean }): number {
-  const events = ctx.store.listRunEvents(runId);
+export async function logs(ctx: Context, runId: string, o: { json?: boolean }): Promise<number> {
+  const client = await ctx.client();
+  const events = await client.runs.events(runId);
   if (events.length === 0) throw new OrbitError('not_found', `Run ${runId} not found`);
   const p = painter(ctx.io);
   let cwd: string | null = null;
@@ -158,6 +151,59 @@ export function logs(ctx: Context, runId: string, o: { json?: boolean }): number
     if (e.type === 'run.queued') ctx.io.out(`${p('bold', '▶')} ${p('dim', e.ts)} ${e.data.prompt}`);
     const line = renderEvent(e, p, cwd);
     if (line !== null) ctx.io.out(line);
+  }
+  return 0;
+}
+
+export async function queueShow(ctx: Context, o: { json?: boolean }): Promise<number> {
+  const client = await ctx.client();
+  const q = await client.queue();
+  if (o.json) {
+    ctx.io.out(JSON.stringify(q, null, 2));
+    return 0;
+  }
+  const p = painter(ctx.io);
+  ctx.io.out(
+    `${p('bold', 'Queue')}  ${q.active.length}/${q.limit} running · ${q.queued.length} waiting`,
+  );
+  if (q.pausedUntil) {
+    ctx.io.out(
+      p('yellow', `  ⏸ usage limit — new runs wait until ${formatLocalTime(q.pausedUntil)}`),
+    );
+  }
+  for (const j of q.active) ctx.io.out(`  ${p('cyan', '▶')} ${j.runId} ${p('dim', j.kind)}`);
+  for (const j of q.queued) {
+    ctx.io.out(
+      `  ${p('dim', '·')} ${j.runId} ${p('dim', `${j.kind} · priority ${j.priority}`)}${j.heldBy ? p('yellow', ` · ${j.heldBy}`) : ''}`,
+    );
+  }
+  return 0;
+}
+
+export async function schedulesShow(
+  ctx: Context,
+  o: { bot?: string; json?: boolean },
+): Promise<number> {
+  const client = await ctx.client();
+  const [entries, bots] = await Promise.all([client.schedules(o.bot), client.bots.list()]);
+  if (o.json) {
+    ctx.io.out(JSON.stringify(entries, null, 2));
+    return 0;
+  }
+  const p = painter(ctx.io);
+  if (entries.length === 0) {
+    ctx.io.out('No scheduled triggers. Add one with `orbit bot create … --cron "0 9 * * 1-5"`.');
+    return 0;
+  }
+  const names = new Map(bots.map((b) => [b.id, b.spec.name]));
+  for (const e of entries) {
+    ctx.io.out(
+      `${p('bold', (names.get(e.botId) ?? e.botId).padEnd(20))} ${e.description.padEnd(28)} ${
+        e.nextAt
+          ? `next ${formatLocalTime(e.nextAt)}`
+          : p('dim', e.enabled ? 'not scheduled' : 'off')
+      }${e.lastFiredAt ? p('dim', ` · last ${formatLocalTime(e.lastFiredAt)}`) : ''}`,
+    );
   }
   return 0;
 }

@@ -5,3 +5,12 @@
  */
 export * from './client';
 export * from './local';
+export type {
+  Approval,
+  DoctorReport,
+  ErrorBody,
+  RouteBody,
+  RouteName,
+  RouteQuery,
+  RouteResponse,
+} from '@orbit/api/contract';

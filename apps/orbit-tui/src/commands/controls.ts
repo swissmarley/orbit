@@ -1,40 +1,43 @@
 import type { Context } from '../context';
 import { painter } from '../io';
 
-export function stopRun(ctx: Context, runId: string, o: { json?: boolean }): number {
-  ctx.orchestrator().stop(runId, 'owner');
-  if (o.json) ctx.io.out(JSON.stringify({ runId, stopRequested: true }));
+export async function stopRun(ctx: Context, runId: string, o: { json?: boolean }): Promise<number> {
+  const run = await (await ctx.client()).runs.stop(runId);
+  if (o.json) ctx.io.out(JSON.stringify({ runId, stopRequested: true, status: run.status }));
   else ctx.io.out(`${painter(ctx.io)('yellow', '■')} Stop requested for ${runId}`);
   return 0;
 }
 
-export function pauseBot(
+export async function pauseBot(
   ctx: Context,
   botRef: string,
   paused: boolean,
   o: { json?: boolean },
-): number {
-  const o2 = ctx.orchestrator();
-  const bot = paused ? o2.pauseBot(botRef, 'owner') : o2.resumeBot(botRef, 'owner');
+): Promise<number> {
+  const client = await ctx.client();
+  const bot = paused ? await client.bots.pause(botRef) : await client.bots.resume(botRef);
   if (o.json)
     ctx.io.out(JSON.stringify({ id: bot.id, name: bot.spec.name, pausedAt: bot.pausedAt }));
   else ctx.io.out(`${paused ? '⏸ Paused' : '▶ Resumed'} ${bot.spec.name}`);
   return 0;
 }
 
-export function killSwitch(
+export async function killSwitch(
   ctx: Context,
   o: { off?: boolean; status?: boolean; json?: boolean },
-): number {
+): Promise<number> {
   const p = painter(ctx.io);
+  const client = await ctx.client();
   if (o.status) {
-    const by = ctx.controls.globalKill();
-    if (o.json) ctx.io.out(JSON.stringify({ engaged: by !== null, by }));
+    const { engaged, by } = await client.kill.status();
+    if (o.json) ctx.io.out(JSON.stringify({ engaged, by }));
     else
-      ctx.io.out(by ? p('red', `Kill switch ENGAGED (by ${by})`) : p('green', 'Kill switch off'));
+      ctx.io.out(
+        engaged ? p('red', `Kill switch ENGAGED (by ${by})`) : p('green', 'Kill switch off'),
+      );
     return 0;
   }
-  ctx.orchestrator().killAll('owner', !o.off);
+  await client.kill.set(!o.off);
   if (o.json) ctx.io.out(JSON.stringify({ engaged: !o.off }));
   else
     ctx.io.out(

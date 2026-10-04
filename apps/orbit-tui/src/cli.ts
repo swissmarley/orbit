@@ -6,8 +6,9 @@ import { loginHelp } from './commands/login-help';
 import { approvalShow, approvalsList, approve, deny } from './commands/approvals';
 import { auditExport, auditList, auditVerify } from './commands/audit';
 import { killSwitch, pauseBot, stopRun } from './commands/controls';
+import { daemonStart, daemonStatus, daemonStop } from './commands/daemon';
 import { rulesAdd, rulesList, rulesRevoke } from './commands/rules';
-import { logs, resumeRun, runBot, runsList } from './commands/run';
+import { logs, queueShow, resumeRun, runBot, runsList, schedulesShow } from './commands/run';
 import { secretList, secretRemove, secretSet } from './commands/secrets';
 import { Context } from './context';
 import { type Io, painter } from './io';
@@ -57,6 +58,8 @@ export async function main(argv: string[], io: Io): Promise<number> {
     .option('--tools <list>', 'comma-separated built-in tools to expose')
     .option('--max-turns <n>', 'turn limit per run')
     .option('--fixture <name>', 'mock scenario used in demo mode')
+    .option('--cron <expr>', 'run on a schedule, e.g. "0 9 * * 1-5" (daemon local time)')
+    .option('--every <minutes>', 'run every N minutes')
     .option('--json', 'machine-readable output')
     .action((o: Parameters<typeof botCreate>[1]) => set(botCreate(context(), o)));
   bot
@@ -83,6 +86,49 @@ export async function main(argv: string[], io: Io): Promise<number> {
     .option('-l, --limit <n>', 'how many', '20')
     .option('--json', 'machine-readable output')
     .action((o: { bot?: string; limit?: string; json?: boolean }) => set(runsList(context(), o)));
+
+  program
+    .command('queue')
+    .description('What orbitd is running and what waits (concurrency, priority, usage-limit hold)')
+    .option('--json', 'machine-readable output')
+    .action((o: { json?: boolean }) => set(queueShow(context(), o)));
+
+  program
+    .command('schedules')
+    .description('Scheduled triggers and when they fire next')
+    .option('-b, --bot <bot>', 'only this bot')
+    .option('--json', 'machine-readable output')
+    .action((o: { bot?: string; json?: boolean }) => set(schedulesShow(context(), o)));
+
+  const daemon = program
+    .command('daemon')
+    .description('The orbitd daemon (started automatically on first use)');
+  daemon
+    .command('start')
+    .description('Start orbitd in the background (loopback only)')
+    .option('--json', 'machine-readable output')
+    .action((o: { json?: boolean }) => set(daemonStart(context(), o)));
+  daemon
+    .command('stop')
+    .description('Stop orbitd gracefully')
+    .option('--json', 'machine-readable output')
+    .action((o: { json?: boolean }) => set(daemonStop(context(), o)));
+  daemon
+    .command('status')
+    .description('Is orbitd running? Where, since when, with what queue')
+    .option('--json', 'machine-readable output')
+    .action((o: { json?: boolean }) => set(daemonStatus(context(), o)));
+  daemon
+    .command('restart')
+    .description('Stop and start orbitd (picks up a changed environment, e.g. a new API key)')
+    .option('--json', 'machine-readable output')
+    .action(async (o: { json?: boolean }) => {
+      const ctx = context();
+      await daemonStop(ctx, { json: true });
+      ctx.close();
+      if (!o.json) io.out('Restarting orbitd…');
+      await set(daemonStart(ctx, o));
+    });
 
   program
     .command('logs')

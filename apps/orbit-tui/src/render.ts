@@ -123,6 +123,8 @@ export function renderEvent(e: RunEvent, paint: Paint, cwd: string | null): stri
       return paint('magenta', `⏸ waiting for your approval (${e.data.approvalIds.join(', ')})`);
     case 'run.resumed':
       return paint('cyan', `▶ resumed after ${e.data.reason.replace('_', ' ')}`);
+    case 'run.resume_scheduled':
+      return paint('cyan', `  ⏰ resumes automatically at ${formatLocalTime(e.data.at)}`);
     case 'tool.result': {
       if (!e.data.isError) {
         const lines = e.data.content.split('\n').filter((l) => l.trim()).length;

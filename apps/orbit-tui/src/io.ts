@@ -9,6 +9,12 @@ export interface Io {
   color: boolean;
   /** Register a Ctrl-C handler; returns an unregister function. */
   onInterrupt(handler: () => void): () => void;
+  /**
+   * Start orbitd for this ORBIT_HOME in the background and resolve once it
+   * has published its address. Default: spawn the orbitd bin detached.
+   * Tests start it in-process instead.
+   */
+  startDaemon?: (env: Record<string, string | undefined>) => Promise<void>;
 }
 
 export function processIo(): Io {

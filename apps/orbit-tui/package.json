@@ -13,11 +13,11 @@
   },
   "dependencies": {
     "@orbit/core": "workspace:*",
-    "@orbit/policy": "workspace:*",
+    "@orbit/orbitd": "workspace:*",
     "@orbit/runtime": "workspace:*",
-    "@orbit/sandbox": "workspace:*",
-    "@orbit/store": "workspace:*",
+    "@orbit/sdk-client": "workspace:*",
     "commander": "15.0.0",
+    "tsx": "4.23.15",
     "yaml": "2.9.1"
   }
 }

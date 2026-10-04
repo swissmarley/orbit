@@ -1,18 +1,22 @@
-import { classifyTool } from '@orbit/policy';
 import type { Context } from '../context';
 import { painter } from '../io';
 import { DEFAULT_RULE_EXPIRY, parseExpiry } from './approvals';
 
-export function rulesList(ctx: Context, o: { all?: boolean; json?: boolean }): number {
-  const rules = ctx.rules.list({ includeInactive: o.all === true });
+export async function rulesList(
+  ctx: Context,
+  o: { all?: boolean; json?: boolean },
+): Promise<number> {
+  const client = await ctx.client();
+  const rules = await client.rules.list(o.all === true);
   if (o.json) {
     ctx.io.out(JSON.stringify(rules, null, 2));
     return 0;
   }
   const p = painter(ctx.io);
   if (rules.length === 0) ctx.io.out('No standing rules. Everything external asks first.');
+  const names = new Map((await client.bots.list()).map((b) => [b.id, b.spec.name]));
   for (const r of rules) {
-    const scope = r.botId ? (ctx.bots.find(r.botId)?.spec.name ?? r.botId) : 'all bots';
+    const scope = r.botId ? (names.get(r.botId) ?? r.botId) : 'all bots';
     const state = r.revokedAt
       ? p('dim', 'revoked')
       : r.expiresAt
@@ -25,7 +29,7 @@ export function rulesList(ctx: Context, o: { all?: boolean; json?: boolean }): n
   return 0;
 }
 
-export function rulesAdd(
+export async function rulesAdd(
   ctx: Context,
   o: {
     tool: string;
@@ -35,21 +39,17 @@ export function rulesAdd(
     reason?: string;
     json?: boolean;
   },
-): number {
-  const tier = classifyTool(o.tool, { shellContained: false })?.tier ?? null;
-  const rule = ctx.rules.create(
-    {
-      botId: o.bot ? ctx.bots.get(o.bot).id : null,
-      toolPattern: o.tool,
-      effect: o.effect,
-      reason: o.reason ?? null,
-      createdBy: 'owner',
-      // Allow rules expire by default; deny rules last until revoked.
-      expiresAt: parseExpiry(o.expires ?? (o.effect === 'allow' ? DEFAULT_RULE_EXPIRY : 'never')),
-    },
-    tier,
-  );
-  ctx.audit.append({ actor: 'owner', action: 'rule.created', subject: rule.id, data: { ...rule } });
+): Promise<number> {
+  const rule = await (
+    await ctx.client()
+  ).rules.create({
+    toolPattern: o.tool,
+    effect: o.effect,
+    bot: o.bot ?? null,
+    reason: o.reason ?? null,
+    // Allow rules expire by default; deny rules last until revoked.
+    expiresAt: parseExpiry(o.expires ?? (o.effect === 'allow' ? DEFAULT_RULE_EXPIRY : 'never')),
+  });
   if (o.json) ctx.io.out(JSON.stringify(rule));
   else
     ctx.io.out(
@@ -58,9 +58,8 @@ export function rulesAdd(
   return 0;
 }
 
-export function rulesRevoke(ctx: Context, id: string): number {
-  const rule = ctx.rules.revoke(id);
-  ctx.audit.append({ actor: 'owner', action: 'rule.revoked', subject: rule.id, data: {} });
+export async function rulesRevoke(ctx: Context, id: string): Promise<number> {
+  const rule = await (await ctx.client()).rules.revoke(id);
   ctx.io.out(`Revoked ${rule.id}`);
   return 0;
 }

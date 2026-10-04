@@ -353,6 +353,9 @@ async function* parseSse(
     }
   } finally {
     signal?.removeEventListener('abort', onAbort);
+    // Close the HTTP stream too: a consumer that stops early (break) must not
+    // leave the connection (and the process) open.
+    await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 }

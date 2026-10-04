@@ -26,7 +26,7 @@ export interface DaemonOptions {
   /** Override the configured port (0 = any free port; tests). */
   port?: number;
   log?: Logger;
-  /** Called when a client asks the daemon to stop (POST /v1/daemon/stop). */
+  /** Called when a client asks the daemon to stop (POST /v1/daemon/stop); default: stop(). */
   onStopRequested?: () => void;
   /** Test seams passed to the service (mock pacing, probes, workspaces, …). */
   service?: Partial<ServiceOptions>;
@@ -127,7 +127,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       service,
       token,
       allowedHosts: hosts,
-      onStop: () => opts.onStopRequested?.(),
+      // The bin exits the process; embedded daemons (tests) just stop.
+      onStop: () => (opts.onStopRequested ? opts.onStopRequested() : void stop()),
     });
     const server = await new Promise<Server>((resolve, reject) => {
       const s = serve(

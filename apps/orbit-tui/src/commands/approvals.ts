@@ -1,10 +1,10 @@
 import { readFileSync } from 'node:fs';
+import type { Approval } from '@orbit/sdk-client';
 import { OrbitError } from '@orbit/core';
-import type { Approval } from '@orbit/policy';
 import type { Context } from '../context';
 import { painter } from '../io';
 import { formatRelative, renderDiff } from '../render';
-import { resumeRun } from './run';
+import { follow } from './run';
 
 type Paint = ReturnType<typeof painter>;
 
@@ -44,8 +44,12 @@ function card(a: Approval, p: Paint): string[] {
   return lines;
 }
 
-export function approvalsList(ctx: Context, o: { all?: boolean; json?: boolean }): number {
-  const list = ctx.approvals.list(o.all ? {} : { status: 'pending' });
+export async function approvalsList(
+  ctx: Context,
+  o: { all?: boolean; json?: boolean },
+): Promise<number> {
+  const client = await ctx.client();
+  const list = await client.approvals.list(o.all ? { all: 'true' } : {});
   if (o.json) {
     ctx.io.out(JSON.stringify(list, null, 2));
     return 0;
@@ -70,17 +74,21 @@ export function approvalsList(ctx: Context, o: { all?: boolean; json?: boolean }
   return 0;
 }
 
-export function approvalShow(ctx: Context, id: string, o: { json?: boolean }): number {
-  const a = ctx.approvals.require(id);
+export async function approvalShow(
+  ctx: Context,
+  id: string,
+  o: { json?: boolean },
+): Promise<number> {
+  const a = await (await ctx.client()).approvals.get(id);
   if (o.json) ctx.io.out(JSON.stringify(a, null, 2));
   else ctx.io.out(card(a, painter(ctx.io)).join('\n'));
   return 0;
 }
 
-/** "7d", "12h", "30m" → ISO timestamp from now. */
 /** Default lifetime of standing allow rules (review M7): explicit `never` to opt out. */
 export const DEFAULT_RULE_EXPIRY = '7d';
 
+/** "7d", "12h", "30m" → ISO timestamp from now; "never" → null. */
 export function parseExpiry(value: string, now = new Date()): string | null {
   if (value.trim().toLowerCase() === 'never') return null;
   const m = /^(\d+)([mhdw])$/.exec(value.trim());
@@ -104,29 +112,28 @@ function parseEdit(value: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+type DecisionResult = Awaited<
+  ReturnType<Awaited<ReturnType<Context['client']>>['approvals']['approve']>
+>;
+
+/** After a decision: follow the resumed Run, or say what it still waits on. */
 async function afterDecision(
   ctx: Context,
-  a: Approval,
-  o: { resume?: boolean; json?: boolean; fixture?: string },
+  result: DecisionResult,
+  o: { resume?: boolean; json?: boolean },
 ): Promise<number> {
   const p = painter(ctx.io);
-  const run = ctx.store.getRun(a.runId);
-  const bot = ctx.bots.find(a.botId);
-  const ready = run?.status === 'waiting_approval' && run.pendingApprovals.length === 0;
-  if (!ready) {
-    if (!o.json && run && run.pendingApprovals.length > 0) {
-      ctx.io.out(p('dim', `Run ${a.runId} still waits on ${run.pendingApprovals.join(', ')}.`));
-    }
-    return 0;
+  const { approval: a, run, resumed } = result;
+  if (resumed && run) {
+    if (!o.json) ctx.io.out(p('bold', `▶ resuming ${a.runId}`));
+    return follow(ctx, await ctx.client(), a.runId, run.lastEventId, o);
   }
-  if (o.resume === false || bot?.spec.approvals.autoResume === false) {
-    if (!o.json) ctx.io.out(`Resume later with ${p('bold', `orbit resume ${a.runId}`)}.`);
-    return 0;
+  if (!o.json && run && run.pendingApprovals.length > 0) {
+    ctx.io.out(p('dim', `Run ${a.runId} still waits on ${run.pendingApprovals.join(', ')}.`));
+  } else if (!o.json && run?.status === 'waiting_approval') {
+    ctx.io.out(`Resume later with ${p('bold', `orbit resume ${a.runId}`)}.`);
   }
-  return resumeRun(ctx, a.runId, {
-    ...(o.json ? { json: true } : {}),
-    ...(o.fixture ? { fixture: o.fixture } : {}),
-  });
+  return 0;
 }
 
 export async function approve(
@@ -142,9 +149,8 @@ export async function approve(
     fixture?: string;
   },
 ): Promise<number> {
-  const a = ctx.approvals.decide(id, {
-    approve: true,
-    by: 'owner',
+  const client = await ctx.client();
+  const result = await client.approvals.approve(id, {
     editedInput: o.edit ? parseEdit(o.edit) : null,
     always: o.always
       ? {
@@ -152,13 +158,16 @@ export async function approve(
           expiresAt: parseExpiry(o.expires ?? DEFAULT_RULE_EXPIRY),
         }
       : null,
+    ...(o.resume === false ? { resume: false } : {}),
+    ...(o.fixture ? { fixture: o.fixture } : {}),
   });
+  const a = result.approval;
   if (o.json) ctx.io.out(JSON.stringify(a));
   else
     ctx.io.out(
       `${painter(ctx.io)('green', '✔')} Approved ${a.card.what}${a.decision?.editedInput ? ' (edited)' : ''}`,
     );
-  return afterDecision(ctx, a, o);
+  return afterDecision(ctx, result, o);
 }
 
 export async function deny(
@@ -166,11 +175,17 @@ export async function deny(
   id: string,
   o: { reason?: string; resume?: boolean; json?: boolean; fixture?: string },
 ): Promise<number> {
-  const a = ctx.approvals.decide(id, { approve: false, by: 'owner', reason: o.reason ?? null });
+  const client = await ctx.client();
+  const result = await client.approvals.deny(id, {
+    reason: o.reason ?? null,
+    ...(o.resume === false ? { resume: false } : {}),
+    ...(o.fixture ? { fixture: o.fixture } : {}),
+  });
+  const a = result.approval;
   if (o.json) ctx.io.out(JSON.stringify(a));
   else
     ctx.io.out(
       `${painter(ctx.io)('red', '✘')} Denied ${a.card.what}${o.reason ? ` — ${o.reason}` : ''}`,
     );
-  return afterDecision(ctx, a, o);
+  return afterDecision(ctx, result, o);
 }

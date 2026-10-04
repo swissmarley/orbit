@@ -4,11 +4,11 @@ import type { Context } from '../context';
 import { painter } from '../io';
 
 /** Values come from --value-file or stdin, never argv (shell history, `ps`). */
-export function secretSet(
+export async function secretSet(
   ctx: Context,
   name: string,
   o: { valueFile?: string; stdin?: () => string },
-): number {
+): Promise<number> {
   const raw = o.valueFile
     ? readFileSync(o.valueFile, 'utf8')
     : (o.stdin ?? (() => readFileSync(0, 'utf8')))();
@@ -17,16 +17,14 @@ export function secretSet(
     throw new OrbitError('invalid_input', 'Empty secret value', {
       hint: `printf %s "$VALUE" | orbit secret set ${name}`,
     });
-  ctx.vault().set(name, value);
-  ctx.audit.append({ actor: 'owner', action: 'secret.set', subject: name, data: {} });
-  ctx.io.out(
-    `${painter(ctx.io)('green', '✔')} Stored secret ${name} (${ctx.vault().keySource} key)`,
-  );
+  // Sent to the local daemon over loopback (token-authenticated); stored encrypted there.
+  const stored = await (await ctx.client()).secrets.set(name, value);
+  ctx.io.out(`${painter(ctx.io)('green', '✔')} Stored secret ${name} (${stored.keySource} key)`);
   return 0;
 }
 
-export function secretList(ctx: Context, o: { json?: boolean }): number {
-  const list = ctx.vault().list();
+export async function secretList(ctx: Context, o: { json?: boolean }): Promise<number> {
+  const list = await (await ctx.client()).secrets.list();
   if (o.json) ctx.io.out(JSON.stringify(list, null, 2));
   else if (list.length === 0) ctx.io.out('No secrets stored.');
   else
@@ -35,9 +33,8 @@ export function secretList(ctx: Context, o: { json?: boolean }): number {
   return 0;
 }
 
-export function secretRemove(ctx: Context, name: string): number {
-  if (!ctx.vault().remove(name)) throw new OrbitError('not_found', `Secret ${name} not found`);
-  ctx.audit.append({ actor: 'owner', action: 'secret.removed', subject: name, data: {} });
+export async function secretRemove(ctx: Context, name: string): Promise<number> {
+  await (await ctx.client()).secrets.remove(name);
   ctx.io.out(`Removed secret ${name}`);
   return 0;
 }

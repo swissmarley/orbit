@@ -13,6 +13,10 @@ export interface BotCreateOptions {
   tools?: string;
   maxTurns?: string;
   fixture?: string;
+  /** Scheduled trigger: cron expression (5 fields). */
+  cron?: string;
+  /** Scheduled trigger: every N minutes. */
+  every?: string;
   json?: boolean;
 }
 
@@ -33,6 +37,16 @@ export function botSpecFromOptions(o: BotCreateOptions): BotSpecInput {
       .filter(Boolean);
   if (o.maxTurns) spec.maxTurns = Number(o.maxTurns);
   if (o.fixture) spec.mock = { fixture: o.fixture };
+  const triggers = [...(spec.triggers ?? [])];
+  if (o.cron) triggers.push({ kind: 'cron', cron: o.cron });
+  if (o.every) {
+    const minutes = Number(o.every);
+    if (!Number.isInteger(minutes) || minutes < 1) {
+      throw new OrbitError('invalid_input', '--every takes a whole number of minutes (≥ 1)');
+    }
+    triggers.push({ kind: 'interval', everyMinutes: minutes });
+  }
+  if (triggers.length) spec.triggers = triggers;
   if (!spec.name || !spec.goal) {
     throw new OrbitError('invalid_input', 'A bot needs a name and a goal', {
       hint: 'orbit bot create --name "Inbox Triage" --goal "Triage my inbox and draft replies"',
@@ -41,21 +55,15 @@ export function botSpecFromOptions(o: BotCreateOptions): BotSpecInput {
   return spec as BotSpecInput;
 }
 
-export function botCreate(ctx: Context, o: BotCreateOptions): number {
-  const bot = ctx.bots.create(botSpecFromOptions(o));
-  ctx.audit.append({
-    actor: 'owner',
-    action: 'bot.created',
-    subject: bot.id,
-    data: { spec: bot.spec },
-  });
+export async function botCreate(ctx: Context, o: BotCreateOptions): Promise<number> {
+  const bot = await (await ctx.client()).bots.create(botSpecFromOptions(o));
   if (o.json) ctx.io.out(JSON.stringify(bot, null, 2));
   else ctx.io.out(`${painter(ctx.io)('green', '✔')} Created bot ${bot.spec.name} (${bot.id})`);
   return 0;
 }
 
-export function botList(ctx: Context, o: { json?: boolean }): number {
-  const bots = ctx.bots.list();
+export async function botList(ctx: Context, o: { json?: boolean }): Promise<number> {
+  const bots = await (await ctx.client()).bots.list();
   if (o.json) {
     ctx.io.out(JSON.stringify(bots, null, 2));
     return 0;
@@ -68,7 +76,13 @@ export function botList(ctx: Context, o: { json?: boolean }): number {
     return 0;
   }
   for (const b of bots) {
-    ctx.io.out(`${p('bold', b.spec.name.padEnd(24))} ${p('dim', `v${b.version}`)}  ${b.spec.goal}`);
+    const flags = [
+      b.pausedAt ? p('yellow', 'paused') : '',
+      b.spec.triggers.length ? p('dim', `${b.spec.triggers.length} trigger(s)`) : '',
+    ].filter(Boolean);
+    ctx.io.out(
+      `${p('bold', b.spec.name.padEnd(24))} ${p('dim', `v${b.version}`)}  ${b.spec.goal}${flags.length ? `  ${flags.join(' ')}` : ''}`,
+    );
   }
   return 0;
 }

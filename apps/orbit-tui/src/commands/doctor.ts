@@ -1,74 +1,23 @@
-import { arch, platform } from 'node:os';
-import { ExitCode, defaultRedactor, humanPrincipalCount } from '@orbit/core';
-import { type SandboxSupport, defaultRunner, detectSandboxSupport } from '@orbit/sandbox';
-import { type AuthResolution, buildChildEnv, hasOAuthTokenEnv } from '@orbit/runtime';
+import type { DoctorReport } from '@orbit/sdk-client';
+import { ExitCode, defaultRedactor } from '@orbit/core';
+import { hasOAuthTokenEnv } from '@orbit/runtime';
 import type { Context } from '../context';
 import { painter } from '../io';
 
-export interface DoctorReport {
-  ok: boolean;
-  driver: AuthResolution['driver'];
-  driverSource: AuthResolution['source'];
-  authMethod: AuthResolution['authMethod'];
-  authLabel: string;
-  cli: AuthResolution['cli'];
-  apiCredential: AuthResolution['apiCredential'];
-  oauthTokenEnvPresent: boolean;
-  compliance: AuthResolution['guard'];
-  warnings: AuthResolution['warnings'];
-  refusal: AuthResolution['refusal'];
-  onboarding: AuthResolution['onboarding'];
-  mode: string;
-  api: { host: string; port: number };
-  humanPrincipals: number;
-  models: { default: string; triage: string };
-  home: string;
-  node: string;
-  platform: string;
-  sandbox: SandboxSupport;
-}
-
-export function doctorExitCode(r: AuthResolution): number {
+export function doctorExitCode(r: Pick<DoctorReport, 'driver' | 'refusal'>): number {
   if (r.driver) return ExitCode.ok;
   return r.refusal?.code === 'compliance_refused'
     ? ExitCode.complianceRefused
     : ExitCode.authRequired;
 }
 
+/** Ask orbitd how it would run Bots (driver, auth, compliance, sandbox) and show it. */
 export async function doctor(ctx: Context, opts: { json?: boolean }): Promise<number> {
-  const [r, sandbox] = await Promise.all([
-    ctx.resolveAuth(),
-    detectSandboxSupport(defaultRunner(buildChildEnv('tool', ctx.io.env)), {
-      pathEnv: ctx.io.env.PATH ?? '',
-    }),
-  ]);
-  const c = ctx.config;
-  const report: DoctorReport = {
-    ok: r.driver !== null,
-    driver: r.driver,
-    driverSource: r.source,
-    authMethod: r.authMethod,
-    authLabel: r.label,
-    cli: r.cli
-      ? { ...r.cli, error: r.cli.error ? defaultRedactor.redactString(r.cli.error) : null }
-      : null,
-    apiCredential: r.apiCredential,
-    oauthTokenEnvPresent: hasOAuthTokenEnv(ctx.io.env),
-    compliance: r.guard,
-    warnings: r.warnings,
-    refusal: r.refusal,
-    onboarding: r.onboarding,
-    mode: c.mode,
-    api: c.api,
-    humanPrincipals: humanPrincipalCount(c),
-    models: c.models,
-    home: c.home,
-    node: process.version,
-    platform: `${platform()}-${arch()}`,
-    sandbox,
-  };
+  const r = await (await ctx.client()).doctor();
+  // orbitd never receives CLAUDE_CODE_OAUTH_TOKEN; detect it here, by name only.
+  const oauthTokenEnvPresent = hasOAuthTokenEnv(ctx.io.env);
   if (opts.json) {
-    ctx.io.out(JSON.stringify(report, null, 2));
+    ctx.io.out(JSON.stringify({ ...r, oauthTokenEnvPresent }, null, 2));
     return doctorExitCode(r);
   }
 
@@ -78,16 +27,16 @@ export async function doctor(ctx: Context, opts: { json?: boolean }): Promise<nu
   row(
     'Driver',
     r.driver
-      ? `${p('bold', r.driver)} ${p('dim', `(${r.source === 'forced' ? 'forced by ORBIT_DRIVER' : 'auto-detected'})`)}`
+      ? `${p('bold', r.driver)} ${p('dim', `(${r.driverSource === 'forced' ? 'forced by ORBIT_DRIVER' : 'auto-detected'})`)}`
       : p('red', 'none'),
   );
-  row('Auth', r.driver ? p('bold', r.label) : p('red', r.label));
+  row('Auth', r.driver ? p('bold', r.authLabel) : p('red', r.authLabel));
   if (r.cli) {
     row(
       'claude CLI',
       `${r.cli.path} ${r.cli.version ?? ''} — ${r.cli.loggedIn ? p('green', `logged in (${r.cli.authMethod ?? 'unknown'})`) : p('yellow', 'not logged in')}`,
     );
-  } else if (r.driver === 'mock' && r.source === 'forced') {
+  } else if (r.driver === 'mock' && r.driverSource === 'forced') {
     row('claude CLI', p('dim', 'not checked (ORBIT_DRIVER=mock)'));
   } else {
     row('claude CLI', p('dim', 'not found on PATH'));
@@ -95,36 +44,43 @@ export async function doctor(ctx: Context, opts: { json?: boolean }): Promise<nu
   row('API key', r.apiCredential ? p('bold', r.apiCredential) : p('dim', 'none configured'));
   row(
     'Mode',
-    `${c.mode} · API bind ${c.api.host}:${c.api.port} · ${report.humanPrincipals} human principal${report.humanPrincipals === 1 ? '' : 's'}`,
+    `${r.mode} · API bind ${r.api.host}:${r.api.port} · ${r.humanPrincipals} human principal${r.humanPrincipals === 1 ? '' : 's'}`,
   );
   row(
     'Compliance',
-    r.guard.allowed
+    r.compliance.allowed
       ? p('green', 'subscription use allowed (local, single user)')
       : p('yellow', 'subscription use refused — API key required'),
   );
-  row('Models', `default ${p('bold', c.models.default)} · triage ${p('bold', c.models.triage)}`);
+  row('Models', `default ${p('bold', r.models.default)} · triage ${p('bold', r.models.triage)}`);
   row(
     'Sandbox',
     [
-      sandbox.engineSandbox.available
+      r.sandbox.engineSandbox.available
         ? p('green', 'engine sandbox available')
         : p(
             'yellow',
-            `engine sandbox unavailable${sandbox.engineSandbox.missing.length ? ` (missing ${sandbox.engineSandbox.missing.join(', ')})` : ''} — shell commands need approval`,
+            `engine sandbox unavailable${r.sandbox.engineSandbox.missing.length ? ` (missing ${r.sandbox.engineSandbox.missing.join(', ')})` : ''} — shell commands need approval`,
           ),
-      sandbox.docker.available
-        ? `docker ${sandbox.docker.version ?? ''}`.trim()
+      r.sandbox.docker.available
+        ? `docker ${r.sandbox.docker.version ?? ''}`.trim()
         : p('dim', 'no docker'),
     ].join(' · '),
   );
-  row('Data', c.home);
-  row('Runtime', `node ${process.version} · ${report.platform}`);
+  row(
+    'Daemon',
+    `orbitd ${r.daemon.url} · pid ${r.daemon.pid} · up since ${r.daemon.startedAt} · ${r.daemon.concurrency} concurrent run${r.daemon.concurrency === 1 ? '' : 's'}`,
+  );
+  row('Data', r.home);
+  row('Runtime', `node ${r.node} · ${r.platform}`);
   for (const w of r.warnings)
     ctx.io.out(`\n${p('yellow', '⚠')} ${defaultRedactor.redactString(w.message)}`);
-  if (r.refusal) {
-    ctx.io.out(`\n${p('red', '✘')} ${r.refusal.message}`);
+  if (oauthTokenEnvPresent) {
+    ctx.io.out(
+      `\n${p('yellow', '⚠')} CLAUDE_CODE_OAUTH_TOKEN is set in this shell. Orbit never reads or forwards it; log in with \`claude auth login\` instead.`,
+    );
   }
+  if (r.refusal) ctx.io.out(`\n${p('red', '✘')} ${r.refusal.message}`);
   if (r.onboarding) {
     ctx.io.out(`\n${p('bold', 'Get started')} ${p('dim', `— ${r.onboarding.reason}`)}`);
     r.onboarding.steps.forEach((s, i) => ctx.io.out(`  ${i + 1}. ${s}`));

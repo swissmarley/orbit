@@ -3,11 +3,17 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ExitCode, type RunEvent } from '@orbit/core';
+import { type Daemon, startDaemon } from '@orbit/orbitd';
+import { localClient, readDaemonInfo } from '@orbit/sdk-client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { main } from './cli';
+import { waitForDaemonExit } from './daemon-control';
 import type { Io } from './io';
 
 const FAKE_CLAUDE = join(import.meta.dirname, '../test/fake-claude-auth.mjs');
+
+/** Daemons the CLI auto-started in this process (one per test home). */
+const daemons: Daemon[] = [];
 
 function harness(env: Record<string, string | undefined>) {
   const out: string[] = [];
@@ -18,6 +24,17 @@ function harness(env: Record<string, string | undefined>) {
     env,
     color: false,
     onInterrupt: () => () => undefined,
+    // Auto-start orbitd in-process (the real CLI spawns it detached).
+    startDaemon: async (e) => {
+      daemons.push(
+        await startDaemon({
+          env: e,
+          port: 0,
+          log: () => undefined,
+          service: { vaultKeySource: 'file', mock: { delayMs: 0 } },
+        }),
+      );
+    },
   };
   return {
     run: (...argv: string[]) => main(argv, io),
@@ -38,7 +55,30 @@ describe('orbit CLI', () => {
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'orbit-cli-'));
   });
-  afterEach(() => rmSync(home, { recursive: true, force: true }));
+  afterEach(async () => {
+    for (const d of daemons.splice(0)) await d.stop();
+    // A daemon the real bin started as its own process.
+    const info = readDaemonInfo(home);
+    if (info && info.pid !== process.pid) {
+      await localClient(home)
+        ?.stopDaemon()
+        .catch(() => undefined);
+      await waitForDaemonExit(home);
+    }
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  /** Two human principals: subscription (CLI driver) use must be refused. */
+  const sharedConfig = () =>
+    writeFileSync(
+      join(home, 'config.json'),
+      JSON.stringify({
+        principals: [
+          { id: 'ada', kind: 'human' },
+          { id: 'bob', kind: 'human' },
+        ],
+      }),
+    );
 
   const mockEnv = () => ({ ORBIT_HOME: home, ORBIT_DRIVER: 'mock', PATH: process.env.PATH });
 
@@ -65,18 +105,24 @@ describe('orbit CLI', () => {
     expect(h.text()).toMatch(/ANTHROPIC_API_KEY/);
   });
 
-  it('doctor refuses subscription mode when hosted (exit 4) and explains the API-key path', async () => {
-    const h = harness({
-      ORBIT_HOME: home,
-      ORBIT_MODE: 'hosted',
-      ORBIT_CLAUDE_PATH: FAKE_CLAUDE,
-      PATH: process.env.PATH,
-    });
+  it('doctor refuses subscription mode for several people (exit 4) and explains the API-key path', async () => {
+    sharedConfig();
+    const h = harness({ ORBIT_HOME: home, ORBIT_CLAUDE_PATH: FAKE_CLAUDE, PATH: process.env.PATH });
     expect(await h.run('doctor', '--json')).toBe(ExitCode.complianceRefused);
-    const report = h.json<{ driver: null; refusal: { code: string; message: string } }>();
+    const report = h.json<{
+      driver: null;
+      refusal: { code: string; message: string; hint: string };
+    }>();
     expect(report.driver).toBeNull();
     expect(report.refusal.code).toBe('compliance_refused');
-    expect(report.refusal.message).toMatch(/ORBIT_MODE=hosted/);
+    expect(report.refusal.message).toMatch(/human principals/);
+    expect(`${report.refusal.message} ${report.refusal.hint}`).toMatch(/ANTHROPIC_API_KEY/);
+  });
+
+  it('hosted mode: orbitd refuses to start, so nothing can use a subscription', async () => {
+    const h = harness({ ORBIT_HOME: home, ORBIT_MODE: 'hosted', ORBIT_CLAUDE_PATH: FAKE_CLAUDE });
+    expect(await h.run('doctor')).toBe(ExitCode.usage);
+    expect(h.err.join('\n')).toMatch(/Hosted mode is not available yet/);
   });
 
   it('doctor warns about a stray API key while a subscription login exists', async () => {
@@ -186,22 +232,138 @@ describe('orbit CLI', () => {
     expect(await h.run('--version')).toBe(0);
   });
 
-  it('the real bin sets the process exit code', () => {
+  it('the real bin auto-starts orbitd in the background and sets the process exit code', () => {
+    sharedConfig();
     const r = spawnSync(
       process.execPath,
       ['--import', 'tsx', join(import.meta.dirname, 'bin.ts'), 'doctor', '--json'],
       {
+        // Any free port: a developer's own orbitd may hold the default one.
         env: {
           PATH: process.env.PATH,
           ORBIT_HOME: home,
-          ORBIT_MODE: 'hosted',
           ORBIT_CLAUDE_PATH: FAKE_CLAUDE,
+          ORBIT_PORT: '0',
         },
         encoding: 'utf8',
       },
     );
-    expect(r.status).toBe(ExitCode.complianceRefused);
+    expect(r.status, r.stderr).toBe(ExitCode.complianceRefused);
+    const info = readDaemonInfo(home);
+    expect(info?.pid).not.toBe(process.pid); // its own detached process
+    expect((JSON.parse(r.stdout) as { daemon: { pid: number } }).daemon.pid).toBe(info?.pid);
   }, 30_000);
+
+  it('the real bin exits once the followed run ends (no stream left open)', () => {
+    const bin = join(import.meta.dirname, 'bin.ts');
+    const env = { ...mockEnv(), ORBIT_PORT: '0' };
+    const create = spawnSync(
+      process.execPath,
+      [
+        '--import',
+        'tsx',
+        bin,
+        'bot',
+        'create',
+        '--name',
+        'Notes',
+        '--goal',
+        'x',
+        '--fixture',
+        'pong',
+      ],
+      { env, encoding: 'utf8' },
+    );
+    expect(create.status, create.stderr).toBe(0);
+    const run = spawnSync(process.execPath, ['--import', 'tsx', bin, 'run', 'notes'], {
+      env,
+      encoding: 'utf8',
+      timeout: 20_000,
+    });
+    expect(run.signal, 'the CLI hung after the run ended').toBeNull();
+    expect(run.status, run.stderr).toBe(ExitCode.ok);
+    expect(run.stdout).toMatch(/✔ completed/);
+  }, 40_000);
+
+  it('does not start a daemon when ORBIT_NO_AUTOSTART=1', async () => {
+    const h = harness({ ...mockEnv(), ORBIT_NO_AUTOSTART: '1' });
+    expect(await h.run('bot', 'list')).toBe(ExitCode.error);
+    expect(h.err.join('\n')).toMatch(/orbitd is not running/);
+    expect(daemons).toHaveLength(0);
+  });
+
+  describe('M3: daemon, queue, schedules', () => {
+    it('daemon status / stop / start, and the CLI reconnects to a fresh daemon', async () => {
+      const h = harness(mockEnv());
+      expect(await h.run('daemon', 'status')).toBe(ExitCode.error);
+      expect(h.text()).toMatch(/not running/);
+      h.reset();
+      expect(await h.run('daemon', 'start', '--json')).toBe(0);
+      expect(h.json<{ running: boolean; url: string }>()).toMatchObject({ running: true });
+      h.reset();
+      expect(await h.run('daemon', 'stop')).toBe(0);
+      expect(h.text()).toMatch(/orbitd stopped/);
+      expect(readDaemonInfo(home)).toBeNull();
+      h.reset();
+      // Data survives the restart: the next command auto-starts a new daemon.
+      await h.run('bot', 'create', '--name', 'Keep', '--goal', 'x');
+      await h.run('daemon', 'restart', '--json');
+      h.reset();
+      expect(await h.run('bot', 'list', '--json')).toBe(0);
+      expect(h.json<{ spec: { name: string } }[]>().map((b) => b.spec.name)).toEqual(['Keep']);
+    });
+
+    it('creates scheduled bots and lists their next fire', async () => {
+      const h = harness(mockEnv());
+      expect(
+        await h.run(
+          'bot',
+          'create',
+          '--name',
+          'Digest',
+          '--goal',
+          'x',
+          '--cron',
+          '0 9 * * 1-5',
+          '--json',
+        ),
+      ).toBe(0);
+      expect(h.json<{ spec: { triggers: unknown[] } }>().spec.triggers).toEqual([
+        { kind: 'cron', cron: '0 9 * * 1-5', enabled: true },
+      ]);
+      await h.run('bot', 'create', '--name', 'Poller', '--goal', 'x', '--every', '15');
+      expect(await h.run('bot', 'create', '--name', 'Bad', '--goal', 'x', '--cron', 'soon')).toBe(
+        ExitCode.usage,
+      );
+      h.reset();
+      expect(await h.run('schedules')).toBe(0);
+      expect(h.text()).toMatch(/Digest\s+cron 0 9 \* \* 1-5\s+next /);
+      expect(h.text()).toMatch(/Poller\s+every 15m\s+next /);
+      h.reset();
+      expect(await h.run('schedules', '--bot', 'poller', '--json')).toBe(0);
+      expect(h.json<{ kind: string }[]>().map((e) => e.kind)).toEqual(['interval']);
+    });
+
+    it('shows the queue with its concurrency limit', async () => {
+      const h = harness({ ...mockEnv(), ORBIT_MAX_CONCURRENT_RUNS: '2' });
+      expect(await h.run('queue', '--json')).toBe(0);
+      expect(h.json<{ limit: number; active: unknown[] }>()).toMatchObject({
+        limit: 2,
+        active: [],
+      });
+      h.reset();
+      expect(await h.run('queue')).toBe(0);
+      expect(h.text()).toMatch(/0\/2 running · 0 waiting/);
+    });
+
+    it('a usage limit says when the run resumes by itself', async () => {
+      const h = harness(mockEnv());
+      await h.run('bot', 'create', '--name', 'Notes', '--goal', 'x', '--fixture', 'usage-limit');
+      h.reset();
+      expect(await h.run('run', 'Notes')).toBe(ExitCode.rateLimited);
+      expect(h.text()).toMatch(/resumes by itself at/);
+    });
+  });
 
   describe('M2: approvals, kill switches, audit, rules, secrets', () => {
     const mailer = (h: ReturnType<typeof harness>, extra: string[] = []) =>

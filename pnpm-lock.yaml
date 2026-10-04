@@ -47,21 +47,21 @@ importers:
       '@orbit/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@orbit/policy':
+      '@orbit/orbitd':
         specifier: workspace:*
-        version: link:../../packages/policy
+        version: link:../orbitd
       '@orbit/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
-      '@orbit/sandbox':
+      '@orbit/sdk-client':
         specifier: workspace:*
-        version: link:../../packages/sandbox
-      '@orbit/store':
-        specifier: workspace:*
-        version: link:../../packages/store
+        version: link:../../packages/sdk-client
       commander:
         specifier: 15.0.0
         version: 15.0.0
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
       yaml:
         specifier: 2.9.1
         version: 2.9.1
