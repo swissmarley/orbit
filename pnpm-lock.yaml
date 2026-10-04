@@ -66,9 +66,53 @@ importers:
         specifier: 2.9.1
         version: 2.9.1
 
-  apps/orbitd: {}
+  apps/orbitd:
+    dependencies:
+      '@hono/node-server':
+        specifier: 2.1.3
+        version: 2.1.3(hono@4.13.13)
+      '@orbit/api':
+        specifier: workspace:*
+        version: link:../../packages/api
+      '@orbit/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@orbit/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+      '@orbit/sdk-client':
+        specifier: workspace:*
+        version: link:../../packages/sdk-client
+      '@orbit/store':
+        specifier: workspace:*
+        version: link:../../packages/store
 
-  packages/api: {}
+  packages/api:
+    dependencies:
+      '@hono/node-server':
+        specifier: 2.1.3
+        version: 2.1.3(hono@4.13.13)
+      '@orbit/core':
+        specifier: workspace:*
+        version: link:../core
+      '@orbit/policy':
+        specifier: workspace:*
+        version: link:../policy
+      '@orbit/runtime':
+        specifier: workspace:*
+        version: link:../runtime
+      '@orbit/sandbox':
+        specifier: workspace:*
+        version: link:../sandbox
+      '@orbit/store':
+        specifier: workspace:*
+        version: link:../store
+      hono:
+        specifier: 4.13.13
+        version: 4.13.13
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
 
   packages/core:
     dependencies:
@@ -132,7 +176,17 @@ importers:
         specifier: workspace:*
         version: link:../core
 
-  packages/sdk-client: {}
+  packages/sdk-client:
+    dependencies:
+      '@orbit/api':
+        specifier: workspace:*
+        version: link:../api
+      '@orbit/core':
+        specifier: workspace:*
+        version: link:../core
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
 
   packages/store:
     dependencies:

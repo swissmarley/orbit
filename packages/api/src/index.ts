@@ -1,5 +1,9 @@
 /**
- * @orbit/api — Hono REST + SSE API for orbitd, the loopback MCP endpoint
- * shared by both drivers, and OpenAPI generation from zod schemas.
+ * @orbit/api — the orbitd HTTP API: Hono REST + SSE, the service layer that
+ * wires the runtime behind it, and OpenAPI generated from the zod contract
+ * (`@orbit/api/contract`, shared with @orbit/sdk-client).
  */
-export {};
+export * from './app';
+export * from './contract';
+export * from './openapi';
+export * from './service';
