@@ -8,7 +8,7 @@ import { Channel } from './channel';
 import type { HookBridge } from './hook-bridge';
 import { checkAuthSource } from './auth-source';
 import { Normalizer } from './normalize';
-import { decide, hookOutput } from './permission';
+import { decide, hookOutput, postHookOutput, postProcess } from './permission';
 import { EventSequencer } from './sequencer';
 import type { AgentDriver, DriverRunRequest } from './types';
 
@@ -42,23 +42,31 @@ const reject = (reason: string) => hookOutput({ behavior: 'deny', reason });
 
 const quote = (s: string): string => `"${s.replace(/(["\\$`])/g, '\\$1')}"`;
 
-/** Settings passed with `--settings`: Orbit's PreToolUse hook decides every tool call. */
-export function buildCliSettings(nodePath: string, hookScript: string): string {
-  return JSON.stringify({
-    hooks: {
-      PreToolUse: [
+/**
+ * Settings passed with `--settings`: Orbit's PreToolUse hook decides every
+ * tool call, its PostToolUse hook post-processes every result, and the Bot's
+ * native engine sandbox (if any) confines shell commands.
+ */
+export function buildCliSettings(
+  nodePath: string,
+  hookScript: string,
+  engineSandbox: Record<string, unknown> | null = null,
+): string {
+  const hook = [
+    {
+      matcher: '*',
+      hooks: [
         {
-          matcher: '*',
-          hooks: [
-            {
-              type: 'command',
-              command: `${quote(nodePath)} ${quote(hookScript)}`,
-              timeout: HOOK_TIMEOUT_SECONDS,
-            },
-          ],
+          type: 'command',
+          command: `${quote(nodePath)} ${quote(hookScript)}`,
+          timeout: HOOK_TIMEOUT_SECONDS,
         },
       ],
     },
+  ];
+  return JSON.stringify({
+    hooks: { PreToolUse: hook, PostToolUse: hook },
+    ...(engineSandbox ? { sandbox: engineSandbox } : {}),
   });
 }
 
@@ -93,6 +101,7 @@ export function buildCliArgs(req: DriverRunRequest, settingsJson: string): strin
   // Subagent messages carry parent_tool_use_id so their tool calls can be verified.
   args.push('--forward-subagent-text');
   if (req.tools) args.push('--tools', req.tools.join(','));
+  if (req.maxBudgetUsd) args.push('--max-budget-usd', String(req.maxBudgetUsd));
   return args;
 }
 
@@ -139,6 +148,22 @@ export class CliDriver implements AgentDriver {
     // each, with the same name and input. Anything else (a Bot that read its
     // hook token and forges requests) is denied without touching the log.
     const registration = this.opts.bridge.register(async (input) => {
+      if (input.hook_event_name === 'PostToolUse') {
+        // Only post-process calls Orbit allowed; anything else gets no rewrite.
+        const id = typeof input.tool_use_id === 'string' ? input.tool_use_id : null;
+        if (!id || !seq.wasAllowed(id)) return {};
+        return postHookOutput(
+          await postProcess(req.toolResult, {
+            toolName: typeof input.tool_name === 'string' ? input.tool_name : 'unknown',
+            toolUseId: id,
+            input:
+              typeof input.tool_input === 'object' && input.tool_input !== null
+                ? (input.tool_input as Record<string, unknown>)
+                : {},
+            response: input.tool_response,
+          }),
+        );
+      }
       if (input.hook_event_name !== 'PreToolUse') return reject('Unsupported hook event');
       const toolUseId = typeof input.tool_use_id === 'string' ? input.tool_use_id : null;
       const toolName = typeof input.tool_name === 'string' ? input.tool_name : null;
@@ -157,7 +182,7 @@ export class CliDriver implements AgentDriver {
         { toolName, input: toolInput, toolUseId, parentToolUseId: call.parentToolUseId },
         req.signal,
       );
-      seq.decision(toolUseId, decisionEvent);
+      seq.decision(toolUseId, decisionEvent, decision.behavior === 'allow');
       return hookOutput(decision);
     });
     this.secrets?.addSecret(registration.token);
@@ -168,7 +193,10 @@ export class CliDriver implements AgentDriver {
     });
     assertChildEnvSafe('cli-engine', env);
 
-    const args = buildCliArgs(req, buildCliSettings(this.opts.nodePath, this.opts.hookScript));
+    const args = buildCliArgs(
+      req,
+      buildCliSettings(this.opts.nodePath, this.opts.hookScript, req.engineSandbox ?? null),
+    );
     // Own process group, so stopping a Run also stops tool grandchildren.
     const child = spawn(this.opts.claudePath, args, {
       cwd: req.cwd,

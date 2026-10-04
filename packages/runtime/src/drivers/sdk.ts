@@ -10,7 +10,7 @@ import { type Env, assertChildEnvSafe, buildChildEnv } from '../env';
 import { Channel } from './channel';
 import { checkAuthSource } from './auth-source';
 import { Normalizer } from './normalize';
-import { decide, hookOutput } from './permission';
+import { decide, hookOutput, postHookOutput, postProcess } from './permission';
 import { EventSequencer } from './sequencer';
 import type { AgentDriver, DriverRunRequest } from './types';
 
@@ -40,7 +40,7 @@ async function defaultQuery(): Promise<QueryFn> {
 export function buildSdkOptions(
   req: DriverRunRequest,
   o: Pick<SdkDriverOptions, 'env' | 'bare' | 'apiKeyHelper'>,
-  hooks: { preToolUse: HookCallback; canUseTool: CanUseTool },
+  hooks: { preToolUse: HookCallback; postToolUse?: HookCallback; canUseTool: CanUseTool },
   abortController: AbortController,
   onStderr: (line: string) => void,
 ): Options {
@@ -56,7 +56,10 @@ export function buildSdkOptions(
     settingSources: [],
     strictMcpConfig: true,
     mcpServers: {},
-    hooks: { PreToolUse: [{ hooks: [hooks.preToolUse] }] },
+    hooks: {
+      PreToolUse: [{ hooks: [hooks.preToolUse] }],
+      ...(hooks.postToolUse ? { PostToolUse: [{ hooks: [hooks.postToolUse] }] } : {}),
+    },
     canUseTool: hooks.canUseTool,
     systemPrompt: req.appendSystemPrompt
       ? { type: 'preset', preset: 'claude_code', append: req.appendSystemPrompt }
@@ -70,6 +73,15 @@ export function buildSdkOptions(
   if (req.tools) options.tools = req.tools;
   if (req.resumeSessionId) options.resume = req.resumeSessionId;
   else if (req.sessionId) options.sessionId = req.sessionId;
+  if (req.maxBudgetUsd) options.maxBudgetUsd = req.maxBudgetUsd;
+  if (req.engineSandbox) options.sandbox = req.engineSandbox;
+  if (typeof req.spawnEngine === 'function') {
+    options.spawnClaudeCodeProcess = req.spawnEngine as NonNullable<
+      Options['spawnClaudeCodeProcess']
+    >;
+    // The engine binary inside the sandbox image (docker/sandbox.Dockerfile).
+    options.pathToClaudeCodeExecutable = 'claude';
+  }
   return options;
 }
 
@@ -119,8 +131,23 @@ export class SdkDriver implements AgentDriver {
         },
         signal,
       );
-      seq.decision(toolUseId, decisionEvent);
+      seq.decision(toolUseId, decisionEvent, decision.behavior === 'allow');
       return hookOutput(decision);
+    };
+
+    const postToolUse: HookCallback = async (input) => {
+      if (input.hook_event_name !== 'PostToolUse' || !seq.wasAllowed(input.tool_use_id)) return {};
+      return postHookOutput(
+        await postProcess(req.toolResult, {
+          toolName: input.tool_name,
+          toolUseId: input.tool_use_id,
+          input:
+            typeof input.tool_input === 'object' && input.tool_input !== null
+              ? (input.tool_input as Record<string, unknown>)
+              : {},
+          response: input.tool_response,
+        }),
+      );
     };
 
     // Backstop: the PreToolUse hook answers allow/deny for every call, so the
@@ -131,7 +158,7 @@ export class SdkDriver implements AgentDriver {
         { toolName, input, toolUseId: toolUseID, parentToolUseId: null },
         signal,
       );
-      seq.decision(toolUseID, decisionEvent);
+      seq.decision(toolUseID, decisionEvent, decision.behavior === 'allow');
       const result: PermissionResult =
         decision.behavior === 'allow'
           ? { behavior: 'allow', updatedInput: decision.updatedInput ?? input }
@@ -144,7 +171,7 @@ export class SdkDriver implements AgentDriver {
         const options = buildSdkOptions(
           req,
           this.opts,
-          { preToolUse, canUseTool },
+          { preToolUse, postToolUse, canUseTool },
           abortController,
           (d) => {
             stderrTail.push(...d.split('\n').filter((l) => l.trim()));

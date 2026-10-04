@@ -1,6 +1,19 @@
-import type { AuthMethod, DriverKind, PermissionHandler, RunEventBody } from '@orbit/core';
+import type {
+  AuthMethod,
+  DriverKind,
+  PermissionHandler,
+  RunEventBody,
+  ToolResultHandler,
+} from '@orbit/core';
 
-export type { PermissionHandler, ToolPermissionDecision, ToolPermissionRequest } from '@orbit/core';
+export type {
+  PermissionHandler,
+  ToolPermissionDecision,
+  ToolPermissionRequest,
+  ToolResultDecision,
+  ToolResultHandler,
+  ToolResultRequest,
+} from '@orbit/core';
 
 export interface DriverRunRequest {
   runId: string;
@@ -19,7 +32,15 @@ export interface DriverRunRequest {
   /** Session id to assign to a new session (`--session-id`); ignored on resume. */
   sessionId: string | null;
   permission: PermissionHandler;
+  /** Post-processing of tool output (secret redaction, untrusted-content tagging). */
+  toolResult?: ToolResultHandler | undefined;
   signal: AbortSignal;
+  /** Claude Code native `sandbox` settings for this Run (engine-enforced shell isolation). */
+  engineSandbox?: Record<string, unknown> | null | undefined;
+  /** Engine-side spend cap in USD (`--max-budget-usd` / `maxBudgetUsd`). */
+  maxBudgetUsd?: number | null | undefined;
+  /** SDK only: run the engine elsewhere (e.g. `docker exec` into the Bot's container). */
+  spawnEngine?: unknown;
   /** MockDriver scenario. */
   mockFixture?: string | undefined;
 }

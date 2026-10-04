@@ -21,3 +21,4 @@ export * from './drivers/types';
 export * from './env';
 export * from './orchestrator';
 export * from './prompt';
+export * from './workspaces';

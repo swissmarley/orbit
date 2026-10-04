@@ -26,6 +26,7 @@ export class EventSequencer {
   private readonly pending = new Map<string, RunEventBody[]>();
   private readonly claimed = new Set<string>();
   private readonly decided = new Set<string>();
+  private readonly allowed = new Set<string>();
 
   constructor(private readonly out: Channel<RunEventBody>) {}
 
@@ -96,8 +97,9 @@ export class EventSequencer {
     return call;
   }
 
-  decision(toolUseId: string | null, body: RunEventBody): void {
+  decision(toolUseId: string | null, body: RunEventBody, allowed = false): void {
     if (toolUseId) this.decided.add(toolUseId);
+    if (toolUseId && allowed) this.allowed.add(toolUseId);
     if (!toolUseId || this.calls.has(toolUseId)) {
       this.out.push(body);
       return;
@@ -105,6 +107,10 @@ export class EventSequencer {
     const list = this.pending.get(toolUseId) ?? [];
     list.push(body);
     this.pending.set(toolUseId, list);
+  }
+
+  wasAllowed(toolUseId: string): boolean {
+    return this.allowed.has(toolUseId);
   }
 
   /** Emit anything still held (e.g. the engine died before printing the call). */

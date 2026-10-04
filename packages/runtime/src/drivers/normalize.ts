@@ -93,6 +93,9 @@ export class Normalizer {
   lastAssistantText: string | null = null;
   terminal: RunEventBody | null = null;
   private readonly subagents = new Set<string>();
+  private readonly seenMessages = new Set<string>();
+  /** Live token usage across assistant turns (approximate until the result). */
+  private live = { inputTokens: 0, outputTokens: 0, turns: 0 };
 
   constructor(private readonly maxToolResultChars = MAX_TOOL_RESULT_CHARS) {}
 
@@ -128,6 +131,21 @@ export class Normalizer {
     const messageId = str(msg.id);
     const content = Array.isArray(msg.content) ? msg.content : [];
     const out: RunEventBody[] = [];
+    // The engine repeats a message (with the same usage) once per content block.
+    const usage = isObj(msg.usage) ? msg.usage : null;
+    if (messageId && usage && !this.seenMessages.has(messageId)) {
+      this.seenMessages.add(messageId);
+      this.live = {
+        inputTokens:
+          this.live.inputTokens +
+          int(usage.input_tokens) +
+          int(usage.cache_read_input_tokens) +
+          int(usage.cache_creation_input_tokens),
+        outputTokens: this.live.outputTokens + int(usage.output_tokens),
+        turns: this.live.turns + 1,
+      };
+      out.push(event('usage.turn', { ...this.live }));
+    }
     for (const block of content) {
       if (!isObj(block)) continue;
       const bt = str(block.type);

@@ -1,5 +1,12 @@
 import { type RunEventBody, event } from '@orbit/core';
-import type { PermissionHandler, ToolPermissionDecision, ToolPermissionRequest } from './types';
+import type {
+  PermissionHandler,
+  ToolPermissionDecision,
+  ToolPermissionRequest,
+  ToolResultDecision,
+  ToolResultHandler,
+  ToolResultRequest,
+} from './types';
 
 /**
  * Call the permission handler, failing closed: any exception or invalid
@@ -40,13 +47,46 @@ export async function decide(
           : request.input,
       behavior: decision.behavior,
       reason: decision.reason,
+      tier: decision.tier ?? null,
+      ruleId: decision.ruleId ?? null,
+      approvalId: decision.approvalId ?? null,
     }),
+  };
+}
+
+/** Run the tool-result handler, never failing the tool: errors mean "no change". */
+export async function postProcess(
+  handler: ToolResultHandler | undefined,
+  request: ToolResultRequest,
+): Promise<ToolResultDecision> {
+  if (!handler) return {};
+  try {
+    return await handler(request);
+  } catch {
+    return {};
+  }
+}
+
+/** PostToolUse hook output understood by both the CLI and the SDK. */
+export function postHookOutput(d: ToolResultDecision): Record<string, unknown> {
+  if (d.updatedOutput === undefined && d.additionalContext === undefined) return {};
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PostToolUse',
+      ...(d.updatedOutput !== undefined ? { updatedToolOutput: d.updatedOutput } : {}),
+      ...(d.additionalContext !== undefined ? { additionalContext: d.additionalContext } : {}),
+    },
   };
 }
 
 /** PreToolUse hook output understood by both the CLI and the SDK. */
 export function hookOutput(decision: ToolPermissionDecision): Record<string, unknown> {
+  const stop =
+    decision.behavior === 'deny' && decision.interrupt
+      ? { continue: false, stopReason: decision.reason }
+      : {};
   return {
+    ...stop,
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
       permissionDecision: decision.behavior,

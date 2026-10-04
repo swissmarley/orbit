@@ -2,7 +2,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { type RunEventBody, event, isTerminalEvent } from '@orbit/core';
 import { FIXTURES_DIR, loadFixture } from './fixtures';
 import { Normalizer } from './normalize';
-import { decide } from './permission';
+import { decide, postProcess } from './permission';
 import type { AgentDriver, DriverRunRequest } from './types';
 
 export interface MockDriverOptions {
@@ -91,6 +91,8 @@ export class MockDriver implements AgentDriver {
       return;
     }
     const denied = recordedDenials(messages);
+    const allowed = new Set<string>();
+    const calls = new Map<string, { name: string; input: Record<string, unknown> }>();
     const n = new Normalizer();
 
     for (const [index, raw] of messages.entries()) {
@@ -111,7 +113,21 @@ export class MockDriver implements AgentDriver {
       const placed = relocate(raw, req.cwd);
       const msg = isObj(placed) && sessionId ? { ...placed, session_id: sessionId } : placed;
       const bodies = n.push(msg);
-      for (const body of bodies) {
+      for (const raw of bodies) {
+        let body = raw;
+        // Tool output passes through Orbit's post-processing (redaction), as with real engines.
+        if (body.type === 'tool.result' && !body.data.isError && allowed.has(body.data.toolUseId)) {
+          const call = calls.get(body.data.toolUseId);
+          const post = await postProcess(req.toolResult, {
+            toolName: call?.name ?? 'unknown',
+            toolUseId: body.data.toolUseId,
+            input: call?.input ?? {},
+            response: body.data.content,
+          });
+          if (typeof post.updatedOutput === 'string') {
+            body = { ...body, data: { ...body.data, content: post.updatedOutput } };
+          }
+        }
         yield body;
         if (isTerminalEvent(body)) return;
         if (body.type !== 'tool.call') continue;
@@ -133,6 +149,28 @@ export class MockDriver implements AgentDriver {
           return;
         }
 
+        if (decision.behavior === 'allow') {
+          allowed.add(toolUseId);
+          calls.set(toolUseId, { name: toolName, input: isObj(input) ? input : {} });
+        }
+        if (decision.behavior === 'deny' && decision.interrupt) {
+          // Like `continue: false`: the engine stops right after the denial.
+          yield event('tool.result', {
+            toolUseId,
+            isError: true,
+            content: decision.reason,
+            truncated: false,
+            parentToolUseId,
+          });
+          yield zeroUsage();
+          yield event('run.completed', {
+            result: decision.reason,
+            stopReason: 'hook_stopped',
+            sessionId: n.sessionId,
+            permissionDenials: [{ toolName, toolUseId }],
+          });
+          return;
+        }
         const recordedDeny = denied.has(toolUseId);
         if (decision.behavior === 'deny' && !recordedDeny) {
           yield event('tool.result', {

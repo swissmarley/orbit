@@ -10,18 +10,23 @@ describe('normalizer on real CLI recordings', () => {
     expect(events.map((e) => e.type)).toEqual([
       'session.init',
       'usage_limit',
+      'usage.turn',
       'message.assistant',
       'tool.call',
       'hook',
       'tool.result',
+      'usage.turn',
       'tool.call',
       'hook',
       'tool.result',
+      'usage.turn',
       'message.assistant',
       'status.summary',
       'usage',
       'run.completed',
     ]);
+    const turns = events.filter((e) => e.type === 'usage.turn');
+    expect(turns.at(-1)?.type === 'usage.turn' && turns.at(-1)?.data.turns).toBe(3);
     const summary = events.find((e) => e.type === 'status.summary');
     expect(summary?.type === 'status.summary' && summary.data.category).toBe('blocked');
     const done = events.at(-1)!;

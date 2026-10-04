@@ -208,8 +208,8 @@ describe('CliDriver guard rails', () => {
           headers: { authorization: `Bearer ${seenTokens[0]!}` },
           body: JSON.stringify(body),
         });
-        const j = (await r.json()) as { hookSpecificOutput: { permissionDecision: string } };
-        forged.push(j.hookSpecificOutput.permissionDecision);
+        const j = (await r.json()) as { hookSpecificOutput?: { permissionDecision?: string } };
+        forged.push(j.hookSpecificOutput?.permissionDecision ?? 'no-op');
       };
       void Promise.all([
         post({
@@ -225,7 +225,8 @@ describe('CliDriver guard rails', () => {
       });
     });
     expect(seenTokens).toHaveLength(1);
-    expect(forged).toEqual(['deny', 'deny', 'deny']);
+    // PreToolUse forgeries are denied; a forged PostToolUse gets an empty, no-op answer.
+    expect(forged.sort()).toEqual(['deny', 'deny', 'no-op']);
     expect(events.some((e) => e.type === 'permission.decision')).toBe(false);
   });
 
