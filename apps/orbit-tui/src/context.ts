@@ -63,7 +63,12 @@ export class Context {
   get approvals(): ApprovalQueue {
     return this.once(
       'approvals',
-      () => new ApprovalQueue(this.open(), { audit: this.audit, events: this.store }),
+      () =>
+        new ApprovalQueue(this.open(), {
+          audit: this.audit,
+          events: this.store,
+          redactor: this.redactor,
+        }),
     );
   }
 
@@ -94,7 +99,8 @@ export class Context {
   /** Orchestrator for state-only operations (stop, pause, kill) — no engine needed. */
   orchestrator(handle?: DriverHandle): Orchestrator {
     // Vault values must be known to the redactor before any tool output flows.
-    this.secretsLoaded();
+    // Fail closed: a vault that exists but cannot be decrypted stops the command.
+    this.vault();
     return new Orchestrator({
       config: this.config,
       store: this.store,
@@ -116,15 +122,6 @@ export class Context {
         this.io.env,
       ),
     });
-  }
-
-  private secretsLoaded(): boolean {
-    try {
-      this.vault();
-      return true;
-    } catch {
-      return false;
-    }
   }
 
   close(): void {

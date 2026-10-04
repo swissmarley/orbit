@@ -43,6 +43,12 @@ export function botSpecFromOptions(o: BotCreateOptions): BotSpecInput {
 
 export function botCreate(ctx: Context, o: BotCreateOptions): number {
   const bot = ctx.bots.create(botSpecFromOptions(o));
+  ctx.audit.append({
+    actor: 'owner',
+    action: 'bot.created',
+    subject: bot.id,
+    data: { spec: bot.spec },
+  });
   if (o.json) ctx.io.out(JSON.stringify(bot, null, 2));
   else ctx.io.out(`${painter(ctx.io)('green', '✔')} Created bot ${bot.spec.name} (${bot.id})`);
   return 0;

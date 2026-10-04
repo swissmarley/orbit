@@ -150,7 +150,10 @@ export async function main(argv: string[], io: Io): Promise<number> {
     .option('-e, --edit <json|@file>', 'approve this edited tool input instead')
     .option('--always', 'also create a standing allow rule for this tool')
     .option('--global', 'with --always: for every Bot, not just this one')
-    .option('--expires <duration>', 'with --always: rule expiry, e.g. 7d')
+    .option(
+      '--expires <duration>',
+      'with --always: rule expiry, e.g. 30m, 7d or never (default 7d)',
+    )
     .option('--no-resume', 'do not resume the parked Run now')
     .option('--fixture <name>', 'mock scenario for the resumed Run (MockDriver only)')
     .option('--json', 'machine-readable output')
@@ -179,7 +182,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
     .requiredOption('-t, --tool <pattern>', 'tool name or glob, e.g. mcp__slack__post_message')
     .requiredOption('--effect <allow|deny>', 'allow or deny')
     .option('-b, --bot <bot>', 'only for this Bot (default: all Bots)')
-    .option('--expires <duration>', 'e.g. 7d')
+    .option('--expires <duration>', 'e.g. 7d or never (allow rules default to 7d)')
     .option('-r, --reason <text>', 'why')
     .option('--json', 'machine-readable output')
     .action((o: Parameters<typeof rulesAdd>[1]) => set(rulesAdd(context(), o)));

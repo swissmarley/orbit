@@ -15,6 +15,11 @@ export function processIo(): Io {
   const env = process.env;
   const color =
     !('NO_COLOR' in env) && env.TERM !== 'dumb' && (process.stdout.isTTY || 'FORCE_COLOR' in env);
+  // `orbit … | head` closes stdout early; that is a normal end, not a crash.
+  process.stdout.on('error', (e: NodeJS.ErrnoException) => {
+    if (e.code === 'EPIPE') process.exit(0);
+    throw e;
+  });
   return {
     out: (t) => process.stdout.write(t.endsWith('\n') ? t : `${t}\n`),
     err: (t) => process.stderr.write(t.endsWith('\n') ? t : `${t}\n`),

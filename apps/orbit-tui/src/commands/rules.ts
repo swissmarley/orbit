@@ -1,7 +1,7 @@
 import { classifyTool } from '@orbit/policy';
 import type { Context } from '../context';
 import { painter } from '../io';
-import { parseExpiry } from './approvals';
+import { DEFAULT_RULE_EXPIRY, parseExpiry } from './approvals';
 
 export function rulesList(ctx: Context, o: { all?: boolean; json?: boolean }): number {
   const rules = ctx.rules.list({ includeInactive: o.all === true });
@@ -44,7 +44,8 @@ export function rulesAdd(
       effect: o.effect,
       reason: o.reason ?? null,
       createdBy: 'owner',
-      expiresAt: o.expires ? parseExpiry(o.expires) : null,
+      // Allow rules expire by default; deny rules last until revoked.
+      expiresAt: parseExpiry(o.expires ?? (o.effect === 'allow' ? DEFAULT_RULE_EXPIRY : 'never')),
     },
     tier,
   );

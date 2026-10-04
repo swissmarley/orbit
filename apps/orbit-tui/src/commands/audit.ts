@@ -7,8 +7,20 @@ export function auditList(
   ctx: Context,
   o: { action?: string; limit?: string; json?: boolean },
 ): number {
-  const all = ctx.audit.list({ ...(o.action ? { action: o.action } : {}), limit: 1000 });
-  const records = all.slice(-(o.limit ? Number(o.limit) : 50));
+  // Page through to the newest records (list() is oldest-first).
+  const limit = o.limit ? Number(o.limit) : 50;
+  let records: ReturnType<typeof ctx.audit.list> = [];
+  let afterSeq = 0;
+  for (;;) {
+    const page = ctx.audit.list({
+      ...(o.action ? { action: o.action } : {}),
+      afterSeq,
+      limit: 1000,
+    });
+    if (page.length === 0) break;
+    records = [...records, ...page].slice(-limit);
+    afterSeq = page.at(-1)?.seq ?? afterSeq;
+  }
   if (o.json) {
     ctx.io.out(JSON.stringify(records, null, 2));
     return 0;

@@ -8,13 +8,23 @@ import { resumeRun } from './run';
 
 type Paint = ReturnType<typeof painter>;
 
+/** Model-derived text may contain control characters that spoof terminal lines. */
+export function clean(text: string): string {
+  return (
+    text
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, '\ufffd')
+      .replace(/\n/g, ' \u23ce ')
+  );
+}
+
 function card(a: Approval, p: Paint): string[] {
   const c = a.card;
   const tierColor = c.tier === 'EXTERNAL' ? 'yellow' : c.tier === 'FINANCIAL' ? 'red' : 'cyan';
   const lines = [
     `${p('bold', a.id)}  ${p(tierColor, c.tier)}  ${p('dim', `${a.status} · ${formatRelative(a.createdAt)}`)}`,
-    `  ${p('bold', 'What')}   ${c.what}`,
-    `  ${p('bold', 'Why')}    ${c.why}`,
+    `  ${p('bold', 'What')}   ${clean(c.what)}`,
+    `  ${p('bold', 'Why')}    ${clean(c.why)}`,
     `  ${p('bold', 'Bot')}    ${c.botName} ${p('dim', `(run ${c.runId})`)}`,
     `  ${p('bold', 'Risk')}   ${c.risk}`,
   ];
@@ -68,7 +78,11 @@ export function approvalShow(ctx: Context, id: string, o: { json?: boolean }): n
 }
 
 /** "7d", "12h", "30m" → ISO timestamp from now. */
-export function parseExpiry(value: string, now = new Date()): string {
+/** Default lifetime of standing allow rules (review M7): explicit `never` to opt out. */
+export const DEFAULT_RULE_EXPIRY = '7d';
+
+export function parseExpiry(value: string, now = new Date()): string | null {
+  if (value.trim().toLowerCase() === 'never') return null;
   const m = /^(\d+)([mhdw])$/.exec(value.trim());
   if (!m)
     throw new OrbitError(
@@ -133,7 +147,10 @@ export async function approve(
     by: 'owner',
     editedInput: o.edit ? parseEdit(o.edit) : null,
     always: o.always
-      ? { scope: o.global ? 'global' : 'bot', expiresAt: o.expires ? parseExpiry(o.expires) : null }
+      ? {
+          scope: o.global ? 'global' : 'bot',
+          expiresAt: parseExpiry(o.expires ?? DEFAULT_RULE_EXPIRY),
+        }
       : null,
   });
   if (o.json) ctx.io.out(JSON.stringify(a));
