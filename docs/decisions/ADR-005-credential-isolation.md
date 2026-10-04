@@ -11,7 +11,11 @@ Status: Accepted (M0, implemented in M1)
   is **not** forwarded: Orbit never reads, copies, stores, logs or forwards
   OAuth credentials; the `claude` binary reads its own credential store via
   `HOME`/`CLAUDE_CONFIG_DIR`.
-- **SdkDriver engine:** allowlist + the API key / Bedrock / Vertex variables;
+- `ANTHROPIC_BASE_URL` is not forwarded to the CLI child: a gateway set up for
+  API keys must never receive subscription traffic (doctor warns).
+- **SdkDriver engine:** allowlist + the API key / Bedrock / Vertex variables,
+  plus `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` so the engine strips credentials
+  from its own children (Bash, hooks, MCP servers);
   `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_AUTH_TOKEN` removed; engine started
   with `--bare` so OAuth/keychain are never consulted.
 - **All other children** (MCP servers, hooks, tools, sandboxes): the API key is
@@ -20,8 +24,12 @@ Status: Accepted (M0, implemented in M1)
   service, or read `CLAUDE_CODE_OAUTH_TOKEN`'s value (ESLint
   `no-restricted-syntax`; doctor may test the variable's _presence_ through a
   single audited helper).
-- A redactor (`sk-ant-…`, bearer tokens, vault values) runs on every event,
-  log line and audit record before persistence.
+- A per-process redactor, seeded with the values of the API credentials that
+  are present and every per-Run hook token (plus patterns for common key
+  formats), runs on every event before persistence and on terminal errors.
+- The baseline policy keeps Bots out of credential stores (`~/.claude`,
+  `~/.ssh`, `~/.aws`, gcloud, netrc, `/proc`) and Orbit's own data directory;
+  reads and writes are confined to the Bot workspace.
 
 ## Consequences
 

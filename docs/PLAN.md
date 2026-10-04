@@ -259,6 +259,9 @@ PLAN.md, ADRs, `.claude/agents` + `.claude/skills`.
 - Baseline default-deny policy (`@orbit/policy`): read tools allowed, file
   writes only inside the Bot workspace, everything else denied.
 - Shipped as specified, plus `@orbit/store` (ADR-007) and the hook bridge (ADR-008).
+- Safety review findings F1–F12 fixed (workspace confinement for reads and
+  writes, `~` paths, bypass detection, forged-hook rejection, auth-source
+  checks, redaction gaps, process-group kill, subprocess env scrub).
 - `pnpm test:live` (opt-in) runs the contract smoke against the real driver.
   **Done when:** with no credentials `orbit run` works via MockDriver; with a
   logged-in `claude` it works via CliDriver; with an API key via SdkDriver.
@@ -381,10 +384,13 @@ CI never needs credentials: `ORBIT_DRIVER=mock` is forced in CI.
 Items intentionally postponed from a milestone are listed here with the
 milestone that will pick them up. Shipped code paths contain no TODO stubs.
 
-| Item                                                                         | From | To                            | Reason                                                                                                                                                     |
-| ---------------------------------------------------------------------------- | ---- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Live SdkDriver run (`--bare` auth + SDK hook callbacks against the real API) | M1   | first session with an API key | no API key in the dev environment; covered by the contract suite with an injected `query()`, `pnpm test:live` exercises it automatically when a key is set |
-| `ask` decisions, approval queue, park-and-resume                             | M1   | M2                            | M1 policy decides allow/deny only                                                                                                                          |
-| PostToolUse redaction of tool output before the model sees it                | M1   | M2                            | events are already redacted before persistence                                                                                                             |
-| Enforcing the CLI-mode concurrency limit (config exists, default 2)          | M1   | M3                            | needs the run queue                                                                                                                                        |
-| CLI as a thin client of orbitd                                               | M1   | M3                            | M1 runs Bots in-process                                                                                                                                    |
+| Item                                                                                 | From | To                            | Reason                                                                                                                                                     |
+| ------------------------------------------------------------------------------------ | ---- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Live SdkDriver run (`--bare` auth + SDK hook callbacks against the real API)         | M1   | first session with an API key | no API key in the dev environment; covered by the contract suite with an injected `query()`, `pnpm test:live` exercises it automatically when a key is set |
+| `ask` decisions, approval queue, park-and-resume                                     | M1   | M2                            | M1 policy decides allow/deny only                                                                                                                          |
+| PostToolUse redaction of tool output before the model sees it                        | M1   | M2                            | events are already redacted before persistence                                                                                                             |
+| Enforcing the CLI-mode concurrency limit (config exists, default 2)                  | M1   | M3                            | needs the run queue                                                                                                                                        |
+| CLI as a thin client of orbitd                                                       | M1   | M3                            | M1 runs Bots in-process                                                                                                                                    |
+| Redacting Bot specs (goal/instructions) before storing them                          | M1   | M2                            | events are redacted; specs are user-authored                                                                                                               |
+| Live verification of subagent tool calls under CliDriver (`--forward-subagent-text`) | M1   | M6                            | covered by the synthesized fixture; a live Task run costs more usage                                                                                       |
+| Bedrock/Vertex `apiKeySource` values                                                 | M1   | first cloud-provider session  | only login sources are rejected for them until observed                                                                                                    |

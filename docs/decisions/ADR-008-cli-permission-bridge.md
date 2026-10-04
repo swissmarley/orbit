@@ -16,12 +16,27 @@ engine deny anything that would otherwise prompt.
 - CliDriver passes `--settings` with one PreToolUse hook (`matcher: "*"`) that
   runs `bin/orbit-hook.mjs`. The script POSTs the hook input to a loopback
   `HookBridge` (127.0.0.1, random port) with a per-Run bearer token and prints
-  the decision. Any failure (bridge down, bad status, bad config) → deny.
+  the decision. Failures _inside the script_ (bridge down, bad status, invalid
+  answer, timeout, crash) print a deny **and exit 2**, Claude Code's blocking
+  error, so the tool does not run.
+- Failures _outside_ the script (hook killed, hook timeout, managed settings
+  disabling hooks) are non-blocking in Claude Code. Orbit therefore verifies
+  after the fact: every successful `tool.result` must have a prior Orbit
+  decision for that tool-use id, otherwise the Run is stopped with
+  `run.failed: policy_bypassed` (both drivers, `EventSequencer`).
 - `--setting-sources ''` and `--strict-mcp-config` stop user/project settings,
-  hooks, permission rules and MCP servers from leaking into Bot runs.
-- The per-Run token only lets a caller _ask_ for a decision about a tool call;
-  it cannot approve, change policy or read anything. It is in the engine's
-  environment (the Bot could read it) and is registered with the redactor.
+  hooks, permission rules and MCP servers from leaking into Bot runs;
+  `--permission-prompts none` denies anything that would still prompt.
+- The per-Run token is in the engine's environment, so the Bot can read it.
+  The bridge therefore only answers for a tool call the engine has already
+  announced on stdout, at most once, with identical name and input; anything
+  else is denied without writing to the event log. The token is registered
+  with the process redactor so it never reaches events or logs.
+- The engine's reported credential source (`init.apiKeySource`) is checked:
+  CliDriver stops if it is `ANTHROPIC_API_KEY`; SdkDriver stops on any login
+  source (`oauth`, `/login managed key`, …) or a source that does not match the
+  configured credential.
+- Stopping a Run signals the engine's whole process group.
 - `ask` outcomes (M2) are resolved inside the same hook call: the bridge waits
   for the approval queue up to the park window, then denies with interrupt and
   parks the Run (ADR-003).
