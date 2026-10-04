@@ -101,7 +101,7 @@ describe.skipIf(!dockerAvailable)('SandboxManager — docker (real daemon)', () 
       expect(ws).toMatchObject({
         kind: 'docker',
         isolation: 'container',
-        shellContained: true,
+        shellContained: false,
         docker: { container, workdir: '/workspace' },
       });
       const info = inspect(container);

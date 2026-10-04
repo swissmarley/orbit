@@ -122,6 +122,8 @@ function detail(r: CommandResult): string {
 }
 
 export interface SandboxManagerOptions {
+  /** Further paths sandboxed commands may never read (e.g. CLAUDE_CONFIG_DIR). */
+  extraDenied?: readonly string[];
   /** Orbit's data directory; workspaces live in `<orbitHome>/workspaces`. */
   orbitHome: string;
   /** The user's home directory (credential stores are denied relative to it). */
@@ -163,9 +165,11 @@ export class SandboxManager {
   private readonly run: CommandRunner;
   private readonly dockerClientEnv: Record<string, string>;
   private readonly containerUser: string | null;
+  private readonly extraDenied: readonly string[];
   private supportPromise: Promise<SandboxSupport> | undefined;
 
   constructor(opts: SandboxManagerOptions) {
+    this.extraDenied = opts.extraDenied ?? [];
     this.orbitHome = resolve(opts.orbitHome);
     this.home = resolve(opts.home ?? homedir());
     this.run = opts.run;
@@ -379,7 +383,9 @@ export class SandboxManager {
       kind,
       path,
       isolation,
-      shellContained: isolation === 'engine-sandbox' && sb.network === 'none',
+      // Not trusted until the native sandbox is verified live on a machine with
+      // bwrap/socat or macOS (PLAN §7; M2 review H2): Bash stays EXTERNAL.
+      shellContained: false,
       // Without a usable native sandbox the settings (failIfUnavailable) would
       // make every Run fail; isolation 'none' instead makes the policy engine
       // treat Bash as EXTERNAL.
@@ -392,6 +398,7 @@ export class SandboxManager {
               network: sb.network,
               allowedDomains: sb.allowedDomains,
               readRoots: bot.spec.readRoots,
+              extraDenied: this.extraDenied,
             })
           : null,
       docker: null,
@@ -572,7 +579,10 @@ export class SandboxManager {
       kind: 'docker',
       path,
       isolation: 'container',
-      shellContained: sb.network === 'none',
+      // The API key in the engine's environment is readable from inside the
+      // container (/proc/<pid>/environ) until the key proxy lands (M8): Bash
+      // therefore stays EXTERNAL here too (M2 review M3).
+      shellContained: false,
       engineSandboxSettings: null,
       docker: { container: name, workdir: CONTAINER_WORKDIR },
     };

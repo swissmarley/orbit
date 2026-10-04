@@ -63,7 +63,7 @@ describe('engineSandboxSettings', () => {
   });
 
   it('never names the OAuth credential file (the whole ~/.claude dir is denied)', () => {
-    expect(JSON.stringify(settings())).not.toMatch(/credentials/);
+    expect(JSON.stringify(settings())).not.toMatch(/\.credentials\.json/);
   });
 
   it('keeps readRoots unless they overlap a denied path', () => {

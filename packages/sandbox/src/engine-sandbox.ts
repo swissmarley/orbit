@@ -16,9 +16,15 @@ export const DENIED_HOME_PATHS: readonly string[] = [
   '.docker',
   '.gnupg',
   '.netrc',
+  '.npmrc',
+  '.pypirc',
+  '.git-credentials',
   '.config/gcloud',
   '.config/gh',
 ];
+
+/** Absolute paths never readable from the sandbox (process environments of other processes). */
+export const DENIED_ABSOLUTE_PATHS: readonly string[] = ['/proc', '/sys'];
 
 export interface EngineSandboxOptions {
   /** The Bot's workspace: the only writable path. */
@@ -30,6 +36,8 @@ export interface EngineSandboxOptions {
   allowedDomains: string[];
   /** Extra read-only directories from the Bot spec. */
   readRoots: string[];
+  /** Further paths to deny, e.g. a non-default CLAUDE_CONFIG_DIR. */
+  extraDenied?: readonly string[];
 }
 
 /** True when `child` is `parent` or lies inside it. */
@@ -66,7 +74,12 @@ export function engineSandboxSettings(opts: EngineSandboxOptions): Record<string
       },
     );
   }
-  const denyRead = [...credentialStores, resolve(opts.orbitHome)];
+  const denyRead = [
+    ...credentialStores,
+    ...DENIED_ABSOLUTE_PATHS,
+    ...(opts.extraDenied ?? []).map((p) => resolve(p)),
+    resolve(opts.orbitHome),
+  ];
 
   const overlapsDenied = (root: string): boolean =>
     denyRead.some((d) => isWithin(root, d) || isWithin(d, root));

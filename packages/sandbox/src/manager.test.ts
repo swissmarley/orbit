@@ -85,7 +85,7 @@ describe('SandboxManager — docker', () => {
       kind: 'docker',
       path: ws.path,
       isolation: 'container',
-      shellContained: true,
+      shellContained: false,
       engineSandboxSettings: null,
       docker: { container: 'orbit-bot-docker-bot', workdir: '/workspace' },
     });
@@ -203,7 +203,7 @@ describe('SandboxManager — directory', () => {
     expect(ws.path.endsWith(join('workspaces', 'my-dir-bot'))).toBe(true);
     expect(statSync(ws.path).mode & 0o777).toBe(0o700);
     expect(ws.isolation).toBe('engine-sandbox');
-    expect(ws.shellContained).toBe(true);
+    expect(ws.shellContained).toBe(false);
     expect(ws.docker).toBeNull();
     const fs = (ws.engineSandboxSettings as { filesystem: Record<string, string[]> }).filesystem;
     expect(fs.allowWrite).toEqual([ws.path]);
