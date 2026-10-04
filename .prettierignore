@@ -3,3 +3,4 @@ node_modules
 dist
 coverage
 **/fixtures/**/*.jsonl
+packages/api/openapi.json
