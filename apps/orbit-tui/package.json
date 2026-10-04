@@ -1,0 +1,14 @@
+{
+  "name": "@orbit/tui",
+  "version": "0.0.0",
+  "private": true,
+  "description": "orbit: terminal UI and scriptable CLI for Orbit",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

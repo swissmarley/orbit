@@ -1,0 +1,18 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.vite/
+storybook-static/
+playwright-report/
+test-results/
+.turbo/
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+# local Orbit state when ORBIT_HOME points inside the repo
+.orbit/
+# Tauri
+apps/orbit-app/src-tauri/target/

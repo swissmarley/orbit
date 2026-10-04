@@ -1,0 +1,14 @@
+{
+  "name": "@orbit/sandbox",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Bot workspace isolation: Docker containers and git worktrees with resource and network limits",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

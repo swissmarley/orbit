@@ -1,0 +1,14 @@
+{
+  "name": "@orbit/runtime",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Run orchestrator, scheduler, trigger router, AgentDriver implementations, AuthResolver and rate-limit manager",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

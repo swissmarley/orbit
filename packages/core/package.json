@@ -1,0 +1,14 @@
+{
+  "name": "@orbit/core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Domain types, zod schemas, RunEvent model, config schema and redaction utilities",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

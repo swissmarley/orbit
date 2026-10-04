@@ -1,0 +1,14 @@
+{
+  "name": "@orbit/api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Hono REST + SSE API, loopback MCP endpoint and OpenAPI generation for orbitd",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

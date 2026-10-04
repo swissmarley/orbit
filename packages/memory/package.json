@@ -1,0 +1,14 @@
+{
+  "name": "@orbit/memory",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Durable Bot memory (markdown + SQLite FTS index), summarizer and feedback ingestion",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

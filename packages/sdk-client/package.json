@@ -1,0 +1,14 @@
+{
+  "name": "@orbit/sdk-client",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Typed client for the orbitd API with SSE reconnect and Last-Event-ID resume",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}
