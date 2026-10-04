@@ -34,6 +34,7 @@ describe('workspace conventions', () => {
         '@orbit/memory',
         '@orbit/api',
         '@orbit/sdk-client',
+        '@orbit/store',
         '@orbit/orbitd',
         '@orbit/tui',
       ]),

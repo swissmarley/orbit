@@ -1,0 +1,22 @@
+{
+  "name": "@orbit/store",
+  "version": "0.0.0",
+  "private": true,
+  "description": "SQLite persistence (Drizzle): append-only event log, run projections, bots with versioned config",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@orbit/core": "workspace:*",
+    "better-sqlite3": "13.0.3",
+    "drizzle-orm": "0.45.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0"
+  }
+}
