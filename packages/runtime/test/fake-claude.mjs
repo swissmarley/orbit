@@ -48,6 +48,9 @@ if (control.behavior === 'hang') {
     tools: [],
     model: 'm',
   });
+  // A grandchild (like a Bash tool process) that must die with the Run.
+  const grandchild = spawn('sleep', ['300'], { stdio: 'ignore' });
+  writeFileSync(join(cwd, '.fake-claude-grandchild'), String(grandchild.pid));
   setInterval(() => undefined, 1000);
 } else {
   if (control.behavior === 'garbage') process.stdout.write('this is not json\n');
@@ -73,7 +76,15 @@ if (control.behavior === 'hang') {
       child.stdin.end(JSON.stringify(input));
     });
 
-  for await (const m of replay(readFixture(control.fixture), { decide: runHook, sessionId, cwd })) {
+  // 'bypass' simulates a hook that failed non-blockingly: tools run without Orbit.
+  const decide =
+    control.behavior === 'bypass'
+      ? () => Promise.resolve({ hookSpecificOutput: { permissionDecision: 'allow' } })
+      : runHook;
+  for await (const m of replay(readFixture(control.fixture), { decide, sessionId, cwd })) {
+    if (control.apiKeySource && m.type === 'system' && m.subtype === 'init') {
+      m.apiKeySource = control.apiKeySource;
+    }
     out(m);
   }
 }

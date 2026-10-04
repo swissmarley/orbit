@@ -876,3 +876,26 @@ describe('authLabel', () => {
     expect(authLabel('subscription')).not.toMatch(/pay-as-you-go/);
   });
 });
+
+describe('ANTHROPIC_BASE_URL in subscription mode', () => {
+  it('warns that the gateway URL is not forwarded to the claude CLI', async () => {
+    const r = await resolveAuth({
+      config: OrbitConfig.parse({ home: '/tmp/orbit-base-url' }),
+      env: { ANTHROPIC_BASE_URL: 'https://gateway.example' },
+      probes: {
+        findClaude: () => Promise.resolve('/usr/bin/claude'),
+        cliStatus: (path) =>
+          Promise.resolve({
+            path,
+            version: '2.1.289',
+            loggedIn: true,
+            authMethod: 'oauth_token',
+            apiProvider: 'firstParty',
+            error: null,
+          }),
+      },
+    });
+    expect(r.driver).toBe('cli');
+    expect(r.warnings.map((w) => w.code)).toEqual(['base_url_not_forwarded']);
+  });
+});

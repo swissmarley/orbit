@@ -59,6 +59,8 @@ export const RunEventBody = z.discriminatedUnion('type', [
     tools: z.array(z.string()),
     engineVersion: nullableString,
     permissionMode: nullableString,
+    /** Credential source the engine reports (e.g. ANTHROPIC_API_KEY, none, oauth). */
+    apiKeySource: nullableString,
   }),
   ev('message.assistant', { messageId: nullableString, text: z.string(), parentToolUseId }),
   ev('message.thinking', { messageId: nullableString, text: z.string(), parentToolUseId }),

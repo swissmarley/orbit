@@ -39,6 +39,14 @@ const envSelectors = [
       'Never read CLAUDE_CODE_OAUTH_TOKEN (ADR-005). Use the audited presence helper in @orbit/runtime.',
   },
   {
+    selector: "MemberExpression[property.name='CLAUDE_CODE_OAUTH_TOKEN']",
+    message: 'Never read CLAUDE_CODE_OAUTH_TOKEN from any env object (ADR-005).',
+  },
+  {
+    selector: "MemberExpression[property.value='CLAUDE_CODE_OAUTH_TOKEN']",
+    message: 'Never read CLAUDE_CODE_OAUTH_TOKEN from any env object (ADR-005).',
+  },
+  {
     selector: "SpreadElement[argument.object.name='process'][argument.property.name='env']",
     message:
       'Child processes must not inherit process.env wholesale (ADR-005). Build the env from an allowlist.',
@@ -111,7 +119,11 @@ export default tseslint.config(
     // but still may not read the OAuth token or leak process.env.
     files: testGlobs,
     rules: {
-      'no-restricted-syntax': ['error', ...envSelectors],
+      // Tests may inspect what a child received, but never the real process.env token.
+      'no-restricted-syntax': [
+        'error',
+        ...envSelectors.filter((s) => !s.selector.startsWith('MemberExpression[property.')),
+      ],
       '@typescript-eslint/no-non-null-assertion': 'off',
       // fakes are async generators that may not await; generic JSON helpers are fine in tests
       '@typescript-eslint/require-await': 'off',

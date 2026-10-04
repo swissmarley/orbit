@@ -23,6 +23,44 @@ describe('Redactor', () => {
     expect(out).toContain('[REDACTED:');
   });
 
+  it.each([
+    [
+      'aws secret env',
+      'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY',
+      'wJalrXUtnFEMI',
+    ],
+    [
+      'aws credentials file',
+      'aws_secret_access_key = wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY',
+      'wJalrXUtnFEMI',
+    ],
+    [
+      'bedrock bearer token',
+      'AWS_BEARER_TOKEN_BEDROCK=ABSKQmVkcm9ja0FQSUtleS1leGFtcGxlMTIzNDU2Nzg5',
+      'ABSKQmVkcm9ja',
+    ],
+    ['bedrock token alone', 'token ABSKQmVkcm9ja0FQSUtleS1leGFtcGxlMTIzNDU2Nzg5', 'ABSKQmVkcm9ja'],
+    ['google api key', 'key AIzaSyA-1234567890abcdefghijklmnopqrstu', 'AIzaSyA-12345'],
+    ['url credentials', 'postgres://orbit:s3cr3tpass@db:5432/x', 's3cr3tpass'],
+    ['netrc', 'machine api.example.com login me password hunter2xyz', 'hunter2xyz'],
+    ['hook token env', 'ORBIT_HOOK_TOKEN=' + 'ab12'.repeat(12), 'ab12ab12ab12'],
+  ])('redacts %s', (_label, input, secretPart) => {
+    const out = r.redactString(input);
+    expect(out).not.toContain(secretPart);
+  });
+
+  it('keeps URL structure when redacting credentials', () => {
+    expect(r.redactString('https://me:pa55word@example.com/x')).toBe(
+      'https://me:[REDACTED:url-credentials]@example.com/x',
+    );
+  });
+
+  it('does not mangle token counts', () => {
+    expect(r.redactString('max_tokens: 64000, output_tokens=12')).toBe(
+      'max_tokens: 64000, output_tokens=12',
+    );
+  });
+
   it('keeps the non-secret prefix of bearer headers and assignments', () => {
     expect(r.redactString('Bearer abcdefghijklmnopqrstuvwxyz')).toBe('Bearer [REDACTED:bearer]');
     expect(r.redactString('api_key: abcdefgh12345')).toBe('api_key: [REDACTED:assignment]');

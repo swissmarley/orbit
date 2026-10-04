@@ -143,7 +143,7 @@ describe('orbit CLI', () => {
     h.reset();
     expect(await h.run('run', 'Notes', '--fixture', 'read-then-write-denied')).toBe(0);
     expect(h.text()).toMatch(/⚙ Read notes\.txt/);
-    expect(h.text()).toMatch(/✓ allowed — Read-only tool/);
+    expect(h.text()).toMatch(/✓ allowed — Read inside the Bot workspace/);
     expect(h.text()).toMatch(/✔ completed/);
   });
 

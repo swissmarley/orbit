@@ -50,6 +50,15 @@ export const RULES: Rule[] = [
     allow: (p) => p === OAUTH_PRESENCE_HELPER || isDoc(p) || p.startsWith('tools/guards/'),
   },
   {
+    // Orbit passes injected env objects around; reading the token through any of
+    // them is as bad as process.env. Only the presence helper and the env deny
+    // list may name it, and tests may inspect what a child received.
+    id: 'no-oauth-token-property',
+    pattern: /\.CLAUDE_CODE_OAUTH_TOKEN\b|[\w)\]]\s*\[\s*['"`]CLAUDE_CODE_OAUTH_TOKEN['"`]\s*\]/,
+    message: 'CLAUDE_CODE_OAUTH_TOKEN must never be read from any env object (ADR-005)',
+    allow: (p) => p === OAUTH_PRESENCE_HELPER || isTest(p) || isDoc(p) || isLintConfig(p),
+  },
+  {
     id: 'no-hardcoded-model-id',
     pattern: /claude-(opus|sonnet|haiku|fable|mythos)-\d/,
     message: 'Model IDs come from configuration, never source (ADR-006)',

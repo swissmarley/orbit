@@ -39,6 +39,10 @@ const DROPPED_KEYS = new Set([
   'scratchpad_dir',
   'transcript_path',
   'memory_paths',
+  'request_id',
+  'messaging_socket_path',
+  'startup_timing',
+  'time_origin_ms',
 ]);
 const recordingRoot: string = recordingCwd;
 const encodedCwd = recordingRoot.replace(/[/.]/g, '-');

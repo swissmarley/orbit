@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type RunEventBody, isTerminalEvent } from '@orbit/core';
@@ -36,20 +36,21 @@ describe.skipIf(!live)('live driver smoke test', () => {
     const policy: PermissionHandler = (r) => {
       decisions.push(r.toolName);
       return Promise.resolve(
-        r.toolName === 'Read'
-          ? { behavior: 'allow', reason: 'read-only' }
-          : { behavior: 'deny', reason: 'live test allows Read only' },
+        r.toolName === 'Read' || r.toolName === 'Write'
+          ? { behavior: 'allow', reason: 'live test allows Read and Write' }
+          : { behavior: 'deny', reason: 'live test allows Read and Write only' },
       );
     };
     const events: RunEventBody[] = [];
     try {
       for await (const e of handle.driver.run({
         runId: 'run_live',
-        prompt: 'Read notes.txt and reply with only the owner name.',
+        prompt:
+          'Read notes.txt, write the owner name to owner.txt, then reply with only the owner name.',
         cwd: ws,
         model,
         appendSystemPrompt: 'You are a terse test bot.',
-        tools: ['Read'],
+        tools: ['Read', 'Write'],
         maxTurns: 4,
         resumeSessionId: null,
         sessionId: null,
@@ -69,7 +70,17 @@ describe.skipIf(!live)('live driver smoke test', () => {
       return;
     }
     expect(terminal[0]!.type).toBe('run.completed');
-    expect(decisions).toContain('Read');
+    // The hardened bridge only answers when the hook input matches stdout exactly.
+    expect(decisions).toEqual(expect.arrayContaining(['Read', 'Write']));
+    const allowed = events.filter(
+      (e) => e.type === 'permission.decision' && e.data.behavior === 'allow',
+    );
+    expect(allowed.length).toBeGreaterThanOrEqual(2);
+    const init = events.find((e) => e.type === 'session.init');
+    console.info(
+      `engine apiKeySource: ${init?.type === 'session.init' ? String(init.data.apiKeySource) : '?'}`,
+    );
+    expect(readFileSync(join(ws, 'owner.txt'), 'utf8')).toMatch(/Ada/);
     expect(events.some((e) => e.type === 'permission.decision' && e.data.toolName === 'Read')).toBe(
       true,
     );

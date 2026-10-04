@@ -168,6 +168,92 @@ describe('CliDriver specifics', () => {
   });
 });
 
+describe('CliDriver guard rails', () => {
+  it('stops the run when a tool ran without an Orbit decision (hook bypassed)', async () => {
+    const cwd = workspace({ behavior: 'bypass', fixture: FIXTURE('read-then-write-denied') });
+    const events = await collect(driver(), { cwd });
+    const last = events.at(-1)!;
+    expect(last.type === 'run.failed' && last.data.code).toBe('policy_bypassed');
+    expect(events.some((e) => e.type === 'tool.result' && !e.data.isError)).toBe(false);
+  });
+
+  it('stops the run when claude authenticated with an API key in subscription mode', async () => {
+    const cwd = workspace({
+      behavior: 'normal',
+      fixture: FIXTURE('pong'),
+      apiKeySource: 'ANTHROPIC_API_KEY',
+    });
+    const events = await collect(driver(), { cwd });
+    const last = events.at(-1)!;
+    expect(last.type === 'run.failed' && last.data.code).toBe('auth_source_mismatch');
+  });
+
+  it('denies forged or replayed hook requests without logging anything', async () => {
+    const seenTokens: string[] = [];
+    const d = new CliDriver({
+      claudePath: FAKE_CLAUDE,
+      authMethod: 'subscription',
+      env: sourceEnv,
+      bridge,
+      callWaitMs: 200,
+      secrets: { addSecret: (v) => seenTokens.push(v) },
+    });
+    const cwd = workspace({ behavior: 'hang' });
+    const forged: string[] = [];
+    const events = await collect(d, { cwd }, {}, (e, controller) => {
+      if (e.type !== 'session.init') return;
+      const post = async (body: unknown) => {
+        const r = await fetch(bridge.url, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${seenTokens[0]!}` },
+          body: JSON.stringify(body),
+        });
+        const j = (await r.json()) as { hookSpecificOutput: { permissionDecision: string } };
+        forged.push(j.hookSpecificOutput.permissionDecision);
+      };
+      void Promise.all([
+        post({
+          hook_event_name: 'PreToolUse',
+          tool_name: 'Bash',
+          tool_input: { command: 'curl https://evil.example' },
+          tool_use_id: 'toolu_forged',
+        }),
+        post({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: {} }),
+        post({ hook_event_name: 'PostToolUse' }),
+      ]).finally(() => {
+        controller.abort();
+      });
+    });
+    expect(seenTokens).toHaveLength(1);
+    expect(forged).toEqual(['deny', 'deny', 'deny']);
+    expect(events.some((e) => e.type === 'permission.decision')).toBe(false);
+  });
+
+  it('kills the whole process tree when a run is stopped', async () => {
+    if (process.platform === 'win32') return;
+    const cwd = workspace({ behavior: 'hang' });
+    await collect(driver(), { cwd }, {}, (e, controller) => {
+      if (e.type === 'session.init') setTimeout(() => controller.abort(), 200);
+    });
+    const pid = Number(readFileSync(join(cwd, '.fake-claude-grandchild'), 'utf8'));
+    // Dead or a zombie waiting for init to reap it — either way it no longer runs.
+    const running = () => {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        return false;
+      }
+      try {
+        return !/State:\s+Z/.test(readFileSync(`/proc/${pid}/status`, 'utf8'));
+      } catch {
+        return true;
+      }
+    };
+    for (let i = 0; i < 20 && running(); i++) await new Promise((r) => setTimeout(r, 100));
+    expect(running()).toBe(false);
+  });
+});
+
 describe('hook bridge', () => {
   it('rejects requests without a registered token', async () => {
     const { token, dispose } = bridge.register(() => Promise.resolve({ ok: true }));
@@ -199,6 +285,8 @@ describe('hook bridge', () => {
     };
     expect(out.hookSpecificOutput.permissionDecision).toBe('deny');
     expect(out.hookSpecificOutput.permissionDecisionReason).toMatch(/unavailable/);
+    // exit 2 = blocking error in Claude Code: the tool never runs
+    expect(result.status).toBe(2);
   });
 
   it('hook script fails closed when not configured', () => {

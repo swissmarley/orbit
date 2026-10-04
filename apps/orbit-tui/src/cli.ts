@@ -1,5 +1,5 @@
 import { Command, CommanderError } from 'commander';
-import { ExitCode, OrbitError, errorMessage } from '@orbit/core';
+import { ExitCode, OrbitError, defaultRedactor, errorMessage } from '@orbit/core';
 import { botCreate, botList } from './commands/bot';
 import { doctor } from './commands/doctor';
 import { loginHelp } from './commands/login-help';
@@ -9,7 +9,7 @@ import { type Io, painter } from './io';
 
 export const VERSION = '0.1.0';
 
-/** Build and run the CLI; resolves to the process exit code (never calls process.exit). */
+/** Build and run the CLI; resolves to the process exit code (only a second Ctrl-C force-exits). */
 export async function main(argv: string[], io: Io): Promise<number> {
   let code: number = ExitCode.ok;
   let ctx: Context | undefined;
@@ -94,11 +94,11 @@ export async function main(argv: string[], io: Io): Promise<number> {
           : ExitCode.usage;
     } else if (err instanceof OrbitError) {
       const p = painter(io);
-      io.err(`${p('red', '✘')} ${err.message}`);
+      io.err(`${p('red', '✘')} ${defaultRedactor.redactString(err.message)}`);
       if (err.hint) io.err(p('dim', err.hint));
       code = err.exitCode;
     } else {
-      io.err(`✘ ${errorMessage(err)}`);
+      io.err(`✘ ${defaultRedactor.redactString(errorMessage(err))}`);
       code = ExitCode.error;
     }
   } finally {

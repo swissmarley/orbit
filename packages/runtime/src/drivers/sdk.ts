@@ -8,6 +8,7 @@ import type {
 import { type AuthMethod, type RunEventBody, event } from '@orbit/core';
 import { type Env, assertChildEnvSafe, buildChildEnv } from '../env';
 import { Channel } from './channel';
+import { checkAuthSource } from './auth-source';
 import { Normalizer } from './normalize';
 import { decide, hookOutput } from './permission';
 import { EventSequencer } from './sequencer';
@@ -43,7 +44,9 @@ export function buildSdkOptions(
   abortController: AbortController,
   onStderr: (line: string) => void,
 ): Options {
-  const env = buildChildEnv('sdk-engine', o.env);
+  // CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: the engine strips API credentials from
+  // the environment of its own children (Bash, hooks, MCP servers) — ADR-005.
+  const env = buildChildEnv('sdk-engine', o.env, { CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1' });
   assertChildEnvSafe('sdk-engine', env);
   const options: Options = {
     cwd: req.cwd,
@@ -151,7 +154,25 @@ export class SdkDriver implements AgentDriver {
         const queryFn = this.opts.queryFn ?? (await defaultQuery());
         for await (const message of queryFn({ prompt: req.prompt, options })) {
           if (finished) break;
-          seq.engine(normalizer.push(message));
+          const bodies = normalizer.push(message);
+          const violation =
+            bodies
+              .flatMap((b) =>
+                b.type === 'session.init'
+                  ? [checkAuthSource('sdk', this.authMethod, b.data.apiKeySource).failure]
+                  : [],
+              )
+              .find((f) => f !== null) ?? seq.engine(bodies);
+          if (violation) {
+            const sessionId = normalizer.sessionId ?? req.resumeSessionId ?? req.sessionId;
+            finish(
+              violation.type === 'run.failed'
+                ? { ...violation, data: { ...violation.data, sessionId } }
+                : violation,
+            );
+            abortController.abort();
+            return;
+          }
           if (normalizer.terminal) {
             finish();
             return;

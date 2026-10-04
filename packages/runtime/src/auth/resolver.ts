@@ -22,7 +22,11 @@ export interface AuthProbes {
 export type ApiCredential = 'api_key' | 'api_key_helper' | 'bedrock' | 'vertex';
 
 export interface AuthWarning {
-  code: 'stray_api_key' | 'oauth_token_env_not_forwarded' | 'cli_probe_failed';
+  code:
+    | 'stray_api_key'
+    | 'oauth_token_env_not_forwarded'
+    | 'cli_probe_failed'
+    | 'base_url_not_forwarded';
   message: string;
 }
 
@@ -170,6 +174,14 @@ export async function resolveAuth(input: {
       code: 'oauth_token_env_not_forwarded',
       message:
         'CLAUDE_CODE_OAUTH_TOKEN is set, but Orbit never forwards OAuth credentials. Run `claude auth login` so the claude CLI can authenticate on its own.',
+    });
+  }
+
+  if (env.ANTHROPIC_BASE_URL && !apiCredential && cliMethod !== 'none') {
+    warnings.push({
+      code: 'base_url_not_forwarded',
+      message:
+        'ANTHROPIC_BASE_URL is set but is not passed to the claude CLI in subscription mode, so your subscription traffic never goes to a third-party gateway.',
     });
   }
 

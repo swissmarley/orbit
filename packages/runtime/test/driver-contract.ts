@@ -60,6 +60,14 @@ function indexOf(events: RunEventBody[], pred: (e: RunEventBody) => boolean): nu
 
 /** Invariants every driver must satisfy, whatever the scenario. */
 export function expectWellFormed(events: RunEventBody[]): void {
+  // every tool that actually ran was decided by Orbit first
+  for (const [i, e] of events.entries()) {
+    if (e.type !== 'tool.result' || e.data.isError) continue;
+    const id = e.data.toolUseId;
+    const d = events.findIndex((x) => x.type === 'permission.decision' && x.data.toolUseId === id);
+    expect(d, `successful result for ${id} has a prior Orbit decision`).toBeGreaterThanOrEqual(0);
+    expect(d).toBeLessThan(i);
+  }
   const terminals = events.filter(isTerminalEvent);
   expect(terminals, 'exactly one terminal event').toHaveLength(1);
   expect(TERMINAL_EVENT_TYPES).toContain(events.at(-1)!.type);

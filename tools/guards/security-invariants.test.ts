@@ -29,8 +29,20 @@ describe('scanner positive controls', () => {
   });
 
   it('flags reads of the OAuth token env var (dot and bracket forms)', () => {
-    expect(scanText(src, 'const t = process.env.CLAUDE_CODE_OAUTH_TOKEN;')).toHaveLength(1);
-    expect(scanText(src, "const t = process.env['CLAUDE_CODE_OAUTH_TOKEN'];")).toHaveLength(1);
+    for (const line of [
+      'const t = process.env.CLAUDE_CODE_OAUTH_TOKEN;',
+      "const t = process.env['CLAUDE_CODE_OAUTH_TOKEN'];",
+    ]) {
+      expect(scanText(src, line).map((x) => x.rule)).toContain('no-oauth-token-read');
+    }
+  });
+
+  it('flags reads of the OAuth token from injected env objects', () => {
+    expect(scanText(src, 'const t = env.CLAUDE_CODE_OAUTH_TOKEN;').map((x) => x.rule)).toContain(
+      'no-oauth-token-property',
+    );
+    expect(scanText(src, "const t = opts.env['CLAUDE_CODE_OAUTH_TOKEN'];")).not.toEqual([]);
+    expect(scanText(src, "const DENY = ['CLAUDE_CODE_OAUTH_TOKEN'];")).toEqual([]);
   });
 
   it('allows the single audited presence helper', () => {

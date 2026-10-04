@@ -18,7 +18,11 @@ export async function createDriver(
   resolution: AuthResolution,
   config: OrbitConfig,
   env: Env,
-  deps: { queryFn?: QueryFn; mock?: MockDriverOptions } = {},
+  deps: {
+    queryFn?: QueryFn;
+    mock?: MockDriverOptions;
+    secrets?: { addSecret(value: string): void };
+  } = {},
 ): Promise<DriverHandle> {
   switch (resolution.driver) {
     case 'mock':
@@ -46,6 +50,7 @@ export async function createDriver(
           authMethod: resolution.authMethod,
           env,
           bridge,
+          ...(deps.secrets ? { secrets: deps.secrets } : {}),
         }),
         close: () => bridge.close(),
       };

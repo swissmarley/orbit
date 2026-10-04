@@ -1,5 +1,5 @@
 import { arch, platform } from 'node:os';
-import { ExitCode, humanPrincipalCount } from '@orbit/core';
+import { ExitCode, defaultRedactor, humanPrincipalCount } from '@orbit/core';
 import { type AuthResolution, hasOAuthTokenEnv } from '@orbit/runtime';
 import type { Context } from '../context';
 import { painter } from '../io';
@@ -42,7 +42,9 @@ export async function doctor(ctx: Context, opts: { json?: boolean }): Promise<nu
     driverSource: r.source,
     authMethod: r.authMethod,
     authLabel: r.label,
-    cli: r.cli,
+    cli: r.cli
+      ? { ...r.cli, error: r.cli.error ? defaultRedactor.redactString(r.cli.error) : null }
+      : null,
     apiCredential: r.apiCredential,
     oauthTokenEnvPresent: hasOAuthTokenEnv(ctx.io.env),
     compliance: r.guard,
@@ -96,7 +98,8 @@ export async function doctor(ctx: Context, opts: { json?: boolean }): Promise<nu
   row('Models', `default ${p('bold', c.models.default)} · triage ${p('bold', c.models.triage)}`);
   row('Data', c.home);
   row('Runtime', `node ${process.version} · ${report.platform}`);
-  for (const w of r.warnings) ctx.io.out(`\n${p('yellow', '⚠')} ${w.message}`);
+  for (const w of r.warnings)
+    ctx.io.out(`\n${p('yellow', '⚠')} ${defaultRedactor.redactString(w.message)}`);
   if (r.refusal) {
     ctx.io.out(`\n${p('red', '✘')} ${r.refusal.message}`);
   }

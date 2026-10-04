@@ -1,6 +1,7 @@
 import { join } from 'node:path';
-import { type OrbitConfig, defaultRedactor } from '@orbit/core';
+import { type OrbitConfig, Redactor } from '@orbit/core';
 import {
+  API_CREDENTIALS,
   type AuthResolution,
   type DriverHandle,
   createDriver,
@@ -14,10 +15,13 @@ import type { Io } from './io';
 /** Lazily opened local state. In M3 the CLI becomes a client of orbitd instead. */
 export class Context {
   readonly config: OrbitConfig;
+  /** One redactor per process: knows the API credentials and every per-run token. */
+  readonly redactor: Redactor;
   private db: OrbitDb | undefined;
 
   constructor(readonly io: Io) {
     this.config = loadConfig(io.env);
+    this.redactor = new Redactor(API_CREDENTIALS.map((name) => io.env[name] ?? ''));
   }
 
   private open(): OrbitDb {
@@ -30,7 +34,7 @@ export class Context {
   }
 
   get store(): EventStore {
-    return new EventStore(this.open(), defaultRedactor);
+    return new EventStore(this.open(), this.redactor);
   }
 
   resolveAuth(): Promise<AuthResolution> {
@@ -44,6 +48,7 @@ export class Context {
   createDriver(resolution: AuthResolution): Promise<DriverHandle> {
     return createDriver(resolution, this.config, this.io.env, {
       mock: { delayMs: this.config.driver === 'mock' ? 120 : 0 },
+      secrets: this.redactor,
     });
   }
 

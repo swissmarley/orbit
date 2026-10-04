@@ -18,7 +18,11 @@ const PLANTED = {
 const sourceEnv = { PATH: process.env.PATH, HOME: process.env.HOME, ...PLANTED };
 
 /** Fake Agent SDK query(): replays a fixture and calls the driver's real PreToolUse hook. */
-function fakeQuery(fixture: string, seen: Options[] = []): QueryFn {
+function fakeQuery(
+  fixture: string,
+  seen: Options[] = [],
+  apiKeySource = 'ANTHROPIC_API_KEY',
+): QueryFn {
   return async function* ({ options }) {
     seen.push(options);
     const sessionId = options.resume ?? options.sessionId;
@@ -41,7 +45,11 @@ function fakeQuery(fixture: string, seen: Options[] = []): QueryFn {
     const hook = options.hooks!.PreToolUse![0]!.hooks[0]!;
     const decide = (input: Record<string, unknown>) =>
       hook(input as Parameters<HookCallback>[0], input.tool_use_id as string, { signal });
-    for await (const m of replay(readFixture(fixture), {
+    // An API-key engine reports its credential source in init.
+    const messages = readFixture(fixture).map((m) =>
+      m.type === 'system' && m.subtype === 'init' ? { ...m, apiKeySource } : m,
+    );
+    for await (const m of replay(messages, {
       decide,
       sessionId,
       cwd: options.cwd ?? '/',
@@ -102,6 +110,25 @@ describe('SdkDriver specifics', () => {
     expect(o.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code', append: 'Goal: x' });
     expect(typeof o.canUseTool).toBe('function');
   });
+
+  it('asks the engine to scrub API credentials from its own subprocesses', async () => {
+    const seen: Options[] = [];
+    await collect(driver(fakeQuery(FIXTURE('pong'), seen)), {});
+    expect(seen[0]!.env!.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB).toBe('1');
+  });
+
+  it.each(['oauth', '/login managed key', 'none'])(
+    'stops the run when an API-key engine reports credential source %s',
+    async (source) => {
+      const events = await collect(
+        driver(fakeQuery(FIXTURE('read-then-write-denied'), [], source)),
+        {},
+      );
+      const last = events.at(-1)!;
+      expect(last.type === 'run.failed' && last.data.code).toBe('auth_source_mismatch');
+      expect(events.some((e) => e.type === 'tool.call')).toBe(false);
+    },
+  );
 
   it('can disable --bare explicitly', async () => {
     const seen: Options[] = [];

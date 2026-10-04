@@ -55,8 +55,12 @@ const NETWORK: readonly string[] = [
   'SSL_CERT_DIR',
 ];
 
-/** Non-secret settings the user's CLI may legitimately depend on. */
-const CLI_ENGINE: readonly string[] = ['CLAUDE_CONFIG_DIR', 'ANTHROPIC_BASE_URL'];
+/**
+ * Non-secret settings the user's CLI may legitimately depend on.
+ * ANTHROPIC_BASE_URL is deliberately excluded: a gateway configured for API
+ * keys must not receive subscription (OAuth) traffic.
+ */
+const CLI_ENGINE: readonly string[] = ['CLAUDE_CONFIG_DIR'];
 
 /** API / cloud-provider credentials, only ever given to the SDK engine. */
 const SDK_ENGINE: readonly string[] = [

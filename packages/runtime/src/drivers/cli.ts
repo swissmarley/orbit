@@ -6,6 +6,7 @@ import { type AuthMethod, type RunEventBody, event } from '@orbit/core';
 import { type Env, assertChildEnvSafe, buildChildEnv } from '../env';
 import { Channel } from './channel';
 import type { HookBridge } from './hook-bridge';
+import { checkAuthSource } from './auth-source';
 import { Normalizer } from './normalize';
 import { decide, hookOutput } from './permission';
 import { EventSequencer } from './sequencer';
@@ -31,7 +32,13 @@ export interface CliDriverOptions {
   /** Node binary that runs the hook script. */
   nodePath?: string;
   hookScript?: string;
+  /** Registers per-run secrets (the hook token) with the event redactor. */
+  secrets?: { addSecret(value: string): void };
+  /** How long a hook request may wait for its tool call to appear on stdout. */
+  callWaitMs?: number;
 }
+
+const reject = (reason: string) => hookOutput({ behavior: 'deny', reason });
 
 const quote = (s: string): string => `"${s.replace(/(["\\$`])/g, '\\$1')}"`;
 
@@ -83,6 +90,8 @@ export function buildCliArgs(req: DriverRunRequest, settingsJson: string): strin
   if (req.resumeSessionId) args.push('--resume', req.resumeSessionId);
   else if (req.sessionId) args.push('--session-id', req.sessionId);
   if (req.appendSystemPrompt) args.push('--append-system-prompt', req.appendSystemPrompt);
+  // Subagent messages carry parent_tool_use_id so their tool calls can be verified.
+  args.push('--forward-subagent-text');
   if (req.tools) args.push('--tools', req.tools.join(','));
   return args;
 }
@@ -96,7 +105,8 @@ export function buildCliArgs(req: DriverRunRequest, settingsJson: string): strin
 export class CliDriver implements AgentDriver {
   readonly kind = 'cli' as const;
   readonly authMethod: AuthMethod;
-  private readonly opts: Required<Omit<CliDriverOptions, 'authMethod'>>;
+  private readonly opts: Required<Omit<CliDriverOptions, 'authMethod' | 'secrets'>>;
+  private readonly secrets: CliDriverOptions['secrets'];
 
   constructor(options: CliDriverOptions) {
     this.authMethod = options.authMethod;
@@ -107,7 +117,9 @@ export class CliDriver implements AgentDriver {
       killGraceMs: options.killGraceMs ?? 5000,
       nodePath: options.nodePath ?? process.execPath,
       hookScript: options.hookScript ?? HOOK_SCRIPT,
+      callWaitMs: options.callWaitMs ?? 10_000,
     };
+    this.secrets = options.secrets;
   }
 
   run(req: DriverRunRequest): AsyncIterable<RunEventBody> {
@@ -123,26 +135,32 @@ export class CliDriver implements AgentDriver {
       out.close();
     };
 
+    // The bridge only decides tool calls the engine announced on stdout, once
+    // each, with the same name and input. Anything else (a Bot that read its
+    // hook token and forges requests) is denied without touching the log.
     const registration = this.opts.bridge.register(async (input) => {
-      if (input.hook_event_name !== 'PreToolUse') return {};
+      if (input.hook_event_name !== 'PreToolUse') return reject('Unsupported hook event');
       const toolUseId = typeof input.tool_use_id === 'string' ? input.tool_use_id : null;
+      const toolName = typeof input.tool_name === 'string' ? input.tool_name : null;
       const toolInput =
         typeof input.tool_input === 'object' && input.tool_input !== null
           ? (input.tool_input as Record<string, unknown>)
-          : {};
+          : null;
+      if (!toolUseId || !toolName || !toolInput) return reject('Malformed hook request');
+      if (!(await seq.awaitCall(toolUseId, this.opts.callWaitMs))) {
+        return reject('Unknown tool call');
+      }
+      const call = seq.claimCall(toolUseId, toolName, toolInput);
+      if (!call) return reject('Tool call does not match the engine output or was already decided');
       const { decision, event: decisionEvent } = await decide(
         req.permission,
-        {
-          toolName: typeof input.tool_name === 'string' ? input.tool_name : 'unknown',
-          input: toolInput,
-          toolUseId,
-          parentToolUseId: null,
-        },
+        { toolName, input: toolInput, toolUseId, parentToolUseId: call.parentToolUseId },
         req.signal,
       );
       seq.decision(toolUseId, decisionEvent);
       return hookOutput(decision);
     });
+    this.secrets?.addSecret(registration.token);
 
     const env = buildChildEnv('cli-engine', this.opts.env, {
       ORBIT_HOOK_URL: this.opts.bridge.url,
@@ -151,11 +169,21 @@ export class CliDriver implements AgentDriver {
     assertChildEnvSafe('cli-engine', env);
 
     const args = buildCliArgs(req, buildCliSettings(this.opts.nodePath, this.opts.hookScript));
+    // Own process group, so stopping a Run also stops tool grandchildren.
     const child = spawn(this.opts.claudePath, args, {
       cwd: req.cwd,
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
     });
+    const killTree = (signal: NodeJS.Signals) => {
+      try {
+        if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, signal);
+        else child.kill(signal);
+      } catch {
+        child.kill(signal);
+      }
+    };
 
     const stderrTail: string[] = [];
     child.stderr.setEncoding('utf8');
@@ -182,15 +210,32 @@ export class CliDriver implements AgentDriver {
         );
         return;
       }
-      seq.engine(normalizer.push(message));
+      const bodies = normalizer.push(message);
+      for (const b of bodies) {
+        if (b.type !== 'session.init') continue;
+        const check = checkAuthSource('cli', this.authMethod, b.data.apiKeySource);
+        if (check.failure) return stop(check.failure);
+      }
+      const violation = seq.engine(bodies);
+      if (violation) return stop(violation);
       if (normalizer.terminal) finish();
     });
 
     let killTimer: NodeJS.Timeout | undefined;
     const onAbort = () => {
-      child.kill('SIGTERM');
-      killTimer = setTimeout(() => child.kill('SIGKILL'), this.opts.killGraceMs);
+      killTree('SIGTERM');
+      killTimer = setTimeout(() => killTree('SIGKILL'), this.opts.killGraceMs);
       killTimer.unref();
+    };
+    /** Stop the engine immediately with a terminal event (policy/auth violation). */
+    const stop = (terminal: RunEventBody) => {
+      const sessionId = normalizer.sessionId ?? req.resumeSessionId ?? req.sessionId;
+      finish(
+        terminal.type === 'run.failed'
+          ? { ...terminal, data: { ...terminal.data, sessionId } }
+          : terminal,
+      );
+      onAbort();
     };
     if (req.signal.aborted) onAbort();
     else req.signal.addEventListener('abort', onAbort, { once: true });

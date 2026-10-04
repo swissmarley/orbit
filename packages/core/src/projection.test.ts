@@ -32,6 +32,7 @@ const happy: RunEvent[] = [
       tools: ['Read'],
       engineVersion: '1',
       permissionMode: 'default',
+      apiKeySource: 'none',
     },
   }),
   envelope(4, {

@@ -9,6 +9,8 @@ interface Pattern {
   re: RegExp;
   /** Number of leading capture groups to keep (e.g. "Bearer ", "api_key="). */
   keepGroups?: number;
+  /** Capture group re-appended after the marker (e.g. the "@" of a URL). */
+  suffixGroup?: number;
 }
 
 const PATTERNS: Pattern[] = [
@@ -21,11 +23,21 @@ const PATTERNS: Pattern[] = [
   { kind: 'github-token', re: /\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,})/g },
   { kind: 'slack-token', re: /\bxox[abposr]-[A-Za-z0-9-]{10,}/g },
   { kind: 'aws-access-key', re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g },
+  { kind: 'bedrock-token', re: /\bABSK[A-Za-z0-9+/=]{20,}/g },
+  { kind: 'google-api-key', re: /\bAIza[0-9A-Za-z_-]{30,}/g },
+  {
+    kind: 'url-credentials',
+    re: /(\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)[^\s@/]+(@)/gi,
+    keepGroups: 1,
+    suffixGroup: 2,
+  },
+  { kind: 'netrc', re: /(\bpassword\s+)(?![:=])(\S{4,})/gi, keepGroups: 1 },
   { kind: 'jwt', re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g },
   { kind: 'bearer', re: /(\bBearer\s+)[A-Za-z0-9._~+/-]{16,}=*/gi, keepGroups: 1 },
   {
     kind: 'assignment',
-    re: /(\b(?:api[_-]?key|secret|client[_-]?secret|password|passwd|access[_-]?token|auth[_-]?token|refresh[_-]?token)\b["']?\s*[:=]\s*["']?)([^\s"',;]{8,})/gi,
+    // No leading \b: names like AWS_SECRET_ACCESS_KEY or ORBIT_HOOK_TOKEN end in a match.
+    re: /((?:api[_-]?key|secret(?:[_-]?access[_-]?key)?|secret[_-]?key|client[_-]?secret|password|passwd|access[_-]?token|auth[_-]?token|refresh[_-]?token|session[_-]?token|token)["']?\s*[:=]\s*["']?)([^\s"',;]{8,})/gi,
     keepGroups: 1,
   },
 ];
@@ -66,7 +78,8 @@ export class Redactor {
         const kept = p.keepGroups
           ? (args.slice(1, 1 + p.keepGroups) as (string | undefined)[]).join('')
           : '';
-        return `${kept}${redactionMarker(p.kind)}`;
+        const suffix = p.suffixGroup ? ((args[p.suffixGroup] as string | undefined) ?? '') : '';
+        return `${kept}${redactionMarker(p.kind)}${suffix}`;
       });
     }
     return out;

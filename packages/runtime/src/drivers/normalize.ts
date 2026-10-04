@@ -214,6 +214,7 @@ export class Normalizer {
               : [],
             engineVersion: str(m.claude_code_version),
             permissionMode: str(m.permissionMode),
+            apiKeySource: str(m.apiKeySource),
           }),
         ];
       case 'hook_response':

@@ -30,7 +30,7 @@ describe('findExecutable', () => {
     root = mkdtempSync(join(tmpdir(), 'orbit-find-'));
   });
   afterEach(() => {
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const dir = (name: string): string => {

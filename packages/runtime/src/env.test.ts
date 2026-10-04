@@ -108,12 +108,12 @@ describe('buildChildEnv: cli-engine (the user’s own claude CLI)', () => {
     expectNoValues(env, Object.values(SECRETS));
   });
 
-  it('is exactly the allowlisted basics plus CLAUDE_CONFIG_DIR / ANTHROPIC_BASE_URL', () => {
+  it('is exactly the allowlisted basics plus CLAUDE_CONFIG_DIR (no API gateway URL)', () => {
     expect(env).toEqual({
       ...BASICS,
       CLAUDE_CONFIG_DIR: DIRTY.CLAUDE_CONFIG_DIR,
-      ANTHROPIC_BASE_URL: CLOUD_SETTINGS.ANTHROPIC_BASE_URL,
     });
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
   });
 });
 
