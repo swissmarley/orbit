@@ -13,3 +13,4 @@ deviate from the mission brief or pick between real alternatives.
 | [005](ADR-005-credential-isolation.md)      | Credential isolation and child environments              | Accepted |
 | [006](ADR-006-model-selection.md)           | Model selection through config and aliases               | Accepted |
 | [007](ADR-007-persistence.md)               | SQLite + Drizzle, append-only events, hash-chained audit | Accepted |
+| [008](ADR-008-cli-permission-bridge.md)     | CLI permission bridge through a PreToolUse command hook  | Accepted |

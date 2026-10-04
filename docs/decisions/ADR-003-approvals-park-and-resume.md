@@ -11,9 +11,9 @@ slot, risks hook/MCP timeouts, and does not survive daemon restarts.
 ## Decision
 
 - Both drivers route permission decisions into the same `ApprovalQueue`:
-  SDK via `hooks.PreToolUse` + `canUseTool`; CLI via a generated `--settings`
-  PreToolUse command hook and `--permission-prompt-tool mcp__orbit__approve`
-  served by orbitd's loopback MCP endpoint (per-Run bearer token).
+  SDK via `hooks.PreToolUse` (+ `canUseTool` backstop); CLI via a generated
+  `--settings` PreToolUse command hook calling orbitd's loopback hook bridge
+  (amended by ADR-008: no `--permission-prompt-tool` needed).
 - The driver waits up to a short window (default 30 s) for a decision. If
   none arrives it **denies with interrupt**, the Run moves to
   `waiting_approval`, and its concurrency slot is released.

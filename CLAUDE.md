@@ -15,11 +15,15 @@ pnpm test               # vitest, all projects (no credentials needed)
 pnpm test --project @orbit/core      # one package (project name = package.json name)
 pnpm test:live          # opt-in: real engine via API key or logged-in `claude`
 pnpm lint:fix && pnpm format
+pnpm orbit doctor       # the CLI (in-process until M3); ORBIT_DRIVER=mock needs no credentials
+ORBIT_DRIVER=mock pnpm orbit bot create --name Demo --goal 'Summarize notes' && pnpm orbit run demo
 ```
 
 ## Layout
 
-- `packages/core` domain types, zod schemas, `RunEvent`, config, redaction
+- `packages/core` domain types, zod schemas, `RunEvent`, run projection, config,
+  permission types, redaction
+- `packages/store` SQLite (Drizzle): append-only events, run projections, bots
 - `packages/runtime` orchestrator, scheduler, triggers, drivers (Sdk/Cli/Mock),
   AuthResolver, rate limits
 - `packages/policy` permission tiers, approval queue, budgets, audit
@@ -30,7 +34,7 @@ pnpm lint:fix && pnpm format
   `apps/orbit-app` (M5); `plugins/*` (M7)
 - `tools/guards` repo-wide security invariant tests
 
-Dependency direction: `core` ← `policy`, `memory`, `sandbox` ← `runtime` ←
+Dependency direction: `core` ← `store` ← `policy`, `memory`, `sandbox` ← `runtime` ←
 `api` ← `apps/*`. Clients only talk to orbitd through `@orbit/sdk-client`.
 
 ## Conventions
@@ -57,6 +61,16 @@ Dependency direction: `core` ← `policy`, `memory`, `sandbox` ← `runtime` ←
   aliases (`opus`, `sonnet`, `haiku`).
 - Default-deny tool policy; EXTERNAL actions need approval; FINANCIAL is
   always handed back to the human. Budgets are enforced in runtime code.
+
+## Drivers (packages/runtime/src/drivers)
+
+- `normalize.ts` is the only place engine messages become `RunEvent`s.
+- `cli.ts` spawns `claude -p` (prompt on stdin); tool calls are decided by the
+  PreToolUse hook → `hook-bridge.ts` (ADR-008). `sdk.ts` uses `query()` hooks.
+- `mock.ts` replays `fixtures/claude-<version>/*.jsonl`; record new fixtures with
+  `claude -p … --output-format stream-json --verbose` and scrub them with
+  `scripts/scrub-fixture.ts` before committing.
+- `test/driver-contract.ts` is the shared suite every driver must pass.
 
 ## Testing
 

@@ -2,7 +2,7 @@
 
 > Working name: **Orbit**. Self-hostable platform of always-on, goal-driven AI
 > agents ("Bots") powered by Claude Code and the Claude Agent SDK.
-> Status: **M0 complete; M1 not started (waiting on plan review).**
+> Status: **M1 complete; M2 next.**
 > Owner of this document: lead engineer (Claude). Update it at every milestone.
 
 ## 0. Starting point
@@ -136,12 +136,15 @@ billing will be used; unset `ANTHROPIC_API_KEY` to use your subscription"
 
 **CliDriver**
 
-- Spawns `claude -p <prompt> --output-format stream-json --verbose
---include-hook-events --permission-mode default --permission-prompt-tool
-mcp__orbit__approve --mcp-config <generated> --strict-mcp-config
---settings <generated hooks> --append-system-prompt <bot context>
-[--resume <session_id>] [--model <alias|id>] [--max-turns N] [--agents <json>]
-[--allowedTools …] [--disallowedTools …]`.
+- Spawns `claude -p --output-format stream-json --verbose --include-hook-events
+--setting-sources '' --strict-mcp-config --settings <Orbit PreToolUse hook>
+--permission-mode default --permission-prompts none [--model <alias|id>]
+[--max-turns N] [--resume <id> | --session-id <uuid>] [--append-system-prompt
+<bot context>] [--tools <list>]` with the prompt on **stdin** (ADR-008).
+- Every tool call goes through Orbit's PreToolUse command hook
+  (`bin/orbit-hook.mjs` → loopback `HookBridge`, per-run bearer token); the hook
+  fails closed and `--permission-prompts none` denies anything that would
+  otherwise prompt. Verified live against Claude Code 2.1.289.
 - Child env built from an **allowlist** (PATH, HOME, USER, LANG, TERM, SHELL,
   TMPDIR, XDG_*, proxy vars, `CLAUDE_CONFIG_DIR`); `ANTHROPIC_API_KEY` and
   `ANTHROPIC_AUTH_TOKEN` are explicitly deleted even if allowlisted later.
@@ -198,7 +201,7 @@ tool call ──► PreToolUse hook (SDK callback | CLI command hook → orbitd)
                │  PolicyEngine.evaluate(call, ctx{bot, tier, taint, budgets, rules})
                ├─ allow  (READ; WRITE-LOCAL inside sandbox; matching standing rule)
                ├─ deny   (default-deny, FINANCIAL/IRREVERSIBLE, budget exhausted)
-               └─ ask ─► canUseTool (SDK) | --permission-prompt-tool (CLI, MCP)
+               └─ ask ─► ApprovalQueue (decided inside the same hook call, ADR-008)
                           └─► ApprovalQueue.request(card) ─► wait ≤ N s
                                 ├─ decided in time → allow/deny (+updatedInput)
                                 └─ not decided → deny+interrupt, Run → waiting_approval,
@@ -233,14 +236,14 @@ Conventional Commits, audited by the `safety-reviewer` subagent against the
 SAFETY and AUTHENTICATION requirements, and reported (shipped / how to run /
 verified / next).
 
-### M0 — Scaffold ✅ (this commit)
+### M0 — Scaffold ✅
 
 pnpm workspace, TS strict base config, ESLint (flat) + Prettier, Vitest
 projects, GitHub Actions CI (no credentials), package skeletons, CLAUDE.md,
 PLAN.md, ADRs, `.claude/agents` + `.claude/skills`.
 **Done when:** `pnpm check` (format+lint+typecheck+test) passes locally and in CI.
 
-### M1 — Core + drivers + one Bot, one Run, minimal CLI
+### M1 — Core + drivers + one Bot, one Run, minimal CLI ✅
 
 - `@orbit/core`: ids, Bot/Run/Trigger/Policy schemas (zod), `RunEvent` union,
   config schema, redaction utilities.
@@ -251,8 +254,11 @@ PLAN.md, ADRs, `.claude/agents` + `.claude/skills`.
 - Driver contract suite (all three drivers); AuthResolver tests for every
   branch incl. stray-API-key warning and hosted-mode refusal.
 - Minimal `orbit` CLI (no daemon yet): `orbit doctor`, `orbit login-help`,
-  `orbit run --bot <file> --prompt …` streaming events to the terminal;
-  `--json`; exit codes.
+  `orbit bot create|list`, `orbit run <bot> [--prompt …]` streaming events,
+  `orbit runs`, `orbit logs <run>` (replay from the log); `--json`; exit codes.
+- Baseline default-deny policy (`@orbit/policy`): read tools allowed, file
+  writes only inside the Bot workspace, everything else denied.
+- Shipped as specified, plus `@orbit/store` (ADR-007) and the hook bridge (ADR-008).
 - `pnpm test:live` (opt-in) runs the contract smoke against the real driver.
   **Done when:** with no credentials `orbit run` works via MockDriver; with a
   logged-in `claude` it works via CliDriver; with an API key via SdkDriver.
@@ -370,11 +376,15 @@ CI never needs credentials: `ORBIT_DRIVER=mock` is forced in CI.
 4. **Hosted mode scope.** OIDC provider for hosted mode — default: generic
    OIDC (tested with a mock issuer), no vendor-specific integration.
 
-## 7. Deferrals (nothing deferred yet)
+## 7. Deferrals
 
 Items intentionally postponed from a milestone are listed here with the
 milestone that will pick them up. Shipped code paths contain no TODO stubs.
 
-| Item | From | To  | Reason |
-| ---- | ---- | --- | ------ |
-| —    | —    | —   | —      |
+| Item                                                                         | From | To                            | Reason                                                                                                                                                     |
+| ---------------------------------------------------------------------------- | ---- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Live SdkDriver run (`--bare` auth + SDK hook callbacks against the real API) | M1   | first session with an API key | no API key in the dev environment; covered by the contract suite with an injected `query()`, `pnpm test:live` exercises it automatically when a key is set |
+| `ask` decisions, approval queue, park-and-resume                             | M1   | M2                            | M1 policy decides allow/deny only                                                                                                                          |
+| PostToolUse redaction of tool output before the model sees it                | M1   | M2                            | events are already redacted before persistence                                                                                                             |
+| Enforcing the CLI-mode concurrency limit (config exists, default 2)          | M1   | M3                            | needs the run queue                                                                                                                                        |
+| CLI as a thin client of orbitd                                               | M1   | M3                            | M1 runs Bots in-process                                                                                                                                    |

@@ -4,6 +4,10 @@ Status: Accepted (M0, implemented in M1/M2)
 
 ## Decision
 
+- Persistence lives in its own package, **`@orbit/store`** (additive deviation
+  from the brief's package list): policy (audit), memory and runtime all need
+  the database, and none of them should depend on another for it.
+
 - `better-sqlite3` (verified: installs, FTS5 available) + Drizzle ORM. Schema
   uses only Postgres-compatible types (text, integer, JSON as text, ISO
   timestamps) so a Postgres adapter is a driver swap.
