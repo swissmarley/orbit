@@ -1,6 +1,5 @@
-import { ExitCode, type RunState, OrbitError } from '@orbit/core';
-import { baselinePolicy } from '@orbit/policy';
-import { Orchestrator } from '@orbit/runtime';
+import { ExitCode, type RunEvent, type RunState, OrbitError } from '@orbit/core';
+import type { Orchestrator } from '@orbit/runtime';
 import type { Context } from '../context';
 import { painter } from '../io';
 import { renderEvent, renderRunRow } from '../render';
@@ -10,6 +9,8 @@ export function exitCodeForRun(run: RunState): number {
   switch (run.status) {
     case 'completed':
       return ExitCode.ok;
+    case 'waiting_approval':
+      return ExitCode.waitingApproval;
     case 'rate_limited':
       return ExitCode.rateLimited;
     case 'cancelled':
@@ -19,12 +20,18 @@ export function exitCodeForRun(run: RunState): number {
   }
 }
 
-export async function runBot(
+/**
+ * Resolve auth, start the engine and run `fn` with a live orchestrator,
+ * streaming events to the terminal (or NDJSON). Ctrl-C stops the Run.
+ */
+export async function withEngine(
   ctx: Context,
-  botRef: string,
-  o: { prompt?: string; fixture?: string; json?: boolean },
+  o: { json?: boolean },
+  fn: (
+    orchestrator: Orchestrator,
+    opts: { signal: AbortSignal; onEvent: (e: RunEvent) => void },
+  ) => Promise<RunState>,
 ): Promise<number> {
-  const bot = ctx.bots.get(botRef);
   const resolution = await ctx.resolveAuth();
   const p = painter(ctx.io);
   if (!resolution.driver) {
@@ -60,34 +67,61 @@ export async function runBot(
       process.exit(ExitCode.cancelled);
     }
   });
-
   try {
-    if (!o.json)
-      ctx.io.out(`${p('bold', `▶ ${bot.spec.name}`)} ${p('dim', `· ${resolution.label}`)}`);
-    const orchestrator = new Orchestrator({
-      config: ctx.config,
-      store: ctx.store,
-      driver: handle.driver,
-      permissionFor: (_bot, workspace) => baselinePolicy({ workspace, orbitHome: ctx.config.home }),
-    });
+    if (!o.json) ctx.io.out(p('dim', `· ${resolution.label}`));
     let cwd: string | null = null;
-    const run = await orchestrator.run(bot, {
-      ...(o.prompt ? { prompt: o.prompt } : {}),
-      ...(o.fixture ? { mockFixture: o.fixture } : {}),
+    const run = await fn(ctx.orchestrator(handle), {
       signal: controller.signal,
       onEvent: (e) => {
-        if (o.json) return ctx.io.out(JSON.stringify(e));
+        if (o.json) {
+          ctx.io.out(JSON.stringify(e));
+          return;
+        }
         if (e.type === 'run.started') cwd = e.data.cwd;
         const line = renderEvent(e, p, cwd);
         if (line !== null) ctx.io.out(line);
       },
     });
-    if (!o.json) ctx.io.out(p('dim', `  run ${run.runId} · replay with: orbit logs ${run.runId}`));
+    if (!o.json) {
+      if (run.status === 'waiting_approval') {
+        ctx.io.out(`  Review with ${p('bold', 'orbit approvals')}; approving resumes the run.`);
+      }
+      ctx.io.out(p('dim', `  run ${run.runId} · replay with: orbit logs ${run.runId}`));
+    }
     return exitCodeForRun(run);
   } finally {
     offInterrupt();
     await handle.close();
   }
+}
+
+export async function runBot(
+  ctx: Context,
+  botRef: string,
+  o: { prompt?: string; fixture?: string; json?: boolean },
+): Promise<number> {
+  const bot = ctx.bots.get(botRef);
+  if (!o.json) ctx.io.out(painter(ctx.io)('bold', `▶ ${bot.spec.name}`));
+  return withEngine(ctx, o, (orchestrator, opts) =>
+    orchestrator.run(bot, {
+      ...(o.prompt ? { prompt: o.prompt } : {}),
+      ...(o.fixture ? { mockFixture: o.fixture } : {}),
+      ...opts,
+    }),
+  );
+}
+
+export async function resumeRun(
+  ctx: Context,
+  runId: string,
+  o: { json?: boolean; fixture?: string },
+): Promise<number> {
+  const state = ctx.store.getRun(runId);
+  if (!state) throw new OrbitError('not_found', `Run ${runId} not found`);
+  if (!o.json) ctx.io.out(painter(ctx.io)('bold', `▶ resuming ${runId}`));
+  return withEngine(ctx, o, (orchestrator, opts) =>
+    orchestrator.resume(runId, { ...(o.fixture ? { mockFixture: o.fixture } : {}), ...opts }),
+  );
 }
 
 export function runsList(

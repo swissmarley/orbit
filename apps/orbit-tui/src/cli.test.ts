@@ -143,7 +143,7 @@ describe('orbit CLI', () => {
     h.reset();
     expect(await h.run('run', 'Notes', '--fixture', 'read-then-write-denied')).toBe(0);
     expect(h.text()).toMatch(/⚙ Read notes\.txt/);
-    expect(h.text()).toMatch(/✓ allowed — Read inside the Bot workspace/);
+    expect(h.text()).toMatch(/✓ allowed — Read-only/);
     expect(h.text()).toMatch(/✔ completed/);
   });
 
@@ -202,4 +202,133 @@ describe('orbit CLI', () => {
     );
     expect(r.status).toBe(ExitCode.complianceRefused);
   }, 30_000);
+
+  describe('M2: approvals, kill switches, audit, rules, secrets', () => {
+    const mailer = (h: ReturnType<typeof harness>, extra: string[] = []) =>
+      h.run(
+        'bot',
+        'create',
+        '--file',
+        writeSpec(
+          home,
+          'mailer.yaml',
+          'name: Mailer\ngoal: Reply to Ada\nmock: { fixture: send-email }\napprovals: { parkWindowSeconds: 0 }\n',
+        ),
+        ...extra,
+      );
+
+    it('parks on an external action (exit 10) and approve resumes it to completion', async () => {
+      const h = harness(mockEnv());
+      await mailer(h);
+      h.reset();
+      expect(await h.run('run', 'mailer')).toBe(ExitCode.waitingApproval);
+      expect(h.text()).toMatch(/approval needed/);
+      h.reset();
+      expect(await h.run('approvals', '--json')).toBe(0);
+      const [pending] = h.json<{ id: string; card: { what: string } }[]>();
+      expect(pending!.card.what).toBe('send email (gmail) → ada@example.com');
+      h.reset();
+      expect(await h.run('approvals')).toBe(0);
+      expect(h.text()).toMatch(/What\s+send email/);
+      h.reset();
+      expect(await h.run('approve', pending!.id)).toBe(ExitCode.ok);
+      expect(h.text()).toMatch(/✔ Approved/);
+      expect(h.text()).toMatch(/✔ completed/);
+      h.reset();
+      expect(await h.run('audit', 'verify', '--json')).toBe(0);
+      expect(h.json<{ ok: boolean; count: number }>()).toMatchObject({ ok: true });
+    });
+
+    it('deny with a reason and --no-resume leaves the run parked-but-decided', async () => {
+      const h = harness(mockEnv());
+      await mailer(h);
+      await h.run('run', 'mailer');
+      h.reset();
+      await h.run('approvals', '--json');
+      const [pending] = h.json<{ id: string; runId: string }[]>();
+      h.reset();
+      expect(await h.run('deny', pending!.id, '--reason', 'wrong tone', '--no-resume')).toBe(0);
+      expect(h.text()).toMatch(/Denied .* — wrong tone/);
+      h.reset();
+      expect(await h.run('approve', pending!.id)).toBe(ExitCode.usage);
+    });
+
+    it('--always creates a rule that is listed and can be revoked', async () => {
+      const h = harness(mockEnv());
+      await mailer(h);
+      await h.run('run', 'mailer');
+      h.reset();
+      await h.run('approvals', '--json');
+      const [pending] = h.json<{ id: string }[]>();
+      await h.run('approve', pending!.id, '--always', '--expires', '7d', '--no-resume');
+      h.reset();
+      expect(await h.run('rules', 'list', '--json')).toBe(0);
+      const [rule] =
+        h.json<{ id: string; toolPattern: string; effect: string; expiresAt: string }[]>();
+      expect(rule).toMatchObject({ toolPattern: 'mcp__gmail__send_email', effect: 'allow' });
+      expect(Date.parse(rule!.expiresAt)).toBeGreaterThan(Date.now() + 6 * 86_400_000);
+      expect(await h.run('rules', 'revoke', rule!.id)).toBe(0);
+    });
+
+    it('refuses allow rules for financial tools', async () => {
+      const h = harness(mockEnv());
+      expect(
+        await h.run('rules', 'add', '--tool', 'mcp__bank__transfer_funds', '--effect', 'allow'),
+      ).toBe(ExitCode.usage);
+      expect(h.err.join('\n')).toMatch(/never be allowed/);
+    });
+
+    it('global kill switch blocks runs (exit 7) until released', async () => {
+      const h = harness(mockEnv());
+      await h.run('bot', 'create', '--name', 'Notes', '--goal', 'x', '--fixture', 'pong');
+      expect(await h.run('kill')).toBe(0);
+      expect(await h.run('run', 'notes')).toBe(ExitCode.blocked);
+      expect(h.err.join('\n')).toMatch(/kill switch is engaged/);
+      h.reset();
+      expect(await h.run('kill', '--status', '--json')).toBe(0);
+      expect(h.json<{ engaged: boolean }>().engaged).toBe(true);
+      await h.run('kill', '--off');
+      expect(await h.run('run', 'notes')).toBe(0);
+    });
+
+    it('pausing a bot blocks its runs; stop cancels a parked run', async () => {
+      const h = harness(mockEnv());
+      await mailer(h);
+      await h.run('bot', 'pause', 'mailer');
+      expect(await h.run('run', 'mailer')).toBe(ExitCode.blocked);
+      await h.run('bot', 'resume', 'mailer');
+      await h.run('run', 'mailer');
+      h.reset();
+      await h.run('runs', '--json');
+      const [parked] = h.json<{ runId: string; status: string }[]>();
+      expect(parked!.status).toBe('waiting_approval');
+      expect(await h.run('stop', parked!.runId)).toBe(0);
+      h.reset();
+      await h.run('runs', '--json');
+      expect(h.json<{ status: string }[]>()[0]!.status).toBe('cancelled');
+    });
+
+    it('stores secrets encrypted, never prints them, and audits names only', async () => {
+      const h = harness(mockEnv());
+      const valueFile = join(home, 'token.txt');
+      writeFileSync(valueFile, 'ghp_supersecretvalue1234567890abcdefgh\n');
+      expect(await h.run('secret', 'set', 'GITHUB_TOKEN', '--value-file', valueFile)).toBe(0);
+      h.reset();
+      expect(await h.run('secret', 'list', '--json')).toBe(0);
+      expect(h.text()).toContain('GITHUB_TOKEN');
+      expect(h.text()).not.toContain('supersecret');
+      h.reset();
+      await h.run('audit', 'export');
+      expect(h.text()).toContain('secret.set');
+      expect(h.text()).not.toContain('supersecret');
+      expect(await h.run('secret', 'rm', 'GITHUB_TOKEN')).toBe(0);
+      expect(await h.run('secret', 'rm', 'GITHUB_TOKEN')).toBe(ExitCode.notFound);
+    });
+  });
 });
+
+function writeSpec(dir: string, name: string, text: string): string {
+  const file = join(dir, name);
+  writeFileSync(file, text);
+  return file;
+}

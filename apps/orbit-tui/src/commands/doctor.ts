@@ -1,6 +1,7 @@
 import { arch, platform } from 'node:os';
 import { ExitCode, defaultRedactor, humanPrincipalCount } from '@orbit/core';
-import { type AuthResolution, hasOAuthTokenEnv } from '@orbit/runtime';
+import { type SandboxSupport, defaultRunner, detectSandboxSupport } from '@orbit/sandbox';
+import { type AuthResolution, buildChildEnv, hasOAuthTokenEnv } from '@orbit/runtime';
 import type { Context } from '../context';
 import { painter } from '../io';
 
@@ -24,6 +25,7 @@ export interface DoctorReport {
   home: string;
   node: string;
   platform: string;
+  sandbox: SandboxSupport;
 }
 
 export function doctorExitCode(r: AuthResolution): number {
@@ -34,7 +36,12 @@ export function doctorExitCode(r: AuthResolution): number {
 }
 
 export async function doctor(ctx: Context, opts: { json?: boolean }): Promise<number> {
-  const r = await ctx.resolveAuth();
+  const [r, sandbox] = await Promise.all([
+    ctx.resolveAuth(),
+    detectSandboxSupport(defaultRunner(buildChildEnv('tool', ctx.io.env)), {
+      pathEnv: ctx.io.env.PATH ?? '',
+    }),
+  ]);
   const c = ctx.config;
   const report: DoctorReport = {
     ok: r.driver !== null,
@@ -58,6 +65,7 @@ export async function doctor(ctx: Context, opts: { json?: boolean }): Promise<nu
     home: c.home,
     node: process.version,
     platform: `${platform()}-${arch()}`,
+    sandbox,
   };
   if (opts.json) {
     ctx.io.out(JSON.stringify(report, null, 2));
@@ -96,6 +104,20 @@ export async function doctor(ctx: Context, opts: { json?: boolean }): Promise<nu
       : p('yellow', 'subscription use refused — API key required'),
   );
   row('Models', `default ${p('bold', c.models.default)} · triage ${p('bold', c.models.triage)}`);
+  row(
+    'Sandbox',
+    [
+      sandbox.engineSandbox.available
+        ? p('green', 'engine sandbox available')
+        : p(
+            'yellow',
+            `engine sandbox unavailable${sandbox.engineSandbox.missing.length ? ` (missing ${sandbox.engineSandbox.missing.join(', ')})` : ''} — shell commands need approval`,
+          ),
+      sandbox.docker.available
+        ? `docker ${sandbox.docker.version ?? ''}`.trim()
+        : p('dim', 'no docker'),
+    ].join(' · '),
+  );
   row('Data', c.home);
   row('Runtime', `node ${process.version} · ${report.platform}`);
   for (const w of r.warnings)

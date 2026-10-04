@@ -3,7 +3,12 @@ import { ExitCode, OrbitError, defaultRedactor, errorMessage } from '@orbit/core
 import { botCreate, botList } from './commands/bot';
 import { doctor } from './commands/doctor';
 import { loginHelp } from './commands/login-help';
-import { logs, runBot, runsList } from './commands/run';
+import { approvalShow, approvalsList, approve, deny } from './commands/approvals';
+import { auditExport, auditList, auditVerify } from './commands/audit';
+import { killSwitch, pauseBot, stopRun } from './commands/controls';
+import { rulesAdd, rulesList, rulesRevoke } from './commands/rules';
+import { logs, resumeRun, runBot, runsList } from './commands/run';
+import { secretList, secretRemove, secretSet } from './commands/secrets';
 import { Context } from './context';
 import { type Io, painter } from './io';
 
@@ -23,6 +28,8 @@ export async function main(argv: string[], io: Io): Promise<number> {
     .description('Orbit — always-on, goal-driven AI Bots powered by Claude Code')
     .version(VERSION)
     .exitOverride()
+    // Options after a subcommand belong to it (`orbit audit verify --json`).
+    .enablePositionalOptions()
     .configureOutput({ writeOut: (s) => io.out(s.trimEnd()), writeErr: (s) => io.err(s.trimEnd()) })
     .showHelpAfterError();
 
@@ -83,6 +90,140 @@ export async function main(argv: string[], io: Io): Promise<number> {
     .argument('<run>', 'run id')
     .option('--json', 'NDJSON events')
     .action((runId: string, o: { json?: boolean }) => set(logs(context(), runId, o)));
+
+  bot
+    .command('pause')
+    .description('Kill switch for one Bot: stop its Runs and block new ones')
+    .argument('<bot>')
+    .option('--json', 'machine-readable output')
+    .action((b: string, o: { json?: boolean }) => set(pauseBot(context(), b, true, o)));
+  bot
+    .command('resume')
+    .description('Allow a paused Bot to run again')
+    .argument('<bot>')
+    .option('--json', 'machine-readable output')
+    .action((b: string, o: { json?: boolean }) => set(pauseBot(context(), b, false, o)));
+
+  program
+    .command('resume')
+    .description('Resume a parked (approvals decided) or rate-limited Run')
+    .argument('<run>', 'run id')
+    .option('--fixture <name>', 'mock scenario (MockDriver only)')
+    .option('--json', 'stream events as NDJSON')
+    .action((runId: string, o: { json?: boolean; fixture?: string }) =>
+      set(resumeRun(context(), runId, o)),
+    );
+
+  program
+    .command('stop')
+    .description('Kill switch for one Run (works from any terminal)')
+    .argument('<run>', 'run id')
+    .option('--json', 'machine-readable output')
+    .action((runId: string, o: { json?: boolean }) => set(stopRun(context(), runId, o)));
+
+  program
+    .command('kill')
+    .description('Global kill switch: stop every Run and refuse new ones')
+    .option('--off', 'release the kill switch')
+    .option('--status', 'show whether it is engaged')
+    .option('--json', 'machine-readable output')
+    .action((o: { off?: boolean; status?: boolean; json?: boolean }) =>
+      set(killSwitch(context(), o)),
+    );
+
+  const approvals = program
+    .command('approvals')
+    .description('What needs you: pending approval cards')
+    .option('-a, --all', 'include decided approvals')
+    .option('--json', 'machine-readable output')
+    .action((o: { all?: boolean; json?: boolean }) => set(approvalsList(context(), o)));
+  approvals
+    .command('show')
+    .argument('<id>', 'approval id')
+    .option('--json', 'machine-readable output')
+    .action((id: string, o: { json?: boolean }) => set(approvalShow(context(), id, o)));
+
+  program
+    .command('approve')
+    .description('Approve a pending action (optionally edited, optionally always)')
+    .argument('<id>', 'approval id')
+    .option('-e, --edit <json|@file>', 'approve this edited tool input instead')
+    .option('--always', 'also create a standing allow rule for this tool')
+    .option('--global', 'with --always: for every Bot, not just this one')
+    .option('--expires <duration>', 'with --always: rule expiry, e.g. 7d')
+    .option('--no-resume', 'do not resume the parked Run now')
+    .option('--fixture <name>', 'mock scenario for the resumed Run (MockDriver only)')
+    .option('--json', 'machine-readable output')
+    .action((id: string, o: Parameters<typeof approve>[2]) => set(approve(context(), id, o)));
+
+  program
+    .command('deny')
+    .description('Deny a pending action, with a reason the Bot will see')
+    .argument('<id>', 'approval id')
+    .option('-r, --reason <text>', 'why (shown to the Bot)')
+    .option('--no-resume', 'do not resume the parked Run now')
+    .option('--fixture <name>', 'mock scenario for the resumed Run (MockDriver only)')
+    .option('--json', 'machine-readable output')
+    .action((id: string, o: Parameters<typeof deny>[2]) => set(deny(context(), id, o)));
+
+  const rules = program
+    .command('rules')
+    .description('Standing allow/deny rules (user-authored only)');
+  rules
+    .command('list')
+    .option('-a, --all', 'include revoked and expired rules')
+    .option('--json', 'machine-readable output')
+    .action((o: { all?: boolean; json?: boolean }) => set(rulesList(context(), o)));
+  rules
+    .command('add')
+    .requiredOption('-t, --tool <pattern>', 'tool name or glob, e.g. mcp__slack__post_message')
+    .requiredOption('--effect <allow|deny>', 'allow or deny')
+    .option('-b, --bot <bot>', 'only for this Bot (default: all Bots)')
+    .option('--expires <duration>', 'e.g. 7d')
+    .option('-r, --reason <text>', 'why')
+    .option('--json', 'machine-readable output')
+    .action((o: Parameters<typeof rulesAdd>[1]) => set(rulesAdd(context(), o)));
+  rules
+    .command('revoke')
+    .argument('<id>', 'rule id')
+    .action((id: string) => set(rulesRevoke(context(), id)));
+
+  const audit = program
+    .command('audit')
+    .description('Tamper-evident audit log')
+    .option('--action <action>', 'filter by action, e.g. approval.decided')
+    .option('-l, --limit <n>', 'how many (latest)', '50')
+    .option('--json', 'machine-readable output')
+    .action((o: { action?: string; limit?: string; json?: boolean }) =>
+      set(auditList(context(), o)),
+    );
+  audit
+    .command('verify')
+    .description('Check the hash chain')
+    .option('--json', 'machine-readable output')
+    .action((o: { json?: boolean }) => set(auditVerify(context(), o)));
+  audit
+    .command('export')
+    .description('Export as JSONL')
+    .option('-o, --out <file>', 'write to a file (mode 0600) instead of stdout')
+    .action((o: { out?: string }) => set(auditExport(context(), o)));
+
+  const secret = program
+    .command('secret')
+    .description('Encrypted secrets vault (values never shown)');
+  secret
+    .command('set')
+    .argument('<name>', 'env-style name, e.g. GITHUB_TOKEN')
+    .option('--value-file <path>', 'read the value from a file (default: stdin)')
+    .action((name: string, o: { valueFile?: string }) => set(secretSet(context(), name, o)));
+  secret
+    .command('list')
+    .option('--json', 'machine-readable output')
+    .action((o: { json?: boolean }) => set(secretList(context(), o)));
+  secret
+    .command('rm')
+    .argument('<name>')
+    .action((name: string) => set(secretRemove(context(), name)));
 
   try {
     await program.parseAsync(argv, { from: 'user' });

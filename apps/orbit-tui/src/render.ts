@@ -16,6 +16,9 @@ export function summarizeToolInput(name: string, input: unknown, cwd: string | n
   if (typeof path === 'string')
     return cwd && path.startsWith(cwd) ? relative(cwd, path) || '.' : path;
   if (typeof o.command === 'string') return oneLine(o.command, 80);
+  const to = o.to ?? o.channel ?? o.recipient;
+  if (typeof to === 'string')
+    return `→ ${to}${typeof o.subject === 'string' ? ` · ${oneLine(o.subject, 60)}` : ''}`;
   if (typeof o.pattern === 'string') return oneLine(o.pattern, 80);
   if (typeof o.description === 'string') return oneLine(o.description, 80);
   if (typeof o.url === 'string') return o.url;
@@ -38,6 +41,31 @@ export function formatLocalTime(iso: string): string {
     minute: '2-digit',
     timeZoneName: 'short',
   });
+}
+
+export function formatRelative(iso: string, now = Date.now()): string {
+  const sec = Math.round((now - Date.parse(iso)) / 1000);
+  if (sec < 60) return `${Math.max(0, sec)}s ago`;
+  if (sec < 3600) return `${Math.round(sec / 60)}m ago`;
+  if (sec < 86_400) return `${Math.round(sec / 3600)}h ago`;
+  return `${Math.round(sec / 86_400)}d ago`;
+}
+
+/** Colorize a unified diff (header lines dropped). */
+export function renderDiff(diff: string, paint: Paint): string[] {
+  return diff
+    .split('\n')
+    .filter(
+      (l) =>
+        !l.startsWith('===') && !l.startsWith('Index:') && l !== '\\ No newline at end of file',
+    )
+    .map((l) => {
+      if (l.startsWith('+++') || l.startsWith('---')) return paint('dim', l);
+      if (l.startsWith('+')) return paint('green', l);
+      if (l.startsWith('-')) return paint('red', l);
+      if (l.startsWith('@@')) return paint('cyan', l);
+      return l;
+    });
 }
 
 /** Human-readable rendering of one event; null = not shown. */
@@ -69,10 +97,32 @@ export function renderEvent(e: RunEvent, paint: Paint, cwd: string | null): stri
       return paint('dim', `${indent}… ${oneLine(e.data.text)}`);
     case 'tool.call':
       return `${indent}${paint('yellow', '⚙')} ${paint('bold', e.data.name)} ${paint('dim', summarizeToolInput(e.data.name, e.data.input, cwd))}`;
-    case 'permission.decision':
+    case 'permission.decision': {
+      const tier = e.data.tier ? paint('dim', ` [${e.data.tier}]`) : '';
       return e.data.behavior === 'allow'
-        ? paint('green', `      ✓ allowed — ${e.data.reason}`)
-        : paint('red', `      ✗ denied — ${e.data.reason}`);
+        ? `${paint('green', `      ✓ allowed — ${e.data.reason}`)}${tier}`
+        : `${paint('red', `      ✗ denied — ${e.data.reason}`)}${tier}`;
+    }
+    case 'approval.requested':
+      return `  ${paint('magenta', '⚑ approval needed')} ${paint('bold', e.data.summary)} ${paint('dim', `(${e.data.approvalId})`)}`;
+    case 'approval.decided':
+      return `  ${paint(e.data.decision === 'approved' ? 'green' : 'red', `⚑ ${e.data.decision}`)} by ${e.data.by}${e.data.edited ? ' (edited)' : ''}${e.data.reason ? ` — ${e.data.reason}` : ''}`;
+    case 'run.tainted':
+      return paint(
+        'yellow',
+        `  ⚠ untrusted content entered the run (${e.data.source}); external actions now always ask`,
+      );
+    case 'budget.exceeded':
+      return paint(
+        'red',
+        `  ⛔ ${e.data.budget} budget exceeded (${e.data.actual} > ${e.data.limit})`,
+      );
+    case 'run.killed':
+      return paint('red', `  ■ ${e.data.scope} kill switch (${e.data.by})`);
+    case 'run.parked':
+      return paint('magenta', `⏸ waiting for your approval (${e.data.approvalIds.join(', ')})`);
+    case 'run.resumed':
+      return paint('cyan', `▶ resumed after ${e.data.reason.replace('_', ' ')}`);
     case 'tool.result': {
       if (!e.data.isError) {
         const lines = e.data.content.split('\n').filter((l) => l.trim()).length;
