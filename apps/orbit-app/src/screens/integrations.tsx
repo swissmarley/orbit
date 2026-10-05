@@ -431,9 +431,10 @@ function InboundRow({ trigger: tr }: { trigger: Inbound }) {
   const w = TRIGGER_STATE[tr.state];
   const webhookName = tr.path?.split('/').at(-1) ?? null;
   const copyButton = useRef<HTMLButtonElement>(null);
-  // The App is served by orbitd: its origin is the address senders use (through a tunnel).
+  // Hosted: the public address. Locally the App is served by orbitd, so its
+  // origin is the address senders use (through a tunnel).
   const origin = typeof window === 'undefined' ? '' : window.location.origin;
-  const address = tr.path ? `${origin}${tr.path}` : null;
+  const address = tr.url ?? (tr.path ? `${origin}${tr.path}` : null);
   return (
     <li className="flex flex-col gap-2 py-2 text-sm" data-testid="inbound-row">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">

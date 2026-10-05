@@ -269,7 +269,7 @@ export async function triggersList(ctx: Context, o: { json?: boolean }): Promise
   for (const t of list) {
     const w = TRIGGER_STATE[t.state];
     ctx.io.out(
-      `${p(TONE[w.tone], `${w.mark} ${w.label}`.padEnd(14))} ${p('bold', clean(t.botName))}  ${TRIGGER_KIND_WORD[t.kind].padEnd(8)} ${clean(t.description)}${t.path ? p('dim', `  POST ${clean(t.path)}`) : ''}${t.detail ? p('dim', `  (${clean(t.detail)})`) : ''}`,
+      `${p(TONE[w.tone], `${w.mark} ${w.label}`.padEnd(14))} ${p('bold', clean(t.botName))}  ${TRIGGER_KIND_WORD[t.kind].padEnd(8)} ${clean(t.description)}${t.path ? p('dim', `  POST ${clean(t.url ?? t.path)}`) : ''}${t.detail ? p('dim', `  (${clean(t.detail)})`) : ''}`,
     );
   }
   return 0;
@@ -306,7 +306,9 @@ export async function webhookSecret(
   );
   ctx.io.out(`\n  ${s.secret}\n`);
   ctx.io.out(
-    `POST ${base}${s.path}   (loopback only; forward a tunnel to it if the sender is remote)`,
+    s.url !== null
+      ? `POST ${s.url}   (hosted: reachable from other machines)`
+      : `POST ${base}${s.path}   (loopback only; forward a tunnel to it if the sender is remote)`,
   );
   ctx.io.out(
     s.style === 'github'
