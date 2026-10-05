@@ -20,6 +20,9 @@ jobs:
       # CI never needs credentials: every run uses the MockDriver.
       ORBIT_DRIVER: mock
       ANTHROPIC_API_KEY: ''
+      # Type-aware ESLint over the whole monorepo outgrew Node's default heap
+      # on the runner (lint died with "heap out of memory" since M3).
+      NODE_OPTIONS: --max-old-space-size=6144
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
