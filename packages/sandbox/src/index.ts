@@ -55,6 +55,13 @@ export {
   parseAllowlist,
 } from './proxy/addresses';
 export { API_ROUTES, apiRouteAllowed, bodyRefusal, parseUpstream } from './proxy/api-proxy';
+export {
+  HOST_KEY_PROXY_ADDRESS,
+  HostKeyProxy,
+  type HostKeyLease,
+  type HostKeyProxyOptions,
+  type HostKeyProxyStatus,
+} from './proxy/host-key-proxy';
 export { type Lookup, decideEgress } from './proxy/egress-proxy';
 export { type BotProxyStatus, ProxyHost } from './proxy/host';
 export {

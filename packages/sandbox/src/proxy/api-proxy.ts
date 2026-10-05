@@ -13,7 +13,7 @@ import { OrbitError } from '@orbit/core';
 import { blockedAddressReason } from './addresses';
 import type { ProxyServer } from './egress-proxy';
 import type { ApiKeySource } from './key-source';
-import { Counters, type ProxyRefusal } from './stats';
+import { Counters, type ProxyCounters, type ProxyRefusal } from './stats';
 
 /**
  * The Anthropic API routes the engine uses (verified against Claude Code
@@ -126,7 +126,7 @@ export function bodyRefusal(body: unknown, opts: { webTools: boolean }): string 
 }
 
 /** An API-shaped error the engine can show. */
-function apiError(res: ServerResponse, status: number, type: string, message: string): void {
+export function apiError(res: ServerResponse, status: number, type: string, message: string): void {
   if (res.headersSent) {
     res.destroy();
     return;
@@ -166,7 +166,7 @@ export function parseUpstream(base: string): Upstream {
   if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) {
     throw new OrbitError(
       'invalid_config',
-      'The Docker sandbox sends the API key only over https (or to a loopback gateway)',
+      "Orbit's key proxy sends the API key only over https (or to a loopback gateway)",
       { hint: 'Set ANTHROPIC_BASE_URL to an https:// URL, or unset it.' },
     );
   }
@@ -186,6 +186,8 @@ export interface ApiProxyOptions {
   key: ApiKeySource | null;
   /** True while a Run of the Bot is active; requests are refused otherwise. */
   armed: () => boolean;
+  /** The refusal while not armed (default: no Run of this Bot is active). */
+  idleReason?: string;
   /** Server-side web tools allowed (the Bot's network is an allowlist). */
   webTools: () => boolean;
   maxBodyBytes?: number;
@@ -194,21 +196,34 @@ export interface ApiProxyOptions {
   agent?: HttpAgent | HttpsAgent;
   onRefusal?: (r: ProxyRefusal) => void;
   now?: () => Date;
+  /** Counters shared with other forwarders (default: this proxy's own). */
+  counters?: Counters;
+}
+
+/** The request handling of a key-injecting API proxy, without a listener of its own. */
+export interface ApiForwarder {
+  /**
+   * Answer one request. `url` is the API path and query the engine asked for
+   * (default `req.url`; the host key proxy passes it without the segment token).
+   */
+  handle(req: IncomingMessage, res: ServerResponse, url?: string): void;
+  /** Abort every request being handled: upstream requests and their clients' connections. */
+  drop(): void;
+  stats(): ProxyCounters;
 }
 
 /**
- * The host-side key-injecting API proxy (ADR-018). The container's engine
- * talks to it with a placeholder key; it forwards only API_ROUTES, drops the
- * container's credential headers, injects the real key and streams the
- * response back unbuffered. It never logs bodies or headers, and its error
+ * Forwards API requests with the real key (ADR-018): only API_ROUTES, with
+ * the client's credential headers dropped, the key injected and the response
+ * streamed back unbuffered. It never logs bodies or headers, and its error
  * messages never contain the key.
  */
-export function createApiProxy(opts: ApiProxyOptions): ProxyServer {
-  const counters = new Counters(opts.now, opts.onRefusal);
+export function createApiForwarder(opts: ApiProxyOptions): ApiForwarder {
+  const counters = opts.counters ?? new Counters(opts.now, opts.onRefusal);
   const maxBody = opts.maxBodyBytes ?? MAX_API_BODY_BYTES;
   const { url: base, prefix } = opts.upstream;
   const send = base.protocol === 'https:' ? httpsRequest : httpRequest;
-  const sockets = new Set<Socket>();
+  /** Requests being handled; a Run's end (drop) cuts them wherever they are. */
   const inflight = new Set<{ destroy(): void }>();
 
   const refuse = (res: ServerResponse, target: string, status: number, reason: string): void => {
@@ -216,9 +231,13 @@ export function createApiProxy(opts: ApiProxyOptions): ProxyServer {
     apiError(res, status, status === 413 ? 'request_too_large' : 'permission_error', reason);
   };
 
-  const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+  const handle = async (
+    req: IncomingMessage,
+    res: ServerResponse,
+    url: string,
+    entry: { upstream: { destroy(): void } | null },
+  ): Promise<void> => {
     const method = req.method ?? 'GET';
-    const url = req.url ?? '/';
     const path = url.split('?')[0] ?? '/';
     const target = `${method} ${path.slice(0, 200)}`;
     // The engine's connection warm-up (sent when no HTTPS_PROXY is set):
@@ -253,8 +272,9 @@ export function createApiProxy(opts: ApiProxyOptions): ProxyServer {
       refuse(res, target, 413, `request bodies are limited to ${maxBody} bytes`);
       return;
     }
+    // Checked after the body arrived, so a Run that ended meanwhile forwards nothing.
     if (!opts.armed()) {
-      refuse(res, target, 403, 'no Run of this Bot is active');
+      refuse(res, target, 403, opts.idleReason ?? 'no Run of this Bot is active');
       return;
     }
     if (!apiRouteAllowed(method, url)) {
@@ -291,7 +311,7 @@ export function createApiProxy(opts: ApiProxyOptions): ProxyServer {
     }
     if (key === null) {
       counters.fail();
-      apiError(res, 503, 'api_error', 'orbitd has no API key for the Docker sandbox');
+      apiError(res, 503, 'api_error', 'orbitd has no API key to send');
       return;
     }
 
@@ -323,9 +343,7 @@ export function createApiProxy(opts: ApiProxyOptions): ProxyServer {
         upRes.once('error', () => res.destroy());
       },
     );
-    const entry = { destroy: () => upstream.destroy() };
-    inflight.add(entry);
-    upstream.once('close', () => inflight.delete(entry));
+    entry.upstream = upstream;
     upstream.once('error', () => {
       if (!res.headersSent) {
         counters.fail();
@@ -341,11 +359,38 @@ export function createApiProxy(opts: ApiProxyOptions): ProxyServer {
     upstream.end(body);
   };
 
-  const server = createServer((req, res) => {
-    handle(req, res).catch(() => {
-      apiError(res, 500, 'api_error', 'internal proxy error');
-    });
-  });
+  return {
+    handle: (req, res, url = req.url ?? '/') => {
+      const entry: { upstream: { destroy(): void } | null; destroy(): void } = {
+        upstream: null,
+        destroy: () => {
+          entry.upstream?.destroy();
+          res.destroy();
+        },
+      };
+      inflight.add(entry);
+      res.once('close', () => inflight.delete(entry));
+      handle(req, res, url, entry).catch(() => {
+        apiError(res, 500, 'api_error', 'internal proxy error');
+      });
+    },
+    drop: () => {
+      for (const r of [...inflight]) r.destroy();
+    },
+    stats: () => counters.snapshot(),
+  };
+}
+
+/**
+ * The host-side key-injecting API proxy of a container Bot (ADR-018), bound
+ * by its caller to a Unix socket. The container's engine talks to it with a
+ * placeholder key; see createApiForwarder for what is forwarded.
+ */
+export function createApiProxy(opts: ApiProxyOptions): ProxyServer {
+  const counters = opts.counters ?? new Counters(opts.now, opts.onRefusal);
+  const forwarder = createApiForwarder({ ...opts, counters });
+  const sockets = new Set<Socket>();
+  const server = createServer((req, res) => forwarder.handle(req, res));
   server.on('connection', (s: Socket) => {
     sockets.add(s);
     s.once('close', () => sockets.delete(s));
@@ -364,7 +409,7 @@ export function createApiProxy(opts: ApiProxyOptions): ProxyServer {
     server,
     stats: () => counters.snapshot(),
     dropConnections: () => {
-      for (const r of inflight) r.destroy();
+      forwarder.drop();
       for (const s of sockets) s.destroy();
     },
   };
