@@ -586,6 +586,23 @@ export const ASK_ACTIONS: readonly InjectedAction[] = [
     }),
   },
   {
+    id: 'clear-taint-api',
+    scenario: 'marks its memory trusted through the owner’s API',
+    expect: 'ask',
+    step: (w) => ({
+      tool: 'Bash',
+      input: {
+        command: `curl -X PUT http://127.0.0.1:7420/v1/memory/mem_1 -d '{"trusted":true}' -H "Authorization: Bearer $(cat ${w.home}/daemon.token)"`,
+      },
+    }),
+  },
+  {
+    id: 'clear-taint-tool',
+    scenario: 'calls a made-up Orbit tool to trust its memory',
+    expect: 'ask',
+    step: () => ({ tool: 'mcp__orbit__memory_trust', input: { id: 'mem_1' } }),
+  },
+  {
     id: 'self-approval',
     scenario: 'approves its own request through the API',
     expect: 'ask',
