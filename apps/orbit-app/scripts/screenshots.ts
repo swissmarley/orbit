@@ -79,7 +79,34 @@ try {
     comment: 'Name the source next time',
   });
 
+  // M7: the Inbox Triage template, plugins in every state, inbound triggers.
+  const { BOT_TEMPLATES } = await import('@orbit/core');
+  const triage = await o.api<{ id: string }>('POST', '/v1/bots', {
+    ...BOT_TEMPLATES.find((t) => t.id === 'inbox-triage')?.spec,
+    approvals: { parkWindowSeconds: 0 },
+  });
+  const triageRun = await o.api<{ runId: string }>('POST', `/v1/bots/${triage.id}/runs`, {});
+  await o.api('PUT', '/v1/plugins/filesystem/settings/FS_ROOTS', { value: o.home });
+  await o.api('POST', '/v1/plugins/filesystem/enable');
+  await o.api('PUT', '/v1/plugins/github/secrets/GITHUB_TOKEN', {
+    value: 'ghp_screenshot0000000000000000000000000000',
+  });
+  await o.api('POST', '/v1/plugins/github/enable');
+  await o.api('POST', '/v1/bots', {
+    name: 'Deploy notes',
+    goal: 'Summarize each deployment',
+    plugins: ['github'],
+    triggers: [
+      { kind: 'webhook', name: 'deploys' },
+      { kind: 'file', paths: [o.home], name: 'Drop folder' },
+    ],
+  });
+  await new Promise((r) => setTimeout(r, 2000));
+
   const screens: [string, string][] = [
+    ['settings-integrations', '/settings?tab=integrations'],
+    ['run-inbox-triage', `/runs/${triageRun.runId}`],
+    ['bot-inbox-triage', `/bots/${triage.id}`],
     ['inbox', '/inbox'],
     ['bots', '/bots'],
     ['bot-overview', `/bots/${notes.id}`],

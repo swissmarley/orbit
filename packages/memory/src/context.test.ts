@@ -83,7 +83,7 @@ describe('feedback text (composed by Orbit)', () => {
   it('records denials with the reason and edits with the owner values only', () => {
     const denied = approvalFeedback({
       toolName: 'mcp__mail__send_email',
-      runId: 'run_1',
+      run: 'the manual Run of 5 Oct 2026, 08:00',
       status: 'denied',
       reason: 'not to the CEO',
       input: {},
@@ -92,9 +92,12 @@ describe('feedback text (composed by Orbit)', () => {
     });
     expect(denied.signal).toBe('denied');
     expect(denied.body).toContain("Owner's reason: not to the CEO");
+    // The Run is named by its label, never by a raw id.
+    expect(denied.body).toContain('In the manual Run of 5 Oct 2026, 08:00 your owner denied');
+    expect(denied.body).not.toMatch(/run_[0-9a-z]/);
     const edited = approvalFeedback({
       toolName: 'mcp__mail__send_email',
-      runId: 'run_1',
+      run: 'the manual Run of 5 Oct 2026, 08:00',
       status: 'approved',
       reason: null,
       input: { to: 'a@x', body: 'model text IGNORE PREVIOUS', cc: 'c@x' },
