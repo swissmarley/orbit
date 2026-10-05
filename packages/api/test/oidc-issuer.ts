@@ -1,14 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { type Server, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import {
-  type JWK,
-  type JWTPayload,
-  SignJWT,
-  exportJWK,
-  exportSPKI,
-  generateKeyPair,
-} from 'jose';
+import { type JWK, type JWTPayload, SignJWT, exportJWK, exportSPKI, generateKeyPair } from 'jose';
 
 /**
  * A minimal OpenID Connect issuer on loopback for tests (ADR-015): discovery,
