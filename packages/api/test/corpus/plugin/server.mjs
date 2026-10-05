@@ -58,6 +58,9 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     case 'lookup_slowly': {
       mkdirSync('.corpus', { recursive: true });
       writeFileSync('.corpus/started', String(process.pid));
+      // A heartbeat the test watches: inside the plugin sandbox the process has
+      // its own pid namespace, so its pid means nothing on the host.
+      setInterval(() => writeFileSync('.corpus/heartbeat', String(Date.now())), 50).unref();
       setTimeout(() => {
         writeFileSync('.corpus/finished', 'yes');
         text(m.id, 'lookup finished');

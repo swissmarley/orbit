@@ -1,5 +1,12 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Bot, RunEvent, RunState } from '@orbit/core';
@@ -32,14 +39,8 @@ async function until<T>(what: string, probe: () => T | undefined | null | false,
   }
 }
 
-const alive = (pid: number) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
+/** A plugin server is gone once its heartbeat file stops changing. */
+const beating = (file: string) => existsSync(file) && Date.now() - statSync(file).mtimeMs < 500;
 
 const started = (events: RunEvent[]) => events.filter((e) => e.type === 'run.started').length;
 
@@ -48,7 +49,8 @@ interface Arranged {
   run: string;
   bot: Bot;
   /** Plugin server processes that must be gone afterwards. */
-  pids: () => number[];
+  /** Heartbeat files of the plugin servers the Run started. */
+  heartbeats: () => string[];
   /** Runs that must end with the target (delegated children). */
   children: () => string[];
   approval: () => string | null;
@@ -66,9 +68,9 @@ interface State {
   arrange(w: World): Promise<Arranged>;
 }
 
-function pidOf(w: World, bot: Bot): number[] {
-  const file = join(w.workspace(bot.id), '.corpus', 'started');
-  return existsSync(file) ? [Number(readFileSync(file, 'utf8'))] : [];
+function heartbeatOf(w: World, bot: Bot): string[] {
+  const dir = join(w.workspace(bot.id), '.corpus');
+  return existsSync(join(dir, 'started')) ? [join(dir, 'heartbeat')] : [];
 }
 
 const STATES: readonly State[] = [
@@ -85,14 +87,14 @@ const STATES: readonly State[] = [
         fixture: w.fixture([slow]),
       });
       const holding = await w.start(blocker.id);
-      await until('the blocker to hold the slot', () => pidOf(w, blocker).length > 0);
+      await until('the blocker to hold the slot', () => heartbeatOf(w, blocker).some(beating));
       const bot = await w.bot({ name: 'Waiting', fixture: w.fixture([{ say: 'Hi' }]) });
       const run = await w.start(bot.id);
       expect(w.run(run).status).toBe('queued');
       return {
         run,
         bot,
-        pids: () => [],
+        heartbeats: () => [],
         children: () => [],
         approval: () => null,
         bystanders: [holding],
@@ -107,9 +109,15 @@ const STATES: readonly State[] = [
     async arrange(w) {
       const bot = await w.bot({ name: 'Busy', plugins: ['corpus'], fixture: w.fixture([slow]) });
       const run = await w.start(bot.id);
-      await until('the plugin call to start', () => pidOf(w, bot).length > 0);
+      await until('the plugin call to start', () => heartbeatOf(w, bot).some(beating));
       expect(w.run(run).status).toBe('running');
-      return { run, bot, pids: () => pidOf(w, bot), children: () => [], approval: () => null };
+      return {
+        run,
+        bot,
+        heartbeats: () => heartbeatOf(w, bot),
+        children: () => [],
+        approval: () => null,
+      };
     },
   },
   {
@@ -125,7 +133,7 @@ const STATES: readonly State[] = [
       const run = await w.start(bot.id);
       const approval = await until('the approval', () => w.approvals(run)[0]?.id);
       expect(w.run(run).status).toBe('running');
-      return { run, bot, pids: () => [], children: () => [], approval: () => approval };
+      return { run, bot, heartbeats: () => [], children: () => [], approval: () => approval };
     },
   },
   {
@@ -138,7 +146,7 @@ const STATES: readonly State[] = [
       await w.settle();
       expect(w.run(run).status).toBe('waiting_approval');
       const approval = w.approvals(run)[0]?.id ?? null;
-      return { run, bot, pids: () => [], children: () => [], approval: () => approval };
+      return { run, bot, heartbeats: () => [], children: () => [], approval: () => approval };
     },
   },
   {
@@ -162,12 +170,12 @@ const STATES: readonly State[] = [
         delegation: { allowedBots: ['Slow Peer'] },
       });
       const run = await w.start(bot.id);
-      await until('the child’s plugin call', () => pidOf(w, peer).length > 0);
+      await until('the child’s plugin call', () => heartbeatOf(w, peer).some(beating));
       await until('the parent to park', () => w.run(run).status === 'delegating');
       return {
         run,
         bot,
-        pids: () => pidOf(w, peer),
+        heartbeats: () => heartbeatOf(w, peer),
         children: () => w.run(run).children.map((c) => c.runId),
         approval: () => null,
       };
@@ -185,7 +193,7 @@ const STATES: readonly State[] = [
       const run = await w.start(bot.id);
       await w.settle();
       expect(w.run(run).status).toBe('rate_limited');
-      return { run, bot, pids: () => [], children: () => [], approval: () => null };
+      return { run, bot, heartbeats: () => [], children: () => [], approval: () => null };
     },
   },
 ];
@@ -293,8 +301,8 @@ describe.each(STATES)('a Run $scenario', (state) => {
       for (const child of a.children()) {
         await until('the child to end', () => world.run(child).status === 'cancelled', 5000);
       }
-      for (const pid of a.pids())
-        await until(`plugin process ${pid} to exit`, () => !alive(pid), 5000);
+      for (const file of a.heartbeats())
+        await until('the plugin process to exit', () => !beating(file), 5000);
       const approval = a.approval();
       if (approval) {
         expect(w.h.service.approvals.get(approval)?.status).toBe('cancelled');
