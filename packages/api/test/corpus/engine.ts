@@ -22,7 +22,16 @@ export type Step =
       denied?: boolean;
     }
   /** The model says something (becomes the approval card's "why" for the next call). */
-  | { say: string };
+  | { say: string }
+  /** Several tool calls in one assistant message (parallel tool use). */
+  | { parallel: readonly ToolCall[] };
+
+export interface ToolCall {
+  tool: string;
+  input: Record<string, unknown>;
+  result?: string;
+  denied?: boolean;
+}
 
 export type ToolStep = Extract<Step, { tool: string }>;
 
@@ -35,6 +44,10 @@ export interface TranscriptOptions {
   tokensPerTurn?: { input: number; output: number };
   /** Make the final message an `error_max_turns` result instead of success. */
   maxTurns?: boolean;
+  /** End on the subscription usage limit (the Run becomes rate limited and resumes later). */
+  usageLimit?: boolean;
+  /** Engine-reported duration of the segment (the Run's active time). */
+  durationMs?: number;
 }
 
 const SESSION = '00000000-0000-4000-8000-0000000c0de5';
@@ -59,7 +72,8 @@ export function transcript(steps: readonly Step[], opts: TranscriptOptions = {})
   ];
   const denied: { tool_name: string; tool_use_id: string }[] = [];
   let turns = 0;
-  const assistant = (content: unknown[]) => {
+  let calls = 0;
+  const assistant = (content: unknown[], extra: Record<string, unknown> = {}) => {
     turns += 1;
     out.push({
       type: 'assistant',
@@ -73,40 +87,69 @@ export function transcript(steps: readonly Step[], opts: TranscriptOptions = {})
       },
       parent_tool_use_id: null,
       session_id: SESSION,
+      ...extra,
     });
   };
-  steps.forEach((step, i) => {
-    if ('say' in step) {
-      assistant([{ type: 'text', text: step.say }]);
-      return;
-    }
-    const id = `toolu_c${i + 1}`;
-    assistant([{ type: 'tool_use', id, name: step.tool, input: step.input }]);
-    if (step.denied) denied.push({ tool_name: step.tool, tool_use_id: id });
+  const toolCalls = (list: readonly ToolCall[]) => {
+    const ids = list.map(() => `toolu_c${++calls}`);
+    assistant(list.map((c, k) => ({ type: 'tool_use', id: ids[k], name: c.tool, input: c.input })));
+    list.forEach((c, k) => {
+      if (c.denied) denied.push({ tool_name: c.tool, tool_use_id: ids[k] ?? '' });
+    });
     out.push({
       type: 'user',
       message: {
         role: 'user',
-        content: [{ type: 'tool_result', tool_use_id: id, content: step.result ?? 'ok' }],
+        content: list.map((c, k) => ({
+          type: 'tool_result',
+          tool_use_id: ids[k],
+          content: c.result ?? 'ok',
+        })),
       },
       parent_tool_use_id: null,
       session_id: SESSION,
     });
-  });
-  const result = opts.result ?? 'Done.';
-  assistant([{ type: 'text', text: result }]);
+  };
+  for (const step of steps) {
+    if ('say' in step) assistant([{ type: 'text', text: step.say }]);
+    else if ('parallel' in step) toolCalls(step.parallel);
+    else toolCalls([step]);
+  }
+  const result = opts.usageLimit
+    ? 'You’ve hit your usage limit · resets 3pm (UTC)'
+    : (opts.result ?? 'Done.');
+  if (opts.usageLimit) {
+    out.push({
+      type: 'rate_limit_event',
+      rate_limit_info: {
+        status: 'rejected',
+        resetsAt: 1791158400,
+        rateLimitType: 'five_hour',
+        utilization: 1.0,
+        isUsingOverage: false,
+      },
+      session_id: SESSION,
+    });
+  }
+  assistant([{ type: 'text', text: result }], opts.usageLimit ? { error: 'rate_limit' } : {});
   out.push({
     type: 'result',
     subtype: opts.maxTurns ? 'error_max_turns' : 'success',
-    is_error: Boolean(opts.maxTurns),
-    duration_ms: 100,
+    is_error: Boolean(opts.maxTurns ?? opts.usageLimit),
+    duration_ms: opts.durationMs ?? 100,
     duration_api_ms: 90,
     num_turns: turns,
     result,
     stop_reason: 'end_turn',
     session_id: SESSION,
     total_cost_usd: opts.costUsd ?? 0,
-    usage: { ...usage, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+    // The whole segment's usage, as the engine reports it.
+    usage: {
+      input_tokens: tokens.input * turns,
+      output_tokens: tokens.output * turns,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+    },
     modelUsage: {},
     permission_denials: denied,
   });
@@ -130,6 +173,7 @@ export interface EngineRequest {
   system: string | null;
   resumed: boolean;
   maxTurns: number | null;
+  maxBudgetUsd: number | null;
 }
 
 export interface EngineToolResult {
@@ -162,6 +206,7 @@ export class RecordingDriver implements AgentDriver {
       system: req.appendSystemPrompt,
       resumed: req.resumeSessionId !== null,
       maxTurns: req.maxTurns,
+      maxBudgetUsd: req.maxBudgetUsd ?? null,
     });
     const handler = req.toolResult;
     const toolResult = handler
