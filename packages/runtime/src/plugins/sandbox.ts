@@ -10,6 +10,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path';
@@ -25,6 +26,7 @@ import {
   type HostPath,
   LINUX_SYSTEM_PATHS,
   type PluginSandboxSupport,
+  type GitBind,
   type SandboxBind,
   type SystemPath,
   type WrappedCommand,
@@ -232,14 +234,56 @@ export function existingDenied(paths: readonly string[]): HostPath[] {
 }
 
 /**
- * A worktree Bot's git directory: the owner's repository's common git dir
- * (it holds `worktrees/<name>`, objects and refs), its config, hooks and info
- * protected, and the repository's `.git` file when that is itself a link.
+ * The administrative directory (`<common>/worktrees/<name>`) of the linked
+ * worktree checked out at `workspace`, found by its `gitdir` back-pointer —
+ * never from the workspace's own `.git` file, which the Bot can rewrite.
+ */
+export function worktreeAdminDir(commonDir: string, workspace: string): string | null {
+  const ws = realOrNull(workspace) ?? resolve(workspace);
+  const worktrees = join(commonDir, 'worktrees');
+  let names: string[];
+  try {
+    names = readdirSync(worktrees);
+  } catch {
+    return null;
+  }
+  for (const n of names) {
+    const dir = join(worktrees, n);
+    if (!lstatOrNull(dir)?.isDirectory()) continue;
+    try {
+      const target = readFileSync(join(dir, 'gitdir'), 'utf8').trim();
+      if (target === '') continue;
+      const tree = dirname(resolve(dir, target));
+      if ((realOrNull(tree) ?? tree) === ws) return dir;
+    } catch {
+      // Not a worktree entry.
+    }
+  }
+  return null;
+}
+
+/** What a commit and a push write in the common git directory (ADR-019). */
+const GIT_WRITABLE = ['objects', 'refs', 'logs', 'reftable'];
+/** Inside the Bot's worktree entry: the pointers and config git follows, read-only. */
+const WORKTREE_PROTECTED = ['commondir', 'gitdir', 'config.worktree'];
+
+/**
+ * A worktree Bot's git directory: the owner's repository's common git dir,
+ * and the repository's `.git` file when that is itself a link. With write
+ * access only what a commit needs is writable — `objects`, `refs`, `logs`
+ * (and `reftable`), and the Bot's own `worktrees/<name>` entry minus its
+ * `commondir`, `gitdir` and `config.worktree` — and everything else stays
+ * read-only: config, hooks, info, modules (submodules' config and hooks),
+ * `commondir`, packed-refs and other worktrees' entries, so a file git would
+ * follow cannot be created either (M8 safety review). Creates `logs` and an
+ * empty `config.worktree` in the Bot's entry when missing, so they can be
+ * bound.
  */
 export function gitBind(
   repo: string,
   access: 'read' | 'write',
-): { dir: string; access: 'read' | 'write'; protect: string[]; dotGit?: string } | null {
+  workspace?: string | null,
+): GitBind | null {
   const dotGit = join(repo, '.git');
   const st = lstatOrNull(dotGit);
   if (!st) return null;
@@ -261,10 +305,27 @@ export function gitBind(
     }
   }
   if (!dir) return null;
-  const protect = ['config', 'hooks', 'info']
-    .map((n) => join(dir, n))
-    .filter((p) => lstatOrNull(p) !== null);
-  return { dir, access, protect, ...(link ? { dotGit: link } : {}) };
+  const common = dir;
+  const writable: string[] = [];
+  const protect: string[] = [];
+  if (access === 'write') {
+    const logs = join(common, 'logs');
+    if (!lstatOrNull(logs)) mkdirSync(logs, { mode: 0o755 });
+    // Real folders only: a link could point anywhere.
+    for (const n of GIT_WRITABLE) {
+      if (lstatOrNull(join(common, n))?.isDirectory()) writable.push(join(common, n));
+    }
+    const entry = workspace ? worktreeAdminDir(common, workspace) : null;
+    if (entry) {
+      const cfg = join(entry, 'config.worktree');
+      if (!lstatOrNull(cfg)) writeFileSync(cfg, '', { flag: 'wx', mode: 0o644 });
+      writable.push(entry);
+      for (const n of WORKTREE_PROTECTED) {
+        if (lstatOrNull(join(entry, n))) protect.push(join(entry, n));
+      }
+    }
+  }
+  return { dir: common, access, writable, protect, ...(link ? { dotGit: link } : {}) };
 }
 
 export interface SandboxRequest {
@@ -353,7 +414,8 @@ export function prepareSandboxedCommand(
     needs.workspace !== 'none' && req.workspace
       ? { path: realOr(req.workspace), access: needs.workspace }
       : null;
-  const git = workspace && req.git ? gitBind(realOr(req.git.repo), workspace.access) : null;
+  const git =
+    workspace && req.git ? gitBind(realOr(req.git.repo), workspace.access, workspace.path) : null;
 
   let privateDir: string | undefined;
   let cleanup: (() => void) | undefined;

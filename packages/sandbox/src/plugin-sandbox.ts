@@ -59,6 +59,25 @@ export interface SystemPath {
   symlink?: string | undefined;
 }
 
+/**
+ * A worktree Bot's git directory: the owner repository's common dir (with
+ * `worktrees/`), always bound read-only. With `access: 'write'` only the
+ * `writable` folders inside it (objects, refs, logs, the Bot's own worktree
+ * entry) are bound read-write, and `protect` (paths inside those: the entry's
+ * `commondir`, `gitdir`, `config.worktree`) read-only again — so a plugin
+ * cannot plant a hook, config, filter or pointer for the owner's own git
+ * (config, hooks, info, modules/*, commondir, other worktrees' entries).
+ * `dotGit` is the repository's `.git` file when the repository is itself a
+ * linked worktree.
+ */
+export interface GitBind {
+  dir: string;
+  access: 'read' | 'write';
+  writable: readonly string[];
+  protect: readonly string[];
+  dotGit?: string;
+}
+
 export interface PluginSandboxInput {
   platform: 'linux' | 'darwin';
   /** The owner's home: replaced by an empty private directory. */
@@ -76,19 +95,8 @@ export interface PluginSandboxInput {
   /** Owner folders from the plugin's settings, already resolved. */
   folders: readonly SandboxBind[];
   workspace: SandboxBind | null;
-  /**
-   * A worktree Bot's git directory (the common dir with `worktrees/`), bound
-   * with the workspace's access; `protect` (config, hooks, info) stay
-   * read-only so a plugin cannot plant a hook or filter for the owner's git.
-   * `dotGit` is the repository's `.git` file when the repository is itself a
-   * linked worktree.
-   */
-  git: {
-    dir: string;
-    access: 'read' | 'write';
-    protect: readonly string[];
-    dotGit?: string;
-  } | null;
+  /** A worktree Bot's git directory (see `GitBind`). */
+  git: GitBind | null;
   network: boolean;
   /** macOS: the private directory holding the plugin's HOME and TMPDIR (created by the caller). */
   privateDir?: string | undefined;
@@ -202,8 +210,11 @@ export function bwrapArgs(spec: PluginSandboxSpec): string[] {
   }
   if (spec.git) {
     const g = spec.git;
-    a.push(g.access === 'write' ? '--bind' : '--ro-bind', g.dir, g.dir);
-    for (const p of g.protect) a.push('--ro-bind', p, p);
+    a.push('--ro-bind', g.dir, g.dir);
+    if (g.access === 'write') {
+      for (const w of g.writable) a.push('--bind', w, w);
+      for (const p of g.protect) a.push('--ro-bind', p, p);
+    }
     if (g.dotGit) a.push('--ro-bind', g.dotGit, g.dotGit);
   }
   a.push('--chdir', spec.cwd);
@@ -235,7 +246,7 @@ function subpathExcept(path: string, except: readonly string[]): string {
  *   folders, the workspace and its private directory (metadata everywhere,
  *   which path resolution needs);
  * - writes: the private directory, and the workspace and folders declared
- *   writable (a git directory without its config, hooks and info);
+ *   writable (in a git directory only objects, refs, logs and the Bot's worktree entry);
  * - network only when a tool needs it; a short list of system services.
  *
  * macOS cannot replace $HOME in place: the caller points HOME and TMPDIR at
@@ -278,8 +289,11 @@ export function seatbeltProfile(spec: PluginSandboxSpec): string {
     `(allow file-read* ${readable.map((p) => subpathExcept(p, denied)).join(' ')} (subpath ${sbplString(priv)}))`,
     `(allow file-write* (subpath ${sbplString(priv)}) (literal ${sbplString('/dev/null')})${writable.map((p) => ` ${subpathExcept(p, denied)}`).join('')})`,
   ];
-  if (spec.git?.access === 'write') {
-    lines.push(`(allow file-write* ${subpathExcept(spec.git.dir, spec.git.protect)})`);
+  if (spec.git?.access === 'write' && spec.git.writable.length > 0) {
+    const g = spec.git;
+    lines.push(
+      `(allow file-write* ${g.writable.map((w) => subpathExcept(w, g.protect)).join(' ')})`,
+    );
   }
   if (spec.network) lines.push('(allow network*)');
   return `${lines.join('\n')}\n`;

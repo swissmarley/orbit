@@ -38,6 +38,7 @@ export {
   seatbeltProfile,
   wrapPluginCommand,
   type DetectPluginSandboxOptions,
+  type GitBind,
   type HostPath,
   type PluginSandboxEngine,
   type PluginSandboxInput,
