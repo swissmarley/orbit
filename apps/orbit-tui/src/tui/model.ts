@@ -9,6 +9,15 @@ import {
   TERMINAL_RUN_STATUSES,
 } from '@orbit/core';
 import type { Approval, DoctorReport, RouteResponse } from '@orbit/sdk-client';
+import {
+  PANE_CONTENT_TOP,
+  type ScreenLayout,
+  approvalsWindow,
+  botsWindow,
+  inside,
+  tabAt,
+} from './layout';
+import type { MouseEvent } from './mouse';
 
 /**
  * The TUI's model: what orbitd told us (`Data`) and what the user is looking
@@ -132,6 +141,8 @@ export interface Ui {
   scroll: number;
   overlay: Overlay | null;
   toast: { text: string; tone: 'info' | 'error' } | null;
+  /** Mouse reporting is on (orbit tui --mouse, or M). */
+  mouse: boolean;
 }
 
 export const INITIAL_UI: Ui = {
@@ -146,6 +157,7 @@ export const INITIAL_UI: Ui = {
   scroll: 0,
   overlay: null,
   toast: null,
+  mouse: false,
 };
 
 /** Side effects the App performs through the client. */
@@ -171,7 +183,9 @@ export type Command =
   | { kind: 'loadTree'; runId: string | null }
   | { kind: 'loadIntegrations'; on: boolean }
   | { kind: 'setPlugin'; pluginId: string; enabled: boolean }
-  | { kind: 'feedback'; runId: string; rating: 'up' | 'down' };
+  | { kind: 'feedback'; runId: string; rating: 'up' | 'down' }
+  /** Turn mouse reporting on or off. */
+  | { kind: 'mouse'; on: boolean };
 
 /** The subset of Ink's Key the bindings use. */
 export interface KeyInfo {
@@ -563,6 +577,7 @@ export function onKey(ui: Ui, data: Data, input: string, key: KeyInfo): KeyResul
   if (input === 'q' || (key.ctrl && input === 'c')) return next({}, { kind: 'quit' });
   if (input === '?') return next({ overlay: { kind: 'help', scroll: 0 } });
   if (input === 'R') return next({}, { kind: 'refresh' });
+  if (input === 'M') return next({}, { kind: 'mouse', on: !ui.mouse });
   if (key.tab) {
     const i = PANES.indexOf(ui.focus);
     const step = key.shift ? PANES.length - 1 : 1;
@@ -747,6 +762,78 @@ export function onKey(ui: Ui, data: Data, input: string, key: KeyInfo): KeyResul
 }
 
 /**
+ * Pure mouse handling (opt-in): a left click selects the pane, and the Bot,
+ * Run or approval row under the pointer; the wheel moves the focused list or
+ * scrolls the timeline (or the overlay that is open), exactly like j/k.
+ * Nothing that changes state (run, approve, deny, stop) happens on a click:
+ * those keep their keys and confirmations. A confirm question, the deny
+ * reason and the memory editor ignore the mouse entirely, so a report never
+ * cancels a question or types into text.
+ */
+export function onMouse(ui: Ui, data: Data, ev: MouseEvent, layout: ScreenLayout): KeyResult {
+  const o = ui.overlay;
+  const typing =
+    o?.kind === 'confirm' ||
+    o?.kind === 'deny' ||
+    o?.kind === 'memoryEdit' ||
+    (o?.kind === 'memory' && o.search !== null);
+  if (typing) return { ui };
+  if (ev.kind === 'wheel') {
+    return onKey(ui, data, '', ev.wheel === 'down' ? { downArrow: true } : { upArrow: true });
+  }
+  // Left press only; overlays are driven by their keys.
+  if (ev.kind !== 'press' || ev.button !== 0 || o) return { ui };
+  const next = (patch: Partial<Ui>): KeyResult => ({ ui: { ...ui, toast: null, ...patch } });
+  if (layout.tabBar && inside(layout.tabBar, ev.x, ev.y)) {
+    const pane = tabAt(ev.x - layout.tabBar.x, ui.focus, data.approvals.length);
+    return pane ? next({ focus: pane }) : { ui };
+  }
+  for (const pane of PANES) {
+    const rect = layout.panes[pane];
+    if (!rect || !inside(rect, ev.x, ev.y)) continue;
+    const row = ev.y - rect.y - PANE_CONTENT_TOP;
+    if (pane === 'bots' && data.loaded && data.bots.length > 0) {
+      const bot = selectedBot(data, ui);
+      const at = bot ? data.bots.indexOf(bot) : 0;
+      const w = botsWindow(rect.height, data.bots.length, at);
+      const target = row >= 0 && row < w.listRows ? data.bots[w.first + row] : undefined;
+      if (target) {
+        if (target.id === bot?.id) return next({ focus: pane });
+        return next({
+          focus: pane,
+          botIndex: data.bots.indexOf(target),
+          botId: target.id,
+          runIndex: 0,
+          runId: null,
+          scroll: 0,
+        });
+      }
+      const runs = runsOf(data, bot?.id);
+      const r = row - w.runsTop;
+      const run = r >= 0 && r < w.runRows ? runs[r] : undefined;
+      if (run) {
+        return next({ focus: pane, runIndex: r, runId: r === 0 ? null : run.runId, scroll: 0 });
+      }
+    }
+    if (pane === 'approvals' && data.approvals.length > 0) {
+      const w = approvalsWindow(rect.height, data.approvals.length, ui.approvalIndex);
+      const target = row >= 0 && row < w.listRows ? data.approvals[w.first + row] : undefined;
+      // Selecting is all a click does: deciding still needs the card and its keys.
+      if (target) {
+        return next({
+          focus: pane,
+          approvalIndex: w.first + row,
+          approvalId: target.id,
+          approvalMoved: false,
+        });
+      }
+    }
+    return next({ focus: pane });
+  }
+  return { ui };
+}
+
+/**
  * Keep selections valid after the data changed. The approval selection
  * follows its id; when that card disappears the cursor lands on another one
  * and `approvalMoved` makes the next decision key a no-op (review F2).
@@ -825,6 +912,10 @@ export const HELP: readonly { keys: string; does: string }[] = [
   { keys: 'Enter  e (integrations)', does: 'open a plugin / enable or disable it (asks first)' },
   { keys: 'K', does: 'global kill switch (asks first; only y confirms)' },
   { keys: 'R', does: 'refresh' },
+  {
+    keys: 'M',
+    does: 'mouse on / off (or orbit tui --mouse): click selects, wheel scrolls; actions keep their keys',
+  },
   { keys: 'Enter', does: 'Bots: open the Timeline · Approvals: open the card' },
   { keys: 'Esc', does: 'close a card, prompt or this help' },
   { keys: 'y', does: 'confirm a question (any other key cancels)' },

@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { KEYS, renderTerminal } from '../../test/render';
 import { approval, data, events, fakeClient, memories } from '../../test/tui-fixtures';
 import { App } from './app';
+import type { MouseEvent } from './mouse';
 
 const plain = (_style: unknown, text: string) => text;
 const WIDE = { columns: 120, rows: 22 };
@@ -370,5 +371,112 @@ describe('M6: long memories (UI review H1, H2)', () => {
     expect(first).not.toMatch(/⏎/);
     await t.press('j', 'j', 'j', 'j', 'j', 'j');
     await t.waitFor((f) => !f.includes('Paragraph 1:') && f.includes('Paragraph 4:'));
+  });
+});
+
+describe('TUI mouse (opt-in, M8)', () => {
+  const at = (x: number, y: number, over: Partial<MouseEvent> = {}): MouseEvent => ({
+    kind: 'press',
+    button: 0,
+    wheel: null,
+    x,
+    y,
+    shift: false,
+    meta: false,
+    ctrl: false,
+    ...over,
+  });
+
+  function withMouse(enabled: boolean, size = WIDE) {
+    const listeners = new Set<(e: MouseEvent) => void>();
+    const control = {
+      enabled,
+      subscribe: (fn: (e: MouseEvent) => void) => {
+        listeners.add(fn);
+        return () => {
+          listeners.delete(fn);
+        };
+      },
+      set: vi.fn((on: boolean) => {
+        control.enabled = on;
+        return true;
+      }),
+    };
+    const fake = fakeClient(data());
+    const t = renderTerminal(
+      <App client={fake.client} paint={plain} refreshDelayMs={5} mouse={control} />,
+      size,
+    );
+    unmount = t.unmount;
+    const emit = async (e: MouseEvent) => {
+      for (const fn of listeners) fn(e);
+      await new Promise((r) => setTimeout(r, 15));
+    };
+    return { ...t, ...fake, control, emit };
+  }
+
+  it('the rows the hit test uses are the rows on screen', async () => {
+    const t = withMouse(true);
+    const frame = await t.waitFor(/waiting for your approval/);
+    const lines = frame.split('\n');
+    // 120×22: content starts at row 3; Bots in columns 0–30, Approvals from 80.
+    expect(lines[3]?.slice(0, 31)).toMatch(/▸ .*Mailer/);
+    expect(lines[4]?.slice(0, 31)).toMatch(/Notes/);
+    expect(lines[7]?.slice(0, 31)).toMatch(/Runs \[ older \] newer/);
+    expect(lines[9]?.slice(0, 31)).toMatch(/done/);
+    expect(lines[3]?.slice(80)).toMatch(/▸ send email/);
+  });
+
+  it('a click selects the Bot under the pointer; the wheel scrolls; nothing runs', async () => {
+    const t = withMouse(true);
+    await t.waitFor(/waiting for your approval/);
+    await t.emit(at(5, 4));
+    const frame = await t.waitFor((f) => (f.split('\n')[4] ?? '').includes('▸'));
+    expect(frame.split('\n')[4]).toMatch(/▸ .*Notes/);
+    await t.emit(at(5, 4, { kind: 'wheel', button: null, wheel: 'down' }));
+    await t.waitFor((f) => (f.split('\n')[5] ?? '').includes('▸'));
+    await t.emit(at(90, 3));
+    await t.waitFor(/▶ Approvals/);
+    expect(t.mock.runs.start).not.toHaveBeenCalled();
+    expect(t.mock.approvals.approve).not.toHaveBeenCalled();
+    expect(t.mock.approvals.deny).not.toHaveBeenCalled();
+  });
+
+  it('M turns reporting on and off; events are ignored while it is off', async () => {
+    const t = withMouse(false);
+    await t.waitFor(/waiting for your approval/);
+    await t.emit(at(5, 4));
+    expect((t.lastFrame().split('\n')[4] ?? '').includes('▸')).toBe(false);
+    await t.press('M');
+    await t.waitFor(/mouse on — click selects/);
+    expect(t.control.set).toHaveBeenLastCalledWith(true);
+    await t.emit(at(5, 4));
+    await t.waitFor((f) => (f.split('\n')[4] ?? '').includes('▸'));
+    await t.press('M');
+    await t.waitFor(/mouse off/);
+    expect(t.control.set).toHaveBeenLastCalledWith(false);
+  });
+
+  it('M without a terminal says so', async () => {
+    const t = open();
+    await t.waitFor(/Mailer/);
+    await t.press('M');
+    await t.waitFor(/The mouse needs an interactive terminal/);
+  });
+
+  it('mouse input never types into the deny reason or cancels it', async () => {
+    const t = withMouse(true);
+    await t.waitFor(/Mailer/);
+    await t.press('3', 'd', ...Array.from('wrong tone'));
+    await t.waitFor(/› wrong tone/);
+    await t.emit(at(5, 4));
+    await t.emit(at(5, 4, { kind: 'wheel', button: null, wheel: 'up' }));
+    // Raw reports that reach Ink anyway (no filter in front of it) are dropped too.
+    await t.press('\u001b[<0;5;4M', '\u001b[<64;5;4M');
+    await t.press('!');
+    expect(await t.waitFor(/› wrong tone!/)).not.toMatch(/\[<|0;5;4/);
+    await t.press(KEYS.enter);
+    await t.waitFor(/denied send email/);
+    expect(t.mock.approvals.deny).toHaveBeenCalledWith('apr_1', { reason: 'wrong tone!' });
   });
 });

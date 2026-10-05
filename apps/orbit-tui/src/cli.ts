@@ -75,11 +75,12 @@ export async function main(argv: string[], io: Io): Promise<number> {
   program
     .command('tui', { isDefault: false })
     .description('Full-screen terminal UI: Bots, live timeline, approvals (also `orbit` alone)')
-    .action(async () => {
+    .option('--mouse', 'click to select, wheel to scroll (M toggles it in the TUI)')
+    .action(async (o: { mouse?: boolean }) => {
       // Ink's colour library ignores NO_COLOR: decide before it loads.
       if (!io.color) process.env.FORCE_COLOR = '0';
       const { runTui } = await import('./tui');
-      await set(runTui(context()));
+      await set(runTui(context(), { mouse: o.mouse === true }));
     });
 
   program
