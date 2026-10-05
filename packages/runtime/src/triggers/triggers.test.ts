@@ -414,10 +414,8 @@ describe('file and git triggers', () => {
       orbitHome: root,
     });
     r.sync();
-    expect(r.status()[0]).toMatchObject({
-      state: 'error',
-      detail: expect.stringMatching(/inside Orbit's data folder/) as unknown as string,
-    });
+    expect(r.status()[0]?.state).toBe('error');
+    expect(r.status()[0]?.detail).toMatch(/inside Orbit's data folder/);
     expect(fired).toEqual([]);
   });
 
@@ -436,10 +434,8 @@ describe('file and git triggers', () => {
       hasWebhookSecret: () => false,
       slackNeedsUsers: () => cli,
     });
-    expect(r.status()[0]).toMatchObject({
-      state: 'needs_setup',
-      detail: expect.stringMatching(/name the Slack users/) as unknown as string,
-    });
+    expect(r.status()[0]?.state).toBe('needs_setup');
+    expect(r.status()[0]?.detail).toMatch(/name the Slack users/);
     const deliver = (r as unknown as { onSlack: (m: unknown) => void }).onSlack.bind(r);
     const m = { type: 'app_mention', channel: 'C0123ABC', user: 'U0ANYONE', text: 'hi', ts: '1.1' };
     deliver({ ...m, threadTs: null });

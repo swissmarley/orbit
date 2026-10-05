@@ -399,12 +399,9 @@ describe('google plugin', () => {
       [{ To: 'ada@example.com', Subject: 'Wire the money' }, approved],
     ] as const) {
       replies[`GET ${GMAIL}/drafts/r-1`] = draft(headers);
-      expect(await call('send_draft', args)).toMatchObject({
-        isError: true,
-        text: expect.stringMatching(
-          /does not match the approved message.*Nothing was sent/s,
-        ) as unknown as string,
-      });
+      const r = await call('send_draft', args);
+      expect(r.isError).toBe(true);
+      expect(r.text).toMatch(/does not match the approved message.*Nothing was sent/s);
     }
     expect(sends()).toBe(before);
   });
