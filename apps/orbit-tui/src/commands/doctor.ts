@@ -43,6 +43,20 @@ export async function doctor(ctx: Context, opts: { json?: boolean }): Promise<nu
     row('claude CLI', p('dim', 'not found on PATH'));
   }
   row('API key', r.apiCredential ? p('bold', r.apiCredential) : p('dim', 'none configured'));
+  if (r.engineKey) {
+    // Where the engine's credential lives (ADR-018): a symbol and a word, not colour alone.
+    const k = r.engineKey;
+    const proxy = k.proxy
+      ? ` · ${k.proxy.activeSegments} active · ${k.proxy.api.forwarded} forwarded · ${k.proxy.api.refused} refused`
+      : '';
+    row(
+      'Engine key',
+      (k.delivery === 'proxied'
+        ? `${p('green', '✔ proxied')} — the API key stays in orbitd${p('dim', proxy)}`
+        : `${p('yellow', '⚠ in engine')} — Bedrock/Vertex credentials are in the engine's environment`) +
+        (k.subprocessScrub === false ? p('dim', ' · subprocess scrub off (no bubblewrap)') : ''),
+    );
+  }
   row(
     'Mode',
     `${r.mode} · API bind ${r.api.host}:${r.api.port}${r.listen.container ? ' (inside a container)' : ''} · ${r.humanPrincipals} human principal${r.humanPrincipals === 1 ? '' : 's'}`,

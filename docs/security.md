@@ -67,10 +67,20 @@ prior Orbit decision stops the Run (`policy_bypassed`).
 [compliance note](compliance.md) for which one you may use):
 
 - **API key mode** (`ANTHROPIC_API_KEY`, `apiKeyHelper`, Bedrock or Vertex):
-  the SdkDriver runs the Agent SDK. The key is passed only to the engine
-  process, which is started with `--bare` so it can never fall back to a
-  subscription login on disk or in the keychain. The engine is told to scrub
-  credentials from its own children (`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`).
+  the SdkDriver runs the Agent SDK, started with `--bare` so it can never fall
+  back to a subscription login on disk or in the keychain. An API key (or the
+  `apiKeyHelper`'s output, which orbitd runs itself) **never enters any child
+  process**: engines on the host get a placeholder key and
+  `ANTHROPIC_BASE_URL=http://127.0.0.1:<port>/<token>`, orbitd's loopback key
+  proxy, which forwards only the engine's API routes with the real key and
+  only while that Run segment is active (the random token dies with the
+  segment and is redacted everywhere); Docker Bots use a per-Bot Unix socket
+  (ADR-018). The engine scrubs its children's environment
+  (`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`) where Claude Code can (bubblewrap on
+  Linux) and runs without the scrub elsewhere, since there is no secret to
+  scrub. Bedrock and Vertex credentials cannot be proxied: they go to the
+  engine, which must scrub them (on Linux a Run without bubblewrap is refused
+  before the engine starts).
 - **Subscription mode** (your own `claude login`): the CliDriver spawns your
   `claude` binary, which reads its own credential store. Orbit never reads,
   copies, stores, logs or forwards Claude OAuth credentials
@@ -83,7 +93,8 @@ prior Orbit decision stops the Run (`policy_bypassed`).
 **Child environments are allowlists.** No child process inherits
 `process.env`. Each kind of child (`cli-engine`, `sdk-engine`, `plugin`,
 `tool`, `orbitd`, …) gets the variables on its list and nothing else; the API
-key reaches only the SDK engine (ADR-005).
+key stays in orbitd, and only Bedrock / Vertex credentials reach the SDK
+engine (ADR-005, ADR-018).
 
 **The engine's reported credential source is checked.** The CliDriver stops if
 the engine says it used `ANTHROPIC_API_KEY`; the SdkDriver stops on any login

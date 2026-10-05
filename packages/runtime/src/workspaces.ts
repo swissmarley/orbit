@@ -37,6 +37,12 @@ export function sandboxWorkspaces(manager: SandboxManager, env: Env): WorkspaceP
   };
 }
 
+/** orbitd's API base URL, which the key proxies forward to. */
+export function apiUpstream(env: Env): string {
+  const base = env.ANTHROPIC_BASE_URL?.trim();
+  return base !== undefined && base !== '' ? base : 'https://api.anthropic.com';
+}
+
 const truthy = (v: string | undefined): boolean =>
   v !== undefined && ['1', 'true', 'yes', 'on'].includes(v.trim().toLowerCase());
 
@@ -47,11 +53,12 @@ function helperTtl(env: Env): number | undefined {
 }
 
 /**
- * Where the Docker sandbox's key proxy gets its key (ADR-018): orbitd's
- * ANTHROPIC_API_KEY, or the apiKeyHelper run on the host with the env the
- * SDK engine would have given it. Bedrock and Vertex cannot use the proxy.
+ * Where orbitd's key proxies get the key (ADR-018) — the Docker sandbox's
+ * and the host engine's: orbitd's ANTHROPIC_API_KEY, or the apiKeyHelper run
+ * on the host with the env the SDK engine would have given it. Bedrock and
+ * Vertex cannot use the proxies.
  */
-export function dockerCredential(env: Env, apiKeyHelperCommand: string | null): EngineCredential {
+export function keyProxyCredential(env: Env, apiKeyHelperCommand: string | null): EngineCredential {
   if (truthy(env.CLAUDE_CODE_USE_BEDROCK)) return { kind: 'unsupported', provider: 'bedrock' };
   if (truthy(env.CLAUDE_CODE_USE_VERTEX)) return { kind: 'unsupported', provider: 'vertex' };
   const key = env.ANTHROPIC_API_KEY?.trim();
@@ -91,6 +98,8 @@ export interface SandboxManagerExtras {
   legacyName?: (bot: Bot) => string | null;
   /** ORBIT_API_KEY_HELPER (config.sdk.apiKeyHelper). */
   apiKeyHelper?: string | null;
+  /** The key source shared with the host engine's key proxy (default: built from env). */
+  credential?: EngineCredential;
   /** Told about refused API requests and egress tunnels of container Bots. */
   onProxyRefusal?: (botId: string, proxy: 'api' | 'egress', refusal: ProxyRefusal) => void;
 }
@@ -101,7 +110,6 @@ export function createSandboxManager(
   env: Env,
   extras: SandboxManagerExtras = {},
 ): SandboxManager {
-  const baseUrl = env.ANTHROPIC_BASE_URL?.trim();
   return new SandboxManager({
     orbitHome,
     ...(extras.legacyName ? { legacyName: extras.legacyName } : {}),
@@ -109,9 +117,9 @@ export function createSandboxManager(
     run: defaultRunner({ ...buildChildEnv('tool', env), ...dockerClientVars(env) }),
     // A non-default Claude config dir holds the CLI's credentials too.
     extraDenied: env.CLAUDE_CONFIG_DIR ? [env.CLAUDE_CONFIG_DIR] : [],
-    credential: dockerCredential(env, extras.apiKeyHelper ?? null),
+    credential: extras.credential ?? keyProxyCredential(env, extras.apiKeyHelper ?? null),
     // The key proxy forwards to the API orbitd itself would use.
-    apiUpstream: baseUrl !== undefined && baseUrl !== '' ? baseUrl : 'https://api.anthropic.com',
+    apiUpstream: apiUpstream(env),
     ...(extras.onProxyRefusal ? { onProxyRefusal: extras.onProxyRefusal } : {}),
   });
 }

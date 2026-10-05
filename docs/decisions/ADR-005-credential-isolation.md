@@ -17,7 +17,10 @@ Status: Accepted (M0, implemented in M1)
   plus `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` so the engine strips credentials
   from its own children (Bash, hooks, MCP servers);
   `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_AUTH_TOKEN` removed; engine started
-  with `--bare` so OAuth/keychain are never consulted.
+  with `--bare` so OAuth/keychain are never consulted. (Amended in M8 by
+  ADR-018: an API key or apiKeyHelper output no longer reaches any engine —
+  engines get a placeholder and orbitd's key proxy; only Bedrock / Vertex
+  credentials still go to the engine.)
 - **All other children** (MCP servers, hooks, tools, sandboxes): the API key is
   never included; plugin secrets are injected per plugin from the vault.
 - Source code must not reference `.credentials.json`, the Claude keychain

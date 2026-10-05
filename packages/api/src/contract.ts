@@ -281,6 +281,28 @@ export const DockerSandboxStatus = z.object({
 });
 export type DockerSandboxStatus = z.infer<typeof DockerSandboxStatus>;
 
+/** How the SDK engine gets its API credential (ADR-018). */
+export const EngineKeyStatus = z.object({
+  /**
+   * proxied: an API key or apiKeyHelper output stays in orbitd and engines
+   * reach the API through orbitd's key proxy (a loopback port with a token
+   * per Run segment on the host, a Unix socket for Docker Bots); in_engine:
+   * Bedrock / Vertex credentials, which cannot be proxied, are in the engine's env.
+   */
+  delivery: z.enum(['proxied', 'in_engine']),
+  /**
+   * Host engines run with CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 (Claude Code
+   * isolates its children; on Linux this needs bubblewrap); null = not checked.
+   */
+  subprocessScrub: z.boolean().nullable(),
+  detail: z.string(),
+  /** The host key proxy once the engine started: loopback port, live segments, counters. */
+  proxy: z
+    .object({ port: z.int().nullable(), activeSegments: z.int(), api: ProxyCounters })
+    .nullable(),
+});
+export type EngineKeyStatus = z.infer<typeof EngineKeyStatus>;
+
 export const DoctorReport = z.object({
   ok: z.boolean(),
   driver: DriverKind.nullable(),
@@ -289,6 +311,8 @@ export const DoctorReport = z.object({
   authLabel: z.string(),
   cli: CliStatus.nullable(),
   apiCredential: z.enum(['api_key', 'api_key_helper', 'bedrock', 'vertex']).nullable(),
+  /** SDK driver: how the engine gets its API credential; null for other drivers. */
+  engineKey: EngineKeyStatus.nullable(),
   compliance: z.object({
     allowed: z.boolean(),
     violations: z.array(z.string()),

@@ -1,7 +1,13 @@
 import type { AuthMethod, DriverKind, OrbitConfig } from '@orbit/core';
 import type { Env } from '../env';
 import { type GuardResult, GUARD_API_KEY_HOWTO, checkCliDriverAllowed } from './guard';
-import { BUBBLEWRAP_HOWTO, engineScrubBlocker } from '../drivers/sdk';
+import {
+  BUBBLEWRAP_HOWTO,
+  type EngineKeyDelivery,
+  engineKeyDelivery,
+  engineScrubBlocker,
+  subprocessScrub,
+} from '../drivers/sdk';
 import { hasOAuthTokenEnv } from './oauth-presence';
 
 export interface CliStatus {
@@ -19,8 +25,8 @@ export interface AuthProbes {
   findClaude(): Promise<string | null>;
   cliStatus(path: string): Promise<CliStatus>;
   /**
-   * Where bubblewrap is, or null. On Linux the host SDK engine needs it for
-   * its credential scrub (see `engineScrubBlocker`); omitted = not checked.
+   * Where bubblewrap is, or null. On Linux Claude Code needs it to scrub its
+   * children's environment (see `subprocessScrub`); omitted = not checked.
    */
   findBwrap?(): string | null;
   /** The host platform (default: this process's). */
@@ -39,7 +45,17 @@ export interface AuthWarning {
   message: string;
 }
 
+/** How the SDK engine gets its API credential (ADR-018). */
+export interface EngineKeyStatus {
+  /** proxied: the key stays in orbitd (key proxy); in_engine: Bedrock / Vertex credentials. */
+  delivery: EngineKeyDelivery;
+  /** Host engines run with CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1; null = bubblewrap not checked. */
+  subprocessScrub: boolean | null;
+}
+
 export interface AuthResolution {
+  /** SDK driver only: where the engine's credential lives; null for other drivers. */
+  engineKey: EngineKeyStatus | null;
   /** null when nothing usable is configured (onboarding) or the guard refused. */
   driver: DriverKind | null;
   authMethod: AuthMethod;
@@ -145,7 +161,7 @@ export async function resolveAuth(input: {
   const apiCredential = detectApiCredential(env, config);
   const warnings: AuthWarning[] = [];
 
-  const base = { source, apiCredential, guard, warnings } as const;
+  const base = { source, apiCredential, guard, warnings, engineKey: null } as const;
 
   if (forced === 'mock') {
     return {
@@ -195,27 +211,33 @@ export async function resolveAuth(input: {
   }
 
   const sdkResolution = (credential: ApiCredential): AuthResolution => {
-    const blocker = probes.findBwrap
-      ? engineScrubBlocker(probes.platform ?? process.platform, probes.findBwrap())
-      : null;
-    // Docker Bots still run (their engine holds no key), so this warns rather than refuses.
+    const platform = probes.platform ?? process.platform;
+    const bwrap = probes.findBwrap ? probes.findBwrap() : undefined;
+    const delivery = engineKeyDelivery(credential) ?? 'in_engine';
+    // Only an engine that holds Bedrock / Vertex credentials needs the scrub
+    // to start; an engine behind the key proxy holds no secret (ADR-018).
+    const blocker =
+      delivery === 'in_engine' && bwrap !== undefined ? engineScrubBlocker(platform, bwrap) : null;
     if (blocker) {
       warnings.push({
         code: 'sdk_needs_bubblewrap',
-        message: `${blocker} Runs outside a Docker sandbox fail until it is installed. ${BUBBLEWRAP_HOWTO}`,
+        message: `${blocker} Runs fail until it is installed. ${BUBBLEWRAP_HOWTO}`,
       });
     }
-    return sdkResolutionOf(credential);
+    return {
+      ...base,
+      engineKey: {
+        delivery,
+        subprocessScrub: bwrap === undefined ? null : subprocessScrub(platform, bwrap),
+      },
+      driver: 'sdk',
+      authMethod: credential,
+      label: authLabel(credential),
+      cli,
+      refusal: null,
+      onboarding: null,
+    };
   };
-  const sdkResolutionOf = (credential: ApiCredential): AuthResolution => ({
-    ...base,
-    driver: 'sdk',
-    authMethod: credential,
-    label: authLabel(credential),
-    cli,
-    refusal: null,
-    onboarding: null,
-  });
 
   const cliResolution = (): AuthResolution => {
     if (!guard.allowed) {

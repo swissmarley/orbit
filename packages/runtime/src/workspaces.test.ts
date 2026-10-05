@@ -15,7 +15,7 @@ import { BotRepo, Controls, EventStore, openDatabase } from '@orbit/store';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { AgentDriver, DriverRunRequest } from './drivers/types';
 import { Orchestrator, type PreparedWorkspace } from './orchestrator';
-import { dockerCredential, sandboxWorkspaces } from './workspaces';
+import { keyProxyCredential, sandboxWorkspaces } from './workspaces';
 
 const root = mkdtempSync(join(tmpdir(), 'orbit-ws-'));
 afterAll(() => {
@@ -44,20 +44,20 @@ const SUPPORT = {
   engineSandbox: { available: false, missing: ['bwrap'], platform: 'linux' },
 };
 
-describe('dockerCredential (where the key proxy gets the key, ADR-018)', () => {
+describe('keyProxyCredential (where the key proxies get the key, ADR-018)', () => {
   it('uses orbitd’s API key, then the apiKeyHelper; refuses Bedrock and Vertex', async () => {
-    const key = dockerCredential({ ANTHROPIC_API_KEY: ' sk-ant-1 ' }, null);
+    const key = keyProxyCredential({ ANTHROPIC_API_KEY: ' sk-ant-1 ' }, null);
     expect(key.kind).toBe('key');
     expect(key.kind === 'key' ? await key.source.get() : null).toBe('sk-ant-1');
-    expect(dockerCredential({}, 'printf sk-ant-2').kind).toBe('key');
+    expect(keyProxyCredential({}, 'printf sk-ant-2').kind).toBe('key');
     expect(
-      dockerCredential({ CLAUDE_CODE_USE_BEDROCK: '1', ANTHROPIC_API_KEY: 'x' }, null),
+      keyProxyCredential({ CLAUDE_CODE_USE_BEDROCK: '1', ANTHROPIC_API_KEY: 'x' }, null),
     ).toEqual({ kind: 'unsupported', provider: 'bedrock' });
-    expect(dockerCredential({ CLAUDE_CODE_USE_VERTEX: 'true' }, null)).toEqual({
+    expect(keyProxyCredential({ CLAUDE_CODE_USE_VERTEX: 'true' }, null)).toEqual({
       kind: 'unsupported',
       provider: 'vertex',
     });
-    expect(dockerCredential({}, null)).toEqual({ kind: 'none' });
+    expect(keyProxyCredential({}, null)).toEqual({ kind: 'none' });
   });
 });
 
@@ -75,7 +75,7 @@ describe('sandboxWorkspaces — docker without the experimental gate', () => {
       orbitHome: home,
       run: daemon(),
       support: SUPPORT,
-      credential: dockerCredential({ ANTHROPIC_API_KEY: 'sk-ant-api03-WSSECRET' }, null),
+      credential: keyProxyCredential({ ANTHROPIC_API_KEY: 'sk-ant-api03-WSSECRET' }, null),
     });
     try {
       const provider = sandboxWorkspaces(manager, { ANTHROPIC_API_KEY: 'sk-ant-api03-WSSECRET' });
@@ -213,6 +213,61 @@ describe('Orchestrator with a container workspace', () => {
     controlsRef = controls;
     const run = await orchestrator.run(bot);
     expect(run.status).toBe('cancelled');
+    expect(released).toBe(1);
+  });
+
+  it('releases the proxies the moment a budget stops the Run, before the engine has wound down', async () => {
+    const home = fresh();
+    const db = openDatabase(':memory:');
+    const store = new EventStore(db, new Redactor());
+    const approvals = new ApprovalQueue(db, { events: store });
+    const bots = new BotRepo(db);
+    let released = 0;
+    let releasedAtStop: number | null = null;
+    const driver: AgentDriver = {
+      kind: 'sdk',
+      authMethod: 'api_key',
+      run: async function* (req): AsyncIterable<RunEventBody> {
+        for (const n of [1, 2]) {
+          await req.permission(
+            {
+              toolName: 'Read',
+              input: { file_path: 'a' },
+              toolUseId: `tu_${n}`,
+              parentToolUseId: null,
+            },
+            req.signal,
+          );
+        }
+        // The second call broke the tool-call budget: the engine is still running here.
+        releasedAtStop = released;
+        yield event('run.cancelled', { reason: 'Run was stopped', sessionId: null });
+      },
+    };
+    const orchestrator = new Orchestrator({
+      config: OrbitConfig.parse({ home }),
+      store,
+      bots,
+      controls: new Controls(db),
+      approvals,
+      policy: new PolicyEngine(approvals, approvals.ruleStore),
+      driver,
+      redactor: new Redactor(),
+      workspaces: (bot) =>
+        Promise.resolve({
+          path: join(home, 'workspaces', bot.id),
+          shellContained: true,
+          engineSandbox: null,
+          apiKeyProxied: true,
+          release: () => {
+            released += 1;
+          },
+        }),
+    });
+    const bot = bots.create({ name: 'Box', goal: 'g', budgets: { maxToolCallsPerRun: 1 } });
+    const run = await orchestrator.run(bot);
+    expect(run.status).not.toBe('completed');
+    expect(releasedAtStop).toBe(1);
     expect(released).toBe(1);
   });
 });

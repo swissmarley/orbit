@@ -6,7 +6,9 @@ import {
   EnvPolicyError,
   type Env,
   assertChildEnvSafe,
+  assertProxiedEngineEnv,
   buildChildEnv,
+  proxiedEngineEnv,
 } from './env';
 
 /**
@@ -345,5 +347,50 @@ describe('deny lists', () => {
         'GOOGLE_APPLICATION_CREDENTIALS',
       ]),
     );
+  });
+});
+
+describe('proxiedEngineEnv (host engine behind the key proxy, ADR-018)', () => {
+  const BASE_URL = 'http://127.0.0.1:41234/segment-token-0123456789abcdefghijklmnopqrstu';
+
+  it('carries no credential, provider switch or host base URL: only the placeholder and the proxy URL', () => {
+    const env = proxiedEngineEnv(DIRTY, BASE_URL, { CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '0' });
+    const bytes = JSON.stringify(env);
+    for (const v of Object.values(SECRETS)) expect(bytes).not.toContain(v);
+    expect(bytes).not.toContain('gateway.test.invalid');
+    expect(env.ANTHROPIC_API_KEY).toBe('orbit-key-proxy-placeholder');
+    expect(env.ANTHROPIC_BASE_URL).toBe(BASE_URL);
+    expect(env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB).toBe('0');
+    for (const k of [
+      'CLAUDE_CODE_USE_BEDROCK',
+      'CLAUDE_CODE_USE_VERTEX',
+      'AWS_REGION',
+      'LD_PRELOAD',
+    ]) {
+      expect(env[k], k).toBeUndefined();
+    }
+    // The host's proxy stays for the engine's own network, but never for the key proxy.
+    expect(env.HTTPS_PROXY).toBe(BASICS.HTTPS_PROXY);
+    expect(env.NO_PROXY).toBe('localhost,127.0.0.1');
+    expect(env.no_proxy).toBe(env.NO_PROXY);
+    expect(proxiedEngineEnv(BASICS, BASE_URL).NO_PROXY).toBe('localhost,127.0.0.1');
+    expect(proxiedEngineEnv({ PATH: '/bin' }, BASE_URL).NO_PROXY).toBe('127.0.0.1,localhost');
+  });
+
+  it('positive controls: the check refuses a real key, a credential, a provider switch or a non-loopback URL', () => {
+    const good = proxiedEngineEnv({ PATH: '/bin' }, BASE_URL);
+    expect(() => assertProxiedEngineEnv(good)).not.toThrow();
+    for (const bad of [
+      { ...good, ANTHROPIC_API_KEY: SECRETS.ANTHROPIC_API_KEY },
+      { ...good, AWS_SECRET_ACCESS_KEY: SECRETS.AWS_SECRET_ACCESS_KEY },
+      { ...good, CLAUDE_CODE_OAUTH_TOKEN: SECRETS.CLAUDE_CODE_OAUTH_TOKEN },
+      { ...good, CLAUDE_CODE_USE_BEDROCK: '1' },
+      { ...good, ANTHROPIC_BASE_URL: 'https://api.anthropic.com' },
+      { ...good, ANTHROPIC_BASE_URL: 'http://10.0.0.5:41234/t' },
+      { ...good, ANTHROPIC_BASE_URL: undefined },
+    ]) {
+      expect(() => assertProxiedEngineEnv(bad), JSON.stringify(bad)).toThrow(EnvPolicyError);
+    }
+    expect(() => proxiedEngineEnv({}, 'https://api.anthropic.com')).toThrow(EnvPolicyError);
   });
 });
