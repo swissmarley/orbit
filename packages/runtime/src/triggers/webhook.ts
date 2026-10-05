@@ -1,10 +1,12 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { sha256Hex } from '@orbit/core';
 
 /** Largest webhook body orbitd reads (before verification nothing else is read). */
 export const MAX_WEBHOOK_BYTES = 256 * 1024;
 /** Orbit-style signatures older or newer than this are refused. */
 export const WEBHOOK_SKEW_SECONDS = 300;
+/** How long delivery keys are kept: Orbit style is bounded by the skew; GitHub style has no timestamp. */
+export const WEBHOOK_KEEP_MS = { orbit: 86_400_000, github: 30 * 86_400_000 } as const;
 
 /** Vault entry holding the signing key of a Bot's webhook trigger. */
 export function webhookSecretName(botId: string, trigger: string): string {
@@ -60,7 +62,12 @@ export function verifyWebhook(input: {
       return { ok: false, reason: 'bad signature' };
     const delivery = headers['x-github-delivery'] ?? '';
     if (!/^[A-Za-z0-9-]{8,80}$/.test(delivery)) return { ok: false, reason: 'missing delivery id' };
-    if (input.seen(`gh:${delivery}`)) return { ok: false, reason: 'replayed' };
+    // GitHub signs only the body: the delivery id and event name are not
+    // covered, so a captured body re-sent under a fresh id must still be
+    // refused — each signed body is accepted once (M7 safety review M3).
+    const replayedId = input.seen(`gh:${delivery}`);
+    const replayedBody = input.seen(`ghbody:${createHash('sha256').update(body).digest('hex')}`);
+    if (replayedId || replayedBody) return { ok: false, reason: 'replayed' };
     const event = headers['x-github-event'] ?? null;
     return {
       ok: true,

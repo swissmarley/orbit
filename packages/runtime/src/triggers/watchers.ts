@@ -90,13 +90,35 @@ export interface GitCommit {
 export type GitRunner = (args: string[]) => Promise<string>;
 
 /** git in `repo` with an allowlisted env (never process.env wholesale). */
+/**
+ * Configuration orbitd forces on the git it runs for a git trigger: nothing
+ * in the repository's config may start a program (fsmonitor, signature
+ * verification, hooks) inside orbitd (M7 safety review M5).
+ */
+export const TRIGGER_GIT_CONFIG: readonly (readonly [string, string])[] = [
+  ['core.fsmonitor', 'false'],
+  ['core.hooksPath', '/dev/null'],
+  ['log.showSignature', 'false'],
+  ['core.untrackedCache', 'false'],
+];
+
 export function gitRunner(repo: string, env: Record<string, string>): GitRunner {
+  const forced: Record<string, string> = {
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_OPTIONAL_LOCKS: '0',
+    GIT_CONFIG_COUNT: String(TRIGGER_GIT_CONFIG.length),
+  };
+  TRIGGER_GIT_CONFIG.forEach(([k, v], i) => {
+    forced[`GIT_CONFIG_KEY_${i}`] = k;
+    forced[`GIT_CONFIG_VALUE_${i}`] = v;
+  });
+  const childEnv = Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith('GIT_')));
   return (args) =>
     new Promise((resolve, reject) => {
       execFile(
         'git',
         ['-C', repo, ...args],
-        { env: { ...env, GIT_TERMINAL_PROMPT: '0' }, timeout: 30_000, maxBuffer: 1024 * 1024 },
+        { env: { ...childEnv, ...forced }, timeout: 30_000, maxBuffer: 1024 * 1024 },
         (err, stdout) => (err ? reject(new Error(err.message)) : resolve(stdout)),
       );
     });
@@ -179,9 +201,14 @@ export class GitWatch {
       const head = await this.head();
       if (!head || head === this.last) return;
       const range = this.last ? `${this.last}..${head}` : head;
-      const out = await this.git(['log', '--format=%h%x09%an%x09%s', '-n', '20', range]).catch(
-        () => '',
-      );
+      const out = await this.git([
+        'log',
+        '--no-show-signature',
+        '--format=%h%x09%an%x09%s',
+        '-n',
+        '20',
+        range,
+      ]).catch(() => '');
       this.last = head;
       const commits = out
         .split('\n')

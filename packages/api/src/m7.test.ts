@@ -228,8 +228,7 @@ describe('webhook triggers', () => {
       await h.json<{ secret: string }>('POST', `/v1/bots/${bot.id}/webhooks/gh/secret`)
     ).body;
     const { createHmac } = await import('node:crypto');
-    const send = (event: string, delivery: string) => {
-      const body = JSON.stringify({ action: 'opened' });
+    const send = (event: string, delivery: string, body = JSON.stringify({ event, delivery })) => {
       return post(`/hooks/${bot.id}/gh`, body, {
         'x-hub-signature-256': `sha256=${createHmac('sha256', secret).update(body).digest('hex')}`,
         'x-github-delivery': delivery,
@@ -242,6 +241,24 @@ describe('webhook triggers', () => {
       runId: string | null;
     };
     expect(issue.runId).toMatch(/^run_/);
+    // GitHub signs only the body: a captured body under a fresh delivery id and
+    // another event name is a replay (review M3).
+    const captured = JSON.stringify({ event: 'push', delivery: 'aaaaaaaa-1111' });
+    expect((await send('issues', 'cccccccc-3333', captured)).status).toBe(401);
+    expect(h.service.store.listRuns({ botId: bot.id })).toHaveLength(1);
+  });
+
+  it('refuses unknown Bots and triggers with the same 401 as a bad signature', async () => {
+    start();
+    const bot = await createBot({ name: 'Hooks', triggers: [{ kind: 'webhook', name: 'in' }] });
+    for (const path of [`/hooks/${bot.id}/in`, `/hooks/${bot.id}/nope`, '/hooks/bot_NOPE/in']) {
+      const r = await post(path, '{}', {
+        'x-orbit-timestamp': String(Math.floor(Date.now() / 1000)),
+        'x-orbit-signature': `sha256=${'0'.repeat(64)}`,
+      });
+      expect(r.status, path).toBe(401);
+      expect(await r.text(), path).toMatch(/Invalid webhook signature/);
+    }
   });
 });
 

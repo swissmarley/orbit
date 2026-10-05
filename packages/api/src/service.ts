@@ -79,6 +79,9 @@ import {
   triggerPrompt,
   verifyWebhook,
   webhookSecretName,
+  signGithubWebhook,
+  MAX_WEBHOOK_BYTES,
+  WEBHOOK_KEEP_MS,
   createDriver,
   createSandboxManager,
   driverTriage,
@@ -341,6 +344,7 @@ export class OrbitService {
         apiUrl: env.SLACK_API_URL ?? 'https://slack.com/api',
       },
       git: (repo) => gitRunner(repo, buildChildEnv('tool', env)),
+      orbitHome: config.home,
       hasWebhookSecret: (bot, name) => this.vault.has(webhookSecretName(bot.id, name)),
       log: (m) => this.log('info', m),
       ...(opts.slack?.fetch ? { slackFetch: opts.slack.fetch } : {}),
@@ -770,27 +774,38 @@ export class OrbitService {
         t.kind === 'webhook' && t.name === name,
     );
     const secret = bot && trigger ? this.vault.get(webhookSecretName(bot.id, name)) : undefined;
-    if (!bot || !trigger || !secret) throw refused();
+    if (!bot || !trigger || !secret) {
+      // Same work as a real check, so timing does not tell which part is unknown (review L7).
+      signGithubWebhook(randomBytes(32).toString('hex'), body.subarray(0, MAX_WEBHOOK_BYTES));
+      throw refused();
+    }
     const verdict = verifyWebhook({
       style: trigger.style,
       secret,
       headers,
       body,
       nowMs: this.now().getTime(),
+      // Keyed per Bot and trigger: the same body sent to two hooks is two deliveries.
       seen: (key) => {
         const r = this.opts.db.sqlite
           .prepare(
             'INSERT OR IGNORE INTO webhook_deliveries (key, bot_id, received_at) VALUES (?, ?, ?)',
           )
-          .run(key, bot.id, this.now().toISOString());
+          .run(`${key}@${bot.id}/${name}`, bot.id, this.now().toISOString());
         return r.changes === 0;
       },
     });
     if (!verdict.ok) throw refused();
     // Verified: only now is the body read as text (and only as data).
+    const nowMs = this.now().getTime();
     this.opts.db.sqlite
-      .prepare('DELETE FROM webhook_deliveries WHERE received_at < ?')
-      .run(new Date(this.now().getTime() - 86_400_000).toISOString());
+      .prepare(
+        "DELETE FROM webhook_deliveries WHERE received_at < ? OR (key LIKE 'orbit:%' AND received_at < ?)",
+      )
+      .run(
+        new Date(nowMs - WEBHOOK_KEEP_MS.github).toISOString(),
+        new Date(nowMs - WEBHOOK_KEEP_MS.orbit).toISOString(),
+      );
     if (!trigger.enabled) return { accepted: true, runId: null };
     if (trigger.style === 'github' && trigger.events.length > 0) {
       if (!verdict.event || !trigger.events.includes(verdict.event)) {

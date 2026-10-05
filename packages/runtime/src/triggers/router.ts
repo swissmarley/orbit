@@ -1,3 +1,5 @@
+import { realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   type Bot,
   type FileTrigger,
@@ -8,6 +10,7 @@ import {
   errorMessage,
   isScheduledTrigger,
 } from '@orbit/core';
+import { isWithin } from '@orbit/sandbox';
 import { describeTrigger, triggerKey } from '../scheduler';
 import type { FireOutcome } from '../scheduler';
 import { type SlackMessage, SlackSocket, type SocketLike } from './slack';
@@ -44,6 +47,14 @@ export interface InboundStatus {
   path: string | null;
 }
 
+function canonicalPath(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
+  }
+}
+
 export interface TriggerRouterDeps {
   bots: () => Bot[];
   fire: InboundFire;
@@ -51,6 +62,11 @@ export interface TriggerRouterDeps {
   slack: { appToken: () => string | undefined; apiUrl: string };
   /** git for a repository, with an allowlisted env. */
   git: (repo: string) => GitRunner;
+  /**
+   * Orbit's data folder: Bot workspaces inside it are Bot-writable, so their
+   * git configuration must never be run by orbitd (M7 safety review M5).
+   */
+  orbitHome?: string;
   /** Is the webhook's signing secret set? */
   hasWebhookSecret: (bot: Bot, name: string) => boolean;
   log?: (message: string) => void;
@@ -183,6 +199,16 @@ export class TriggerRouter {
   }
 
   private gitListener(bot: Bot, trigger: GitTrigger): Listener {
+    const home = this.deps.orbitHome;
+    if (home !== undefined && isWithin(canonicalPath(trigger.repo), canonicalPath(home))) {
+      const detail = `${trigger.repo} is inside Orbit's data folder, where Bots can write; watch the owner's repository instead`;
+      return {
+        botId: bot.id,
+        trigger,
+        stop: () => undefined,
+        status: () => ({ state: 'error', detail }),
+      };
+    }
     const w = new GitWatch(
       trigger,
       this.deps.git(trigger.repo),

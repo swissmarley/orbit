@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Bot, BotSpec, type BotSpecInput, type TriggerSpec } from '@orbit/core';
@@ -109,6 +109,17 @@ describe('webhook verification (before anything is parsed)', () => {
     expect(
       verifyWebhook({ style: 'github', secret: SECRET, headers: h, body, nowMs: NOW, seen }).ok,
     ).toBe(false);
+    // The delivery id and event are unsigned: the same body under new ones is a replay.
+    expect(
+      verifyWebhook({
+        style: 'github',
+        secret: SECRET,
+        headers: { ...h, 'x-github-delivery': 'ffffffff-0000', 'x-github-event': 'push' },
+        body,
+        nowMs: NOW,
+        seen,
+      }),
+    ).toEqual({ ok: false, reason: 'replayed' });
     expect(
       verifyWebhook({
         style: 'github',
@@ -346,6 +357,54 @@ describe('file and git triggers', () => {
     expect(fired[0]?.context).toMatch(/^Branch main of .* is now at [0-9a-f]{12}\.$/);
     await r.stop();
   }, 20_000);
+
+  it("forces git configuration so a repository's config starts no program in orbitd (review M5)", async () => {
+    const bin = join(root, 'bin');
+    mkdirSync(bin);
+    const log = join(root, 'env.log');
+    writeFileSync(
+      join(bin, 'git'),
+      `#!/bin/sh\nenv | grep '^GIT_' | sort > "${log}"\nprintf '%s\\n' "$@" >> "${log}"\n`,
+    );
+    chmodSync(join(bin, 'git'), 0o755);
+    await gitRunner(root, { PATH: `${bin}:${process.env.PATH ?? ''}`, GIT_DIR: '/elsewhere' })([
+      'log',
+      '-n',
+      '1',
+    ]);
+    const seen = readFileSync(log, 'utf8');
+    for (const [k, v] of [
+      ['core.fsmonitor', 'false'],
+      ['core.hooksPath', '/dev/null'],
+      ['log.showSignature', 'false'],
+    ]) {
+      const i = new RegExp(`^GIT_CONFIG_KEY_(\\d+)=${k.replace('.', '\\.')}$`, 'm').exec(seen)?.[1];
+      expect(i, k).toBeDefined();
+      expect(seen).toContain(`GIT_CONFIG_VALUE_${i}=${v}`);
+    }
+    expect(seen).not.toContain('GIT_DIR=');
+    expect(seen).toContain('GIT_TERMINAL_PROMPT=0');
+  });
+
+  it("refuses to watch a repository inside Orbit's data folder (Bot workspaces)", () => {
+    const fired: InboundContent[] = [];
+    const repo = join(root, 'workspaces', 'bot_2');
+    mkdirSync(repo, { recursive: true });
+    const r = new TriggerRouter({
+      bots: () => [makeBot([{ kind: 'git', repo, branch: 'orbit/bot_2' }])],
+      fire: () => ({ fired: true, runId: 'run_x' }),
+      slack: { appToken: () => undefined, apiUrl: 'http://x' },
+      git: () => () => Promise.reject(new Error('git must not run')),
+      hasWebhookSecret: () => false,
+      orbitHome: root,
+    });
+    r.sync();
+    expect(r.status()[0]).toMatchObject({
+      state: 'error',
+      detail: expect.stringMatching(/inside Orbit's data folder/) as unknown as string,
+    });
+    expect(fired).toEqual([]);
+  });
 
   it('reports webhook triggers without a secret as needing setup', () => {
     const r = router(makeBot([{ kind: 'webhook', name: 'deploys' }]), []);
