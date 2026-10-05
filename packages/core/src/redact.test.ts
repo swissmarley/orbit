@@ -90,6 +90,14 @@ describe('Redactor', () => {
     expect(rr.redact({ note: 'pin 4821' })).toEqual({ note: 'pin [REDACTED:secret]' });
   });
 
+  it('also hides the trimmed form of a whitespace-padded secret (re-review L4)', () => {
+    const r = new Redactor();
+    r.addSecret('abcd  ');
+    r.addSecret('token-value-0123456789\n');
+    expect(r.redactString('pin abcd here')).not.toContain('abcd');
+    expect(r.redactString('t=token-value-0123456789;')).not.toContain('token-value');
+  });
+
   it('deep-redacts objects, arrays and sensitive keys without mutating input', () => {
     const input = {
       tool: 'Bash',

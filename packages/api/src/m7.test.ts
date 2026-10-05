@@ -245,7 +245,12 @@ describe('webhook triggers', () => {
     // another event name is a replay (review M3).
     const captured = JSON.stringify({ event: 'push', delivery: 'aaaaaaaa-1111' });
     expect((await send('issues', 'cccccccc-3333', captured)).status).toBe(401);
-    expect(h.service.store.listRuns({ botId: bot.id })).toHaveLength(1);
+    // Body hashes are never pruned: a month later the same body is still a replay (re-review L2).
+    h.clock.advance(40 * 86_400_000);
+    expect((await send('issues', 'dddddddd-4444', JSON.stringify({ fresh: 1 }))).status).toBe(202);
+    const runs = h.service.store.listRuns({ botId: bot.id }).length;
+    expect((await send('issues', 'eeeeeeee-5555', captured)).status).toBe(401);
+    expect(h.service.store.listRuns({ botId: bot.id })).toHaveLength(runs);
   });
 
   it('refuses unknown Bots and triggers with the same 401 as a bad signature', async () => {

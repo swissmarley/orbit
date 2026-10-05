@@ -803,7 +803,7 @@ export class OrbitService {
     const nowMs = this.now().getTime();
     this.opts.db.sqlite
       .prepare(
-        "DELETE FROM webhook_deliveries WHERE received_at < ? OR (key LIKE 'orbit:%' AND received_at < ?)",
+        "DELETE FROM webhook_deliveries WHERE (received_at < ? AND key NOT LIKE 'ghbody:%') OR (key LIKE 'orbit:%' AND received_at < ?)",
       )
       .run(
         new Date(nowMs - WEBHOOK_KEEP_MS.github).toISOString(),

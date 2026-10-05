@@ -621,7 +621,16 @@ Demo Bot **Inbox Triage** (scheduled, drafts replies, requests approval).
   manifest descriptions served to the engine, Slack ids and `wss` checked,
   whitespace-padded short secrets refused, Slack's app token never reaches the
   plugin process (`scope: "orbit"`), same HMAC work for unknown hooks; Browser
-  DNS checks deferred (§7). RE-REVIEW
+  DNS checks deferred (§7). Re-review: all earlier findings closed except two
+  that it judged partial, now fixed. A nested repository the Bot made could
+  still run its own git config through the GitHub plugin's `git add`/`status`
+  (HIGH): git now never looks inside nested repositories or submodules, and
+  `git_commit` refuses while there are any (positive-control test with a
+  filter program). The tier floor was a list of bad words (MEDIUM): READ is
+  now allowed only for read-like names; everything else floors at EXTERNAL.
+  LOW: padded secrets are also redacted in their trimmed form, the Filesystem
+  plugin opens with `O_NOFOLLOW` and re-checks what it opened, GitHub body
+  hashes are kept for good. Hard constraints PASS.
 - UI review: HIGH: the Policies table shows a rule's `inputMatch`, CLI plugin
   output scrubs every manifest field, Integrations offers "Set up" (focusing
   the first missing field) instead of an Enable that would fail, missing

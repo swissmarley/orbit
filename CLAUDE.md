@@ -159,7 +159,8 @@ Plugins depend on `@orbit/plugin-kit` only (they run as separate processes).
   `ORBIT_WORKSPACE`, a worktree Bot's `ORBIT_GIT_REPO`/`ORBIT_GIT_BRANCH` and
   `ORBIT_DENIED_PATHS`); manifests cannot name credential or loader variables.
   Plugin git uses an explicit `GIT_DIR` from Orbit, never the workspace's
-  `.git`. `/hooks/<bot>/<trigger>` verifies the HMAC in constant time before
+  `.git`, never looks inside nested repositories or submodules, and refuses
+  to commit while there are any. `/hooks/<bot>/<trigger>` verifies the HMAC in constant time before
   parsing or storing anything (GitHub style: each signed body once); Slack is
   Socket Mode (outbound `wss`), and on the subscription a Slack trigger must
   name its `users`.

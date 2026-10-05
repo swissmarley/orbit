@@ -350,6 +350,23 @@ const PLUGIN_EXTERNAL_UNLESS_LAST = [
   'make',
   'place',
 ];
+/** Names made only of these words are reads (`git_status`, `git_log`, `ping`, `echo`). */
+const PLUGIN_READ_WORDS = [
+  'git',
+  'status',
+  'diff',
+  'log',
+  'logs',
+  'history',
+  'info',
+  'version',
+  'health',
+  'ping',
+  'echo',
+  'whoami',
+];
+/** Whole names that read (a browser opening a page; its egress flag still applies). */
+const PLUGIN_READ_PHRASES = ['open page', 'open url'];
 /** Local-only effects a plugin may declare as WRITE_LOCAL (a git commit in the Bot's worktree). */
 const PLUGIN_LOCAL_VERBS = ['commit'];
 
@@ -358,9 +375,10 @@ const PLUGIN_LOCAL_VERBS = ['commit'];
  * alone (ADR-014): a money-moving name stays FINANCIAL; a name that sends,
  * writes, creates, changes, runs or clicks anything stays at least EXTERNAL
  * (plugins run outside the Bot's sandbox); drafting stays at least
- * WRITE_LOCAL, and so does a commit. Only names with no such word may be
- * declared READ — which is what manifests are for (ADR-009): removing the
- * heuristics' false positives, never lowering an action.
+ * WRITE_LOCAL, and so does a git commit. Only names that read like reads (a
+ * leading read verb, or read-only words such as `git_status`) may be declared
+ * READ; every other name floors at EXTERNAL. Manifests remove the heuristics'
+ * false positives (ADR-009), never lower an action.
  */
 export function tierFloor(toolName: string): Tier {
   const m = /^mcp__[^_]+(?:_[^_]+)*?__(.+)$/.exec(toolName);
@@ -384,8 +402,17 @@ export function tierFloor(toolName: string): Tier {
   }
   // `list_drafts`, `get_preview`: a leading read verb makes the draft word a noun.
   const drafting = has(DRAFT_VERBS) && !READ_VERBS.includes(toolWords[0] ?? '');
-  if (drafting || has(PLUGIN_LOCAL_VERBS)) return 'WRITE_LOCAL';
-  return 'READ';
+  if (drafting || (has(['git']) && has(PLUGIN_LOCAL_VERBS))) return 'WRITE_LOCAL';
+  // READ only for names that read like reads; no list of bad words can be
+  // complete (`rm`, `eval`, `sql`, `trigger_workflow`…), so anything else is
+  // EXTERNAL (M7 safety re-review M1).
+  const phrase = toolWords.join(' ');
+  const readLike =
+    !has(CONJUNCTIONS) &&
+    (READ_VERBS.includes(toolWords[0] ?? '') ||
+      (toolWords.length > 0 && toolWords.every((w) => PLUGIN_READ_WORDS.includes(w))) ||
+      PLUGIN_READ_PHRASES.includes(phrase));
+  return readLike ? 'READ' : 'EXTERNAL';
 }
 
 /** A plugin's declared tier, raised to the floor its name sets. */

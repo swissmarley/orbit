@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -280,6 +281,54 @@ describe('github plugin: git in the workspace', { timeout: 30_000 }, () => {
     // The commit landed on the Bot's branch in the owner's repository.
     expect(git(repo, 'log', '-1', '--format=%s', 'orbit/test')).toBe('through the real worktree');
     expect((await call('git_status')).text).toMatch(/^## orbit\/test/);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it('never looks inside a nested repository the Bot made, nor commits it (re-review H1)', async () => {
+    // The Bot makes sub/ a repository of its own whose config runs a program
+    // through a clean filter whenever git checks the file inside it.
+    const sub = join(wt, 'sub');
+    mkdirSync(sub);
+    git(sub, 'init', '-q', '-b', 'main');
+    writeFileSync(join(sub, 'f.txt'), 'f\n');
+    git(sub, 'add', '-A');
+    git(sub, 'commit', '-q', '-m', 'sub');
+    const marker = join(base, 'sub-filter-ran');
+    const program = join(base, 'sub-filter.sh');
+    writeFileSync(program, `#!/bin/sh\ntouch "${marker}"\ncat\n`);
+    chmodSync(program, 0o755);
+    git(sub, 'config', 'filter.evil.clean', program);
+    writeFileSync(join(sub, '.gitattributes'), '* filter=evil\n');
+
+    // The plugin refuses to commit before git looks inside it.
+    const refused = await call('git_commit', { message: 'with sub' });
+    expect(refused).toMatchObject({
+      isError: true,
+      text: matching(/nested git repositories.*sub\//),
+    });
+    expect(existsSync(marker)).toBe(false);
+    expect(git(wt, 'diff', '--cached', '--name-only')).toBe('');
+
+    // Suppose it got committed anyway (by hand): plain git status now runs the filter.
+    git(wt, 'add', 'sub');
+    git(wt, '-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', 'gitlink');
+    rmSync(marker, { force: true });
+    // Same size, new time: git has to run the clean filter to compare contents.
+    const later = new Date(Date.now() + 60_000);
+    utimesSync(join(sub, 'f.txt'), later, later);
+    git(wt, 'status', '--short');
+    expect(existsSync(marker)).toBe(true); // positive control
+    rmSync(marker);
+
+    for (const tool of ['git_status', 'git_diff', 'git_log']) {
+      expect((await call(tool)).isError, tool).toBe(false);
+      expect(existsSync(marker), tool).toBe(false);
+    }
+    writeFileSync(join(wt, 'plain.txt'), 'p\n');
+    expect(await call('git_commit', { message: 'plain' })).toMatchObject({
+      isError: true,
+      text: matching(/submodules \(sub\)/),
+    });
     expect(existsSync(marker)).toBe(false);
   });
 

@@ -87,8 +87,11 @@ denied. A declared tier can remove a heuristic false positive (a read that
 looks like a write) but cannot lower a tool below the floor its name sets
 (`tierFloor`): a name that moves money stays FINANCIAL; a name that sends,
 writes, creates, changes, runs or clicks anything stays at least EXTERNAL,
-because a plugin runs outside the Bot's sandbox; drafting and a commit stay
-at least WRITE_LOCAL; only a name with none of these may be READ. The
+because a plugin runs outside the Bot's sandbox; drafting and a git commit
+stay at least WRITE_LOCAL; READ is allowed only for names that read like
+reads (a leading read verb such as `get_`/`list_`, or read-only words such
+as `git_status`) — every other name floors at EXTERNAL, since no list of
+dangerous words is complete. The
 Integrations view shows such corrections. The engine sees the manifest's tool
 descriptions (pinned by its hash), never what the server says at run time. Plugin output is always untrusted (it taints the Run). `egress`
 tools behave like WebFetch: allowed in a clean Run, asked for in a tainted one.
@@ -111,7 +114,10 @@ sandbox. The repository and branch are the ones Orbit names
 the workspace) and `GIT_WORK_TREE`, so the workspace's `.git` file — which
 the Bot can rewrite to point at a repository and configuration of its own —
 is never read. Hooks are disabled (`core.hooksPath=/dev/null`), signatures
-are neither made nor shown, and push credentials pass through `GIT_CONFIG_*`
+are neither made nor shown, git never looks inside a nested repository or
+submodule (`diff.ignoreSubmodules=all`, `--ignore-submodules=all`, no
+recursion) because its config is the Bot's own, and `git_commit` refuses
+while the workspace holds any, and push credentials pass through `GIT_CONFIG_*`
 environment variables, never on a command line. Commits and pushes happen
 only with exactly the Bot's branch checked out; `git_push` names the branch
 and the commit sha (so the approval card shows both), pushes exactly that
@@ -127,10 +133,9 @@ sha, and never forces.
 sha256=…`, five minutes of skew, each signature accepted once); GitHub's
   style (`X-Hub-Signature-256`) is accepted per trigger. GitHub signs only the
   body — not the delivery id or event name — so each signed body is accepted
-  once (and each delivery id), per Bot and trigger, remembered 30 days; Orbit
-  style's keys are kept a day. A GitHub-style signature has no timestamp, so a
-  body captured more than 30 days ago could be replayed: prefer Orbit style
-  where the sender supports it. The key is a vault secret (`webhook_<bot>_<trigger>`, minted by
+  once (and each delivery id), per Bot and trigger. Body hashes are kept for
+  good (GitHub signatures carry no timestamp), delivery ids 30 days, Orbit
+  style's keys a day. The key is a vault secret (`webhook_<bot>_<trigger>`, minted by
   `orbit trigger webhook-secret`). Every failure answers the same 401. No bearer
   token or cookie is needed or accepted there, and any `Origin` is refused.
 - **Slack**: Socket Mode (`apps.connections.open` with the app-level token
@@ -161,7 +166,8 @@ never start a Run while the trigger's previous one is still in flight.
 **Reference plugins.** The Filesystem plugin refuses `ORBIT_DENIED_PATHS`
 (except the Bot's own workspace) and hidden files and folders even inside the
 owner's chosen roots, after following symlinks, and fails closed on a
-malformed list. Gmail's `send_draft` names the draft's recipients and subject
+malformed list; it opens with `O_NOFOLLOW` and checks what it really opened
+again, so a path swapped for a link after the check is refused. Gmail's `send_draft` names the draft's recipients and subject
 and sends only a draft that matches them (no Cc or Bcc the approval did not
 show). The Browser plugin runs Chromium behind a local filtering proxy that
 admits only the owner's allowed domains (DNS rebinding to a private address is

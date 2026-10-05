@@ -21,6 +21,12 @@ export const BASE_GIT_CONFIG: GitConfig = [
   ['core.fsmonitor', 'false'],
   ['protocol.ext.allow', 'never'],
   ['log.showSignature', 'false'],
+  // A nested repository the Bot made in its workspace has a Bot-written config
+  // (filters, fsmonitor…); git must never look inside it (re-review H1).
+  ['diff.ignoreSubmodules', 'all'],
+  ['status.submoduleSummary', 'false'],
+  ['submodule.recurse', 'false'],
+  ['push.recurseSubmodules', 'no'],
 ];
 
 export const DEFAULT_AUTHOR_NAME = 'Orbit Bot';
@@ -347,6 +353,31 @@ function cap(text: string, max: number, hint: string): string {
     : `${text.slice(0, max)}\n… (truncated at ${max} characters; ${hint})`;
 }
 
+/**
+ * Refuse to commit when the workspace holds a nested git repository or the
+ * index has a submodule: git would look inside it (`git add` included), and
+ * its config is the Bot's own — filters and fsmonitor run outside the
+ * sandbox (re-review H1). Listing them runs nothing inside them.
+ */
+async function refuseNestedRepositories(ctx: ToolContext, repo: BotRepo): Promise<void> {
+  const index = await runGit(ctx, ['ls-files', '-s', '-z'], { repo });
+  if (index.code !== 0) throw new ToolError(`git ls-files failed:\n${gitMessage(index, ctx)}`);
+  const gitlinks = index.stdout
+    .split('\0')
+    .filter((l) => l.startsWith('160000 '))
+    .map((l) => l.slice(l.indexOf('\t') + 1));
+  // Untracked nested repositories are listed as one entry ending in "/".
+  const others = await runGit(ctx, ['ls-files', '--others', '--exclude-standard', '-z'], { repo });
+  if (others.code !== 0) throw new ToolError(`git ls-files failed:\n${gitMessage(others, ctx)}`);
+  const nested = others.stdout.split('\0').filter((p) => p.endsWith('/'));
+  const found = [...gitlinks, ...nested].map((p) => cleanText(p)).slice(0, 10);
+  if (found.length > 0) {
+    throw new ToolError(
+      `Not committed: the workspace holds nested git repositories or submodules (${found.join(', ')}), which this plugin never touches. Remove their own .git folders, or commit them by hand.`,
+    );
+  }
+}
+
 const Sha = z.string().regex(/^[0-9a-f]{7,40}$/, 'a commit sha (7 to 40 lowercase hex characters)');
 
 export const gitTools = [
@@ -357,9 +388,13 @@ export const gitTools = [
     input: z.object({}),
     run: async (_args, ctx) => {
       const repo = await botRepo(ctx);
-      const r = await runGit(ctx, ['status', '--short', '--branch', '--untracked-files=all'], {
-        repo,
-      });
+      const r = await runGit(
+        ctx,
+        ['status', '--short', '--branch', '--untracked-files=all', '--ignore-submodules=all'],
+        {
+          repo,
+        },
+      );
       if (r.code !== 0) throw new ToolError(`git status failed:\n${gitMessage(r, ctx)}`);
       const lines = cleanText(r.stdout).trimEnd().split('\n');
       const body =
@@ -378,7 +413,13 @@ export const gitTools = [
     run: async ({ paths, maxChars }, ctx) => {
       const repo = await botRepo(ctx);
       const spec = ['--', ...(paths ?? [])];
-      const diffArgs = ['diff', '--no-color', '--no-ext-diff', '--no-textconv'];
+      const diffArgs = [
+        'diff',
+        '--no-color',
+        '--no-ext-diff',
+        '--no-textconv',
+        '--ignore-submodules=all',
+      ];
       const staged = await runGit(ctx, [...diffArgs, '--cached', ...spec], { repo });
       const unstaged = await runGit(ctx, [...diffArgs, ...spec], { repo });
       const untracked = await runGit(ctx, ['ls-files', '--others', '--exclude-standard', ...spec], {
@@ -446,6 +487,7 @@ export const gitTools = [
     run: async ({ message, paths }, ctx) => {
       const repo = await requireBotBranch(ctx);
       const { branch } = repo;
+      await refuseNestedRepositories(ctx, repo);
       const add = await runGit(ctx, ['add', '-A', '--', ...(paths ?? [])], { repo });
       if (add.code !== 0) throw new ToolError(`git add failed:\n${gitMessage(add, ctx)}`);
       const staged = await runGit(ctx, ['diff', '--cached', '--quiet', '--no-ext-diff'], { repo });

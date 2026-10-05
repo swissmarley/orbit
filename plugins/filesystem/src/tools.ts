@@ -1,11 +1,17 @@
 import {
+  closeSync,
+  constants,
+  fstatSync,
+  ftruncateSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
   realpathSync,
   statSync,
-  writeFileSync,
+  writeSync,
 } from 'node:fs';
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { ToolError, type ToolContext, defineTool, requireEnv } from '@orbit/plugin-kit';
@@ -131,6 +137,78 @@ export function resolveInside(ctx: ToolContext, path: string, forWrite = false):
   return real;
 }
 
+/** Where an open descriptor really points (Linux), or null. */
+function openedPath(fd: number): string | null {
+  try {
+    return readlinkSync(`/proc/self/fd/${fd}`);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Open a checked path without following a final symlink, then check what was
+ * really opened: a folder swapped for a link between the check and the open
+ * (a Bot's background shell racing the plugin) is refused (re-review L1).
+ * Writes truncate only after the check.
+ */
+export function openChecked(
+  ctx: ToolContext,
+  path: string,
+  mode: 'read' | 'write',
+): { fd: number; real: string } {
+  const real = resolveInside(ctx, path, mode === 'write');
+  const flags =
+    (mode === 'read' ? constants.O_RDONLY : constants.O_WRONLY | constants.O_CREAT) |
+    constants.O_NOFOLLOW;
+  let fd: number;
+  try {
+    fd = openSync(real, flags, 0o644);
+  } catch {
+    throw new ToolError(`${path} could not be opened`);
+  }
+  try {
+    assertOpenedAllowed(ctx, fd, real, path);
+    return { fd, real };
+  } catch (err) {
+    closeSync(fd);
+    throw err;
+  }
+}
+
+/** The file behind `fd` must still be inside a root and not denied (see openChecked). */
+export function assertOpenedAllowed(
+  ctx: ToolContext,
+  fd: number,
+  real: string,
+  path: string,
+): void {
+  const changed = () =>
+    new ToolError(`${path} changed while it was being opened; nothing was done`);
+  const actual = openedPath(fd);
+  if (actual !== null) {
+    const root = roots(ctx).find((r) => inside(r, actual));
+    if (root === undefined || deniedReason(ctx, actual, root) !== null) throw changed();
+    return;
+  }
+  // No /proc: the opened file must be the one at the checked path.
+  const a = fstatSync(fd);
+  const b = statSync(real);
+  if (a.dev !== b.dev || a.ino !== b.ino) throw changed();
+}
+
+/** Read a checked text file through its descriptor (null when not a file or too large). */
+function readChecked(ctx: ToolContext, path: string): string | null {
+  const { fd } = openChecked(ctx, path, 'read');
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile() || st.size > MAX_READ_BYTES) return null;
+    return readFileSync(fd, 'utf8');
+  } finally {
+    closeSync(fd);
+  }
+}
+
 const shown = (ctx: ToolContext, p: string) => {
   for (const r of roots(ctx)) if (inside(r, p)) return relative(r, p) || '.';
   return p;
@@ -161,7 +239,9 @@ export const tools = [
       const st = statSync(file);
       if (!st.isFile()) throw new ToolError(`${path} is not a file`);
       if (st.size > MAX_READ_BYTES) throw new ToolError(`${path} is larger than 1 MB`);
-      return readFileSync(file, 'utf8');
+      const text = readChecked(ctx, file);
+      if (text === null) throw new ToolError(`${path} is not a file of at most 1 MB`);
+      return text;
     },
   }),
   defineTool({
@@ -192,9 +272,13 @@ export const tools = [
               hits.push(shown(ctx, p));
               continue;
             }
-            const st = statSync(p);
-            if (st.size > MAX_READ_BYTES) continue;
-            const text = readFileSync(p, 'utf8');
+            let text: string | null;
+            try {
+              text = readChecked(ctx, p);
+            } catch {
+              continue;
+            }
+            if (text === null) continue;
             const i = text.toLowerCase().indexOf(q);
             if (i >= 0) {
               const line = text
@@ -230,8 +314,14 @@ export const tools = [
         if (why) throw new ToolError(`${path} ${why}`);
         mkdirSync(dirname(abs), { recursive: true });
       }
-      const file = resolveInside(ctx, path, true);
-      writeFileSync(file, content, 'utf8');
+      const { fd, real: file } = openChecked(ctx, path, 'write');
+      try {
+        if (!fstatSync(fd).isFile()) throw new ToolError(`${path} is not a file`);
+        ftruncateSync(fd, 0);
+        writeSync(fd, content, 0, 'utf8');
+      } finally {
+        closeSync(fd);
+      }
       return `Wrote ${Buffer.byteLength(content)} bytes to ${shown(ctx, file)}`;
     },
   }),

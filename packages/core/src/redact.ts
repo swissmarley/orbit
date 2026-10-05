@@ -73,8 +73,11 @@ export class Redactor {
   /** Register an exact secret value (vault entry, per-run token, API key). */
   addSecret(value: string | undefined | null): void {
     if (!value) return;
+    // Consumers trim what they read (a token file's newline): hide the bare value too.
+    const trimmed = value.trim();
+    if (trimmed !== value) this.addSecret(trimmed);
     if (value.length >= MIN_SECRET_LENGTH) this.secrets.add(value);
-    else if (value.length >= MIN_SHORT_SECRET_LENGTH && value.trim() === value) {
+    else if (value.length >= MIN_SHORT_SECRET_LENGTH && trimmed === value) {
       this.shortSecrets.add(value);
     }
   }

@@ -12,7 +12,7 @@ import { PluginRegistry } from './registry';
 
 const matching = (re: RegExp) => expect.stringMatching(re) as unknown as string;
 
-/** A tiny MCP server: `env_names` reports its environment's names, `echo` echoes. */
+/** A tiny MCP server: `get_env_names` reports its environment's names, `echo` echoes. */
 const SERVER = `
 import { createInterface } from 'node:readline';
 
@@ -24,12 +24,12 @@ rl.on('line', (line) => {
   if (m.method === 'initialize') return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'fake', version: '1' } } });
   if (m.method === 'tools/list') return send({ jsonrpc: '2.0', id: m.id, result: { tools: [
     { name: 'echo', description: 'Echo', inputSchema: { type: 'object', properties: { text: { type: 'string' } } } },
-    { name: 'env_names', description: 'Env', inputSchema: { type: 'object' } },
+    { name: 'get_env_names', description: 'Env', inputSchema: { type: 'object' } },
     { name: 'send_message', description: 'Send', inputSchema: { type: 'object' } },
     { name: 'secret_tool', description: 'Not declared', inputSchema: { type: 'object' } },
   ] } });
   if (m.method === 'tools/call') {
-    const text = m.params.name === 'env_names'
+    const text = m.params.name === 'get_env_names'
       ? Object.keys(process.env).sort().join(',') + ' cwd=' + process.cwd() + ' token=' + (process.env.FAKE_TOKEN ?? '')
       : 'echo: ' + (m.params.arguments.text ?? '');
     return send({ jsonrpc: '2.0', id: m.id, result: { content: [{ type: 'text', text }], isError: false } });
@@ -51,7 +51,7 @@ function writePlugin(dir: string, overrides: Record<string, unknown> = {}): void
       server: { transport: 'stdio', command: '${node}', args: ['${pluginDir}/server.mjs'] },
       tools: [
         { name: 'echo', tier: 'READ' },
-        { name: 'env_names', tier: 'READ' },
+        { name: 'get_env_names', tier: 'READ' },
         // Declared lower than its name says: Orbit raises it.
         { name: 'send_message', tier: 'WRITE_LOCAL' },
       ],
@@ -147,14 +147,14 @@ describe('PluginRegistry', () => {
     expect(s.undeclaredTools).toEqual(['secret_tool']);
     expect(s.tools.map((t) => [t.name, t.tier, t.available])).toEqual([
       ['echo', 'READ', true],
-      ['env_names', 'READ', true],
+      ['get_env_names', 'READ', true],
       ['send_message', 'EXTERNAL', true],
     ]);
     expect(s.warnings.join(' ')).toMatch(/send_message is declared WRITE_LOCAL.*EXTERNAL/);
     const ready = registry.ready('fake');
     expect('tools' in ready && ready.tools.map((t) => t.name)).toEqual([
       'echo',
-      'env_names',
+      'get_env_names',
       'send_message',
     ]);
     // The engine gets the manifest's descriptions (none here), not the server's (review L2).
@@ -176,7 +176,7 @@ describe('PluginRegistry', () => {
     registry.install(pluginDir(), 'owner');
     expect(registry.toolTiers()).toEqual([
       { pattern: 'mcp__fake__echo', tier: 'READ', untrusted: true },
-      { pattern: 'mcp__fake__env_names', tier: 'READ', untrusted: true },
+      { pattern: 'mcp__fake__get_env_names', tier: 'READ', untrusted: true },
       { pattern: 'mcp__fake__send_message', tier: 'EXTERNAL', untrusted: true },
     ]);
   });
@@ -288,7 +288,7 @@ describe('PluginSegment', () => {
     const seg = segments.open(registry, b, workspace, session);
     expect(seg.unavailable).toEqual([{ id: 'missing', reason: 'plugin missing is not installed' }]);
     const binding = seg.binding('fake');
-    expect(binding?.tools.map((t) => t.name)).toEqual(['echo', 'env_names', 'send_message']);
+    expect(binding?.tools.map((t) => t.name)).toEqual(['echo', 'get_env_names', 'send_message']);
 
     // Not announced and allowed: refused without starting anything.
     expect(await binding?.call('echo', { text: 'hi' })).toMatchObject({
@@ -307,8 +307,8 @@ describe('PluginSegment', () => {
     session.authorize('mcp__fake__secret_tool', {});
     expect(await binding?.call('secret_tool', {})).toMatchObject({ isError: true });
 
-    session.authorize('mcp__fake__env_names', {});
-    const env = await binding?.call('env_names', {});
+    session.authorize('mcp__fake__get_env_names', {});
+    const env = await binding?.call('get_env_names', {});
     expect(env?.text).toContain(`cwd=${workspace}`);
     expect(env?.text).toContain('token=fake-token-1234');
     expect(env?.text).not.toMatch(/ANTHROPIC|CLAUDE_CODE_OAUTH|ORBIT_HOOK|UNRELATED|AWS_SECRET/);

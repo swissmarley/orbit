@@ -5,7 +5,11 @@ import { sha256Hex } from '@orbit/core';
 export const MAX_WEBHOOK_BYTES = 256 * 1024;
 /** Orbit-style signatures older or newer than this are refused. */
 export const WEBHOOK_SKEW_SECONDS = 300;
-/** How long delivery keys are kept: Orbit style is bounded by the skew; GitHub style has no timestamp. */
+/**
+ * How long delivery keys are kept: Orbit style is bounded by the skew. GitHub
+ * style has no timestamp: delivery ids are kept 30 days and body hashes
+ * (`ghbody:`) for good, so a signed body is never accepted twice.
+ */
 export const WEBHOOK_KEEP_MS = { orbit: 86_400_000, github: 30 * 86_400_000 } as const;
 
 /** Vault entry holding the signing key of a Bot's webhook trigger. */

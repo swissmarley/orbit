@@ -1,9 +1,18 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type ToolContext, handle } from '@orbit/plugin-kit';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { tools } from './tools';
+import { assertOpenedAllowed, tools } from './tools';
 
 const matching = (re: RegExp) => expect.stringMatching(re) as unknown as string;
 
@@ -111,6 +120,22 @@ describe('filesystem plugin', () => {
     expect((await call('search_files', { query: 'database' })).text).toBe('No matches.');
     // Positive control: the same search finds plain files.
     expect((await call('search_files', { query: 'plain' })).text).toContain('plan.md');
+
+    // A path swapped for a link after the check: what was really opened is checked again (re-review L1).
+    const fd = openSync(join(home, '.ssh', 'id_ed25519'), 'r');
+    try {
+      expect(() => assertOpenedAllowed(ctx, fd, join(home, 'plan.md'), 'plan.md')).toThrow(
+        /changed while it was being opened/,
+      );
+    } finally {
+      closeSync(fd);
+    }
+    const ok = openSync(join(home, 'plan.md'), 'r');
+    try {
+      expect(() => assertOpenedAllowed(ctx, ok, join(home, 'plan.md'), 'plan.md')).not.toThrow();
+    } finally {
+      closeSync(ok);
+    }
 
     ctx = { ...ctx, env: { ...ctx.env, ORBIT_DENIED_PATHS: 'not json' } };
     expect(await call('read_file', { path: 'plan.md' })).toMatchObject({
