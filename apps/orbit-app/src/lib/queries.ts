@@ -31,7 +31,25 @@ export const keys = {
   runTree: (id: string) => ['orbit', 'runs', 'tree', id] as const,
   botTaint: (id: string) => ['orbit', 'memory', 'taint', id] as const,
   triage: ['orbit', 'triage'] as const,
+  plugins: ['orbit', 'plugins'] as const,
+  inbound: ['orbit', 'inbound'] as const,
 };
+
+/** Plugins and their state (Settings → Integrations). */
+export function usePlugins() {
+  const c = useClient();
+  return useQuery({ queryKey: keys.plugins, queryFn: () => c.plugins.list() });
+}
+
+/** Inbound triggers; listeners change state on their own (Slack connecting), so poll gently. */
+export function useInboundTriggers() {
+  const c = useClient();
+  return useQuery({
+    queryKey: keys.inbound,
+    queryFn: () => c.triggers.list(),
+    refetchInterval: 10_000,
+  });
+}
 
 export function useSession() {
   const c = useClient();

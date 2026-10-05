@@ -55,6 +55,8 @@ jobs:
       - run: pnpm --filter @orbit/app build-storybook --quiet
       - run: pnpm --filter @orbit/app exec playwright install --with-deps chromium
       - run: pnpm --filter @orbit/app e2e
+      # The Browser plugin's allowlist tests drive a real Chromium (skipped in the check job).
+      - run: pnpm vitest run --project @orbit/plugin-browser
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

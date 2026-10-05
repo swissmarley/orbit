@@ -1,4 +1,4 @@
-import type { Bot, BotSpecInput, Memory, RunState } from '@orbit/core/browser';
+import type { Bot, BotSpecInput, Memory, PluginStatus, RunState } from '@orbit/core/browser';
 import type { Approval, RouteBody } from '@orbit/sdk-client/browser';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
@@ -272,6 +272,70 @@ export function useActions() {
         await c.secrets.remove(name).catch(fail('Could not remove the secret'));
         void refresh(keys.secrets);
         toast.success(`Removed ${name}`);
+      },
+
+      async setPluginEnabled(p: PluginStatus, on: boolean): Promise<PluginStatus> {
+        const next = await (on ? c.plugins.enable(p.id) : c.plugins.disable(p.id)).catch(
+          fail(on ? `Could not enable ${p.name}` : `Could not disable ${p.name}`),
+        );
+        void refresh(keys.plugins, keys.audit);
+        if (on) {
+          toast.success(`${p.name} is on`, {
+            description: `${next.tools.length} tools for the Bots that list "${p.id}".`,
+          });
+        } else {
+          toast.success(`${p.name} is off`, {
+            action: {
+              label: 'Undo',
+              onClick: () => void actions.setPluginEnabled(next, true).catch(() => undefined),
+            },
+          });
+        }
+        return next;
+      },
+
+      async checkPlugin(p: PluginStatus): Promise<PluginStatus> {
+        const next = await c.plugins.check(p.id).catch(fail(`Could not check ${p.name}`));
+        void refresh(keys.plugins);
+        if (next.error) toast.error(`${p.name} did not start`, { description: next.error });
+        else toast.success(`${p.name} started and listed its tools`);
+        return next;
+      },
+
+      async setPluginSecret(p: PluginStatus, name: string, value: string): Promise<void> {
+        await c.plugins.setSecret(p.id, name, value).catch(fail(`Could not store ${name}`));
+        void refresh(keys.plugins, keys.inbound);
+        toast.success(`Stored ${name} for ${p.name}`, {
+          description: 'Encrypted in the vault; only this plugin receives it.',
+        });
+      },
+
+      async removePluginSecret(p: PluginStatus, name: string): Promise<void> {
+        await c.plugins.removeSecret(p.id, name).catch(fail(`Could not remove ${name}`));
+        void refresh(keys.plugins, keys.inbound);
+        toast.success(`Removed ${name} from ${p.name}`);
+      },
+
+      async setPluginSetting(p: PluginStatus, name: string, value: string | null): Promise<void> {
+        await c.plugins.setSetting(p.id, name, value).catch(fail(`Could not save ${name}`));
+        void refresh(keys.plugins);
+        toast.success(value === null ? `Cleared ${name}` : `Saved ${name}`);
+      },
+
+      async addPlugin(dir: string): Promise<PluginStatus> {
+        const p = await c.plugins.add(dir).catch(fail('Could not add the plugin'));
+        void refresh(keys.plugins);
+        toast.success(`Added ${p.name}`, { description: 'It stays off until you enable it.' });
+        return p;
+      },
+
+      /** A webhook's signing secret: returned once, for the owner to copy. */
+      async mintWebhookSecret(botId: string, trigger: string) {
+        const s = await c.triggers
+          .webhookSecret(botId, trigger)
+          .catch(fail('Could not create the signing secret'));
+        void refresh(keys.inbound, keys.audit);
+        return s;
       },
 
       async createMemory(bot: Bot, body: RouteBody<'createMemory'>): Promise<Memory> {

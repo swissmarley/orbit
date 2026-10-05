@@ -2,6 +2,7 @@
 import {
   BotSpec,
   type Bot,
+  PLUGIN_STATE,
   TRIGGER_KIND_WORD,
   formatWhen,
   scrubControls,
@@ -29,6 +30,7 @@ import {
   useBotVersions,
   useBots,
   useMemoryList,
+  usePlugins,
   useRules,
   useRuns,
   useSchedules,
@@ -47,6 +49,7 @@ function Def({ term, children }: { term: string; children: React.ReactNode }) {
 }
 
 function Overview({ bot }: { bot: Bot }) {
+  const plugins = usePlugins();
   const s = bot.spec;
   const schedules = useSchedules();
   const mine = (schedules.data ?? []).filter((x) => x.botId === bot.id);
@@ -145,6 +148,28 @@ function Overview({ bot }: { bot: Bot }) {
             Every call still goes through the policy: reads run, local writes stay in the workspace,
             external actions ask you, financial ones are handed back.
           </p>
+          {s.plugins.length > 0 ? (
+            <div className="mt-3">
+              <p className="text-xs font-medium text-fg-muted">Plugins</p>
+              <ul className="mt-1 flex flex-wrap gap-1.5">
+                {s.plugins.map((id) => {
+                  const p = plugins.data?.find((x) => x.id === id);
+                  const w = p ? PLUGIN_STATE[p.state] : null;
+                  return (
+                    <li key={id}>
+                      <Link to="/settings" search={{ tab: 'integrations' }}>
+                        <Badge tone={w?.tone ?? 'warning'} title={w?.meaning ?? 'not installed'}>
+                          {p ? scrubControls(p.name) : id}
+                          <span aria-hidden>{w ? ` ${w.mark}` : ' ⚠'}</span>
+                          <span>{w ? w.label : 'not installed'}</span>
+                        </Badge>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
       <Card>

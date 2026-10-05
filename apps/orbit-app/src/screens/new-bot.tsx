@@ -1,5 +1,8 @@
 /** @jsxRuntime automatic @jsxImportSource react */
 import {
+  BOT_TEMPLATES,
+  type BotTemplate,
+  PLUGIN_STATE,
   type BotProposal,
   BotSpec,
   type BotSpecInput,
@@ -7,6 +10,7 @@ import {
   TriggerSpec,
   formatCost,
   formatTokens,
+  scrubControls,
 } from '@orbit/core/browser';
 import { useNavigate } from '@tanstack/react-router';
 import { ArrowLeft, ArrowRight, Bot as BotIcon, Check, Sparkles } from 'lucide-react';
@@ -21,7 +25,7 @@ import { useActions } from '../lib/actions';
 import { cn } from '../lib/cn';
 import { prettyJson } from '../lib/diff';
 import { errorText, useClient } from '../lib/api';
-import { useDoctor, useTriage } from '../lib/queries';
+import { useDoctor, usePlugins, useTriage } from '../lib/queries';
 import { ENGINE_TOOLS, proposeSpec } from '../lib/wizard';
 
 const STEPS = ['Goal', 'Setup', 'Limits', 'Review'] as const;
@@ -44,6 +48,30 @@ interface Draft {
   fixture: string;
   summarize: 'off' | 'result' | 'triage';
   subagents: Record<string, SubagentSpec>;
+  /** Plugin ids the Bot may use (each enabled by the owner in Settings → Integrations). */
+  plugins: string[];
+}
+
+/** A template as wizard fields: every one of them stays editable. */
+export function applyTemplate(d: Draft, t: BotTemplate): Draft {
+  const s = t.spec;
+  const trigger = s.triggers?.[0];
+  return {
+    ...d,
+    name: s.name,
+    goal: s.goal,
+    instructions: s.instructions ?? '',
+    tools: s.tools ?? [],
+    plugins: s.plugins ?? [],
+    schedule: trigger?.kind === 'cron' || trigger?.kind === 'interval' ? trigger.kind : 'manual',
+    ...(trigger?.kind === 'cron' ? { cron: trigger.cron } : {}),
+    ...(trigger?.kind === 'interval' ? { everyMinutes: trigger.everyMinutes } : {}),
+    maxToolCallsPerRun: s.budgets?.maxToolCallsPerRun ?? d.maxToolCallsPerRun,
+    maxWallClockMinutes: s.budgets?.maxWallClockMinutes ?? d.maxWallClockMinutes,
+    maxRunsPerDay: s.budgets?.maxRunsPerDay ?? d.maxRunsPerDay,
+    summarize: s.memory?.summarize ?? d.summarize,
+    fixture: s.mock?.fixture ?? '',
+  };
 }
 
 export function draftToSpec(d: Draft): BotSpecInput {
@@ -59,6 +87,7 @@ export function draftToSpec(d: Draft): BotSpecInput {
     instructions: d.instructions,
     ...(d.model.trim() ? { model: d.model.trim() } : {}),
     tools: d.tools,
+    plugins: d.plugins,
     triggers: trigger ? [trigger] : [],
     budgets: {
       maxToolCallsPerRun: d.maxToolCallsPerRun,
@@ -121,7 +150,9 @@ export function NewBotScreen() {
     fixture: '',
     summarize: 'result',
     subagents: {},
+    plugins: [],
   });
+  const plugins = usePlugins();
   const client = useClient();
   const triage = useTriage();
   const [asking, setAsking] = useState(false);
@@ -259,6 +290,23 @@ export function NewBotScreen() {
                   <Sparkles aria-hidden /> Suggest a setup
                 </Button>
               </div>
+              <div className="flex flex-col gap-2 border-t border-border pt-3">
+                <p className="text-xs font-medium text-fg-muted">Or start from a template</p>
+                {BOT_TEMPLATES.map((t) => (
+                  <div key={t.id} className="flex flex-wrap items-center gap-2 text-sm">
+                    <Button
+                      onClick={() => {
+                        setD((x) => applyTemplate(x, t));
+                        setReasons([t.summary, ...t.setup]);
+                        setStep(1);
+                      }}
+                    >
+                      Use {t.title}
+                    </Button>
+                    <span className="text-xs text-fg-muted">{t.summary}</span>
+                  </div>
+                ))}
+              </div>
               <p id={`${ids}-ask-cost`} className="text-xs text-fg-muted">
                 “Suggest a setup” uses local rules and is free.{' '}
                 {mock ? (
@@ -346,6 +394,53 @@ export function NewBotScreen() {
                     );
                   })}
                 </div>
+              </fieldset>
+              <fieldset className="flex flex-col gap-2">
+                <legend className="mb-1 text-xs font-medium text-fg-muted">
+                  Plugins (Settings → Integrations)
+                </legend>
+                {plugins.data && plugins.data.length > 0 ? (
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {plugins.data.map((p) => {
+                      const on = d.plugins.includes(p.id);
+                      const w = PLUGIN_STATE[p.state];
+                      return (
+                        <label
+                          key={p.id}
+                          className={cn(
+                            'flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-sm',
+                            on ? 'border-accent bg-accent-subtle' : 'border-border',
+                          )}
+                        >
+                          <input
+                            type="checkbox"
+                            className="mt-1 accent-[var(--accent)]"
+                            checked={on}
+                            onChange={() =>
+                              set(
+                                'plugins',
+                                on ? d.plugins.filter((x) => x !== p.id) : [...d.plugins, p.id],
+                              )
+                            }
+                          />
+                          <span>
+                            <span className="font-medium text-fg">{scrubControls(p.name)}</span>{' '}
+                            <span className="text-xs text-fg-subtle">
+                              · <span aria-hidden>{w.mark}</span> {w.label}
+                            </span>
+                            <span className="block text-xs text-fg-muted">
+                              {p.state === 'ready'
+                                ? `${p.tools.length} tools; external ones ask you`
+                                : 'Enable it in Settings → Integrations before Runs can use it'}
+                            </span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-xs text-fg-muted">No plugins known.</p>
+                )}
               </fieldset>
               <div className="grid gap-3 sm:grid-cols-[12rem_1fr]">
                 <Field id={`${ids}-sched`} label="Runs">

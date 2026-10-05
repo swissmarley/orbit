@@ -31,6 +31,11 @@ export const paletteStore = createStore(false);
 export const SETTINGS_ENTRIES: readonly { tab: string; label: string; keywords: string }[] = [
   { tab: 'general', label: 'General', keywords: 'theme appearance kill switch' },
   { tab: 'engine', label: 'Auth & engine', keywords: 'doctor driver api key subscription model' },
+  {
+    tab: 'integrations',
+    label: 'Integrations',
+    keywords: 'plugins mcp github slack gmail calendar browser filesystem webhooks triggers',
+  },
   { tab: 'policies', label: 'Policies', keywords: 'rules allow deny tiers' },
   { tab: 'budgets', label: 'Budgets', keywords: 'limits cost tokens triage usage' },
   { tab: 'secrets', label: 'Secrets', keywords: 'vault keys tokens' },

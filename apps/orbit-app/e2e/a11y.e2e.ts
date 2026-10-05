@@ -8,6 +8,7 @@ const SCREENS = [
   '/bots/new',
   '/settings',
   '/settings?tab=engine',
+  '/settings?tab=integrations',
   '/settings?tab=policies',
   '/settings?tab=audit',
   '/settings?tab=budgets',

@@ -28,6 +28,7 @@ import {
 import { useStore } from '../lib/store';
 import { type ThemeChoice, setTheme, themeStore } from '../lib/theme';
 import { Kbd } from '../components/ui/misc';
+import { Integrations } from './integrations';
 
 function Row({ term, children }: { term: string; children: React.ReactNode }) {
   return (
@@ -749,7 +750,15 @@ function Audit() {
   );
 }
 
-const TABS = ['general', 'engine', 'policies', 'budgets', 'secrets', 'audit'] as const;
+const TABS = [
+  'general',
+  'engine',
+  'integrations',
+  'policies',
+  'budgets',
+  'secrets',
+  'audit',
+] as const;
 
 export function SettingsScreen() {
   const search: { tab?: string | undefined } = useSearch({ strict: false });
@@ -760,7 +769,7 @@ export function SettingsScreen() {
     <div>
       <PageHeader
         title="Settings"
-        description="Engine, policies, budgets, secrets and the audit log."
+        description="Engine, integrations, policies, budgets, secrets and the audit log."
       />
       <Tabs
         value={tab}
@@ -769,6 +778,7 @@ export function SettingsScreen() {
         <TabsList aria-label="Settings sections">
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="engine">Auth & engine</TabsTrigger>
+          <TabsTrigger value="integrations">Integrations</TabsTrigger>
           <TabsTrigger value="policies">Policies</TabsTrigger>
           <TabsTrigger value="budgets">Budgets</TabsTrigger>
           <TabsTrigger value="secrets">Secrets</TabsTrigger>
@@ -779,6 +789,9 @@ export function SettingsScreen() {
         </TabsContent>
         <TabsContent value="engine">
           <Engine />
+        </TabsContent>
+        <TabsContent value="integrations">
+          <Integrations />
         </TabsContent>
         <TabsContent value="policies">
           <Policies />
