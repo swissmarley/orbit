@@ -1010,6 +1010,15 @@ export class Orchestrator {
     );
     const session = orbit?.session ?? null;
     const plugins = orbit?.plugins ?? null;
+    // A kill switch or budget does not wait for a plugin call in flight:
+    // stopping the segment's servers ends the call (and what it started) now.
+    if (plugins) {
+      controller.signal.addEventListener(
+        'abort',
+        () => void this.deps.pluginSegments?.close(plugins, runId),
+        { once: true },
+      );
+    }
     let delegationsSeen = 0;
 
     /** Bookkeeping when a call is allowed: taint through files, Orbit tool authorization. */

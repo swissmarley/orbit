@@ -195,6 +195,8 @@ export class OrbitService {
     null;
   private readonly resumeOptions = new Map<string, { prompt?: string; mockFixture?: string }>();
   private ticker: NodeJS.Timeout | undefined;
+  /** The global kill switch was seen engaged (and what waited was closed). */
+  private killSeen = false;
   private unsubscribe: (() => void) | undefined;
   private unsubscribeRuns: (() => void) | undefined;
   /** Post-run summaries run one at a time, after the Run's outcome is final. */
@@ -423,6 +425,12 @@ export class OrbitService {
   /** Housekeeping: scheduled triggers, approval expiry, usage-limit resumes. */
   tick(): void {
     try {
+      // A global kill engaged from another process (the shared controls table)
+      // reaches executing Runs through the orchestrator's poll; what waits
+      // (queued, parked, rate limited) is closed here, as `setKill` does.
+      const kill = this.controls.globalKill();
+      if (kill && !this.killSeen) this.closeWaiting();
+      this.killSeen = kill !== null;
       for (const r of this.scheduler.tick()) {
         if (!r.outcome.fired) this.log('info', `trigger ${r.key} skipped: ${r.outcome.reason}`);
       }
@@ -956,6 +964,8 @@ export class OrbitService {
   private maybeAutoResume(runId: string, force?: boolean, fixture?: string): boolean {
     const run = this.store.getRun(runId);
     if (!run || run.pendingApprovals.length > 0 || run.pendingDelegations.length > 0) return false;
+    // Under a kill switch nothing is lined up to continue after the release.
+    if (this.controls.globalKill() || this.bots.find(run.botId)?.pausedAt) return false;
     if (run.status === 'delegating') return this.pushResume(run);
     if (run.status !== 'waiting_approval') return false;
     const bot = this.bots.find(run.botId);
@@ -1562,6 +1572,7 @@ export class OrbitService {
 
   setKill(on: boolean): { engaged: boolean; by: string | null } {
     this.orchestrator.killAll(OWNER, on);
+    this.killSeen = on;
     if (on) {
       // "Stop everything": nothing waiting may continue after the release (review L2).
       this.closeWaiting();
