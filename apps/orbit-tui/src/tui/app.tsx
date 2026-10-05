@@ -20,6 +20,7 @@ import {
   MemoryEditOverlay,
   MemoryOverlay,
   TreeOverlay,
+  IntegrationsOverlay,
   ConfirmBar,
   DENY_TITLE,
   DenyPrompt,
@@ -88,12 +89,19 @@ export async function perform(
     case 'deleteMemory':
       await client.memory.remove(command.memoryId);
       return 'memory deleted';
+    case 'setPlugin': {
+      const pl = command.enabled
+        ? await client.plugins.enable(command.pluginId)
+        : await client.plugins.disable(command.pluginId);
+      return command.enabled ? `● ${pl.name} is on` : `○ ${pl.name} is off`;
+    }
     case 'feedback':
       await client.runs.feedback(command.runId, { rating: command.rating });
       return `${command.rating === 'up' ? '▲' : '▼'} feedback saved — the Bot sees it next time`;
     // Loaded through the feed (see App).
     case 'loadMemory':
     case 'loadTree':
+    case 'loadIntegrations':
     case 'refresh':
     case 'quit':
       return '';
@@ -169,11 +177,16 @@ export function App({ client, paint, size, refreshDelayMs }: AppProps) {
       void feed.watchTree(command.runId);
       return;
     }
+    if (command.kind === 'loadIntegrations') {
+      void feed.watchIntegrations(command.on);
+      return;
+    }
     const memoryOverlay = uiRef.current.overlay;
     perform(client, command)
       .then((text) => {
         toast(text);
         // Memory changes refresh the browser that made them.
+        if (command.kind === 'setPlugin') void feed.watchIntegrations(true);
         if (command.kind === 'updateMemory' || command.kind === 'deleteMemory') {
           const o = result.ui.overlay ?? memoryOverlay;
           if (o?.kind === 'memory') void feed.watchMemory({ botId: o.botId, query: o.query });
@@ -202,6 +215,12 @@ export function App({ client, paint, size, refreshDelayMs }: AppProps) {
       : overlay?.kind === 'confirm' && overlay.back?.kind === 'memory'
         ? overlay.back
         : null;
+  const integrationsShown =
+    overlay?.kind === 'integrations'
+      ? overlay
+      : overlay?.kind === 'confirm' && overlay.back?.kind === 'integrations'
+        ? overlay.back
+        : null;
   const cardApproval =
     overlay?.kind === 'card' ? data.approvals.find((a) => a.id === overlay.approvalId) : undefined;
 
@@ -215,7 +234,7 @@ export function App({ client, paint, size, refreshDelayMs }: AppProps) {
   }, [ui.scroll, maxScroll]);
 
   const hints: Record<Ui['focus'], string> = {
-    bots: 'j/k select · r run · p pause · m memory · [ ] runs · Enter timeline · Tab panes · ? help · q quit',
+    bots: 'j/k select · r run · p pause · m memory · i integrations · [ ] runs · Enter timeline · Tab panes · ? help · q quit',
     timeline:
       'j/k scroll · g/G top/live · s stop · u resume · t tree · +/- rate · [ ] runs · Tab panes · ? help · q quit',
     approvals: 'j/k select · Enter/a open card to approve · d deny · Tab panes · ? help · q quit',
@@ -273,6 +292,13 @@ export function App({ client, paint, size, refreshDelayMs }: AppProps) {
         />
       ) : overlay?.kind === 'memoryEdit' ? (
         <MemoryEditOverlay overlay={overlay} width={columns} height={bodyHeight} />
+      ) : integrationsShown ? (
+        <IntegrationsOverlay
+          data={data}
+          overlay={integrationsShown}
+          width={columns}
+          height={bodyHeight}
+        />
       ) : overlay?.kind === 'tree' ? (
         <TreeOverlay data={data} overlay={overlay} width={columns} height={bodyHeight} />
       ) : cardApproval && overlay?.kind === 'card' ? (

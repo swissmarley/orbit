@@ -1,6 +1,7 @@
 import {
   Bot,
   type MemoryHit,
+  type PluginStatus,
   type RunEvent,
   type RunEventBody,
   type RunState,
@@ -159,6 +160,78 @@ export function memory(id: string, over: Partial<MemoryHit> = {}): MemoryHit {
   };
 }
 
+export function plugin(id: string, over: Partial<PluginStatus> = {}): PluginStatus {
+  return {
+    id,
+    name: id === 'github' ? 'GitHub' : 'Filesystem',
+    version: '0.1.0',
+    description: 'A reference plugin',
+    homepage: null,
+    builtIn: true,
+    dir: `/orbit/plugins/${id}`,
+    enabled: false,
+    state: 'disabled',
+    server: 'stdio: node --import tsx server.ts',
+    tools: [
+      {
+        name: 'list_issues',
+        engineName: `mcp__${id}__list_issues`,
+        description: 'List issues',
+        declaredTier: 'READ',
+        tier: 'READ',
+        egress: false,
+        available: null,
+      },
+      {
+        name: 'git_push',
+        engineName: `mcp__${id}__git_push`,
+        description: 'Push',
+        declaredTier: 'EXTERNAL',
+        tier: 'EXTERNAL',
+        egress: false,
+        available: null,
+      },
+    ],
+    secrets: [
+      {
+        name: 'GITHUB_TOKEN',
+        description: 'token',
+        required: false,
+        set: false,
+        vaultName: `plugin_${id}_GITHUB_TOKEN`,
+      },
+    ],
+    settings: [],
+    env: [],
+    undeclaredTools: [],
+    bots: [],
+    warnings: [],
+    error: null,
+    checkedAt: null,
+    enabledAt: null,
+    ...over,
+  };
+}
+
+export const plugins = (): PluginStatus[] => [
+  plugin('github', { enabled: true, state: 'ready', bots: [{ id: 'bot_a', name: 'Mailer' }] }),
+  plugin('filesystem'),
+];
+
+export const inbound = () => [
+  {
+    botId: 'bot_a',
+    botName: 'Mailer',
+    key: 'bot_a:1',
+    kind: 'webhook' as const,
+    description: 'deploys',
+    enabled: true,
+    state: 'needs_setup' as const,
+    detail: 'no signing secret yet',
+    path: '/hooks/bot_a/deploys',
+  },
+];
+
 export const memories = (): MemoryHit[] => [
   memory('mem_1', { title: 'Launch owner' }),
   memory('mem_2', { title: 'Rumour from a web page', taint: ['WebFetch'] }),
@@ -231,6 +304,14 @@ export function fakeClient(
         Promise.resolve({ ...memory(id), ...patch }),
       ),
       remove: vi.fn(() => Promise.resolve({ ok: true as const })),
+    },
+    plugins: {
+      list: vi.fn(() => Promise.resolve(plugins())),
+      enable: vi.fn((id: string) => Promise.resolve(plugin(id, { enabled: true, state: 'ready' }))),
+      disable: vi.fn((id: string) => Promise.resolve(plugin(id))),
+    },
+    triggers: {
+      list: vi.fn(() => Promise.resolve(inbound())),
     },
     approvals: {
       list: vi.fn(() => Promise.resolve(d.approvals)),

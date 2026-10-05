@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { approval, bot, data, memories, run } from '../../test/tui-fixtures';
+import { approval, bot, data, inbound, memories, plugins, run } from '../../test/tui-fixtures';
 import {
   INITIAL_UI,
   type KeyInfo,
@@ -352,6 +352,40 @@ describe('M6: memory browser, delegation tree, feedback', () => {
     const parked = press({ ...ui, botIndex: 0, botId: 'bot_a' }, '+');
     expect(parked.command).toBeUndefined();
     expect(parked.ui.toast?.text).toMatch(/once it has ended/);
+  });
+
+  it('i opens integrations; j/k select; Enter opens; e asks before enabling; Esc closes', () => {
+    const d = { ...data(), plugins: plugins(), inbound: inbound() };
+    let r = onKey(INITIAL_UI, d, 'i', {});
+    expect(r.ui.overlay).toEqual({ kind: 'integrations', index: 0, open: false, scroll: 0 });
+    expect(r.command).toEqual({ kind: 'loadIntegrations', on: true });
+    r = onKey(r.ui, d, 'j', {});
+    expect(r.ui.overlay).toMatchObject({ index: 1 });
+    r = onKey(r.ui, d, 'j', {});
+    expect(r.ui.overlay).toMatchObject({ index: 1 });
+    r = onKey(r.ui, d, '', { return: true });
+    expect(r.ui.overlay).toMatchObject({ kind: 'integrations', open: true });
+    r = onKey(r.ui, d, 'e', {});
+    expect(r.ui.overlay?.kind === 'confirm' && r.ui.overlay.message).toMatch(
+      /^Enable Filesystem\?/,
+    );
+    expect(r.command).toBeUndefined();
+    const yes = onKey(r.ui, d, 'y', {});
+    expect(yes.command).toEqual({ kind: 'setPlugin', pluginId: 'filesystem', enabled: true });
+    expect(yes.ui.overlay).toMatchObject({ kind: 'integrations', index: 1 });
+    // Any other key cancels, back to the overlay.
+    expect(onKey(r.ui, d, 'n', {}).command).toBeUndefined();
+    // Esc in a plugin's detail goes back to the list; Esc in the list closes.
+    const back = onKey(yes.ui, d, '', { escape: true });
+    expect(back.ui.overlay).toMatchObject({ kind: 'integrations', open: false });
+    const closed = onKey(back.ui, d, '', { escape: true });
+    expect(closed.ui.overlay).toBeNull();
+    expect(closed.command).toEqual({ kind: 'loadIntegrations', on: false });
+    // Disabling an enabled plugin asks too.
+    const first = onKey(onKey(INITIAL_UI, d, 'i', {}).ui, d, 'e', {});
+    expect(first.ui.overlay?.kind === 'confirm' && first.ui.overlay.message).toMatch(
+      /^Disable GitHub\?/,
+    );
   });
 
   it('treeRows draws the tree with statuses in words and marks this Run', () => {

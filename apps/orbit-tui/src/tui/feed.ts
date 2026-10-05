@@ -6,7 +6,16 @@ import { type Data, EMPTY_DATA } from './model';
 /** What the TUI needs from orbitd (an OrbitClient, or a fake in tests). */
 export type TuiClient = Pick<
   OrbitClient,
-  'bots' | 'runs' | 'approvals' | 'kill' | 'queue' | 'doctor' | 'events' | 'memory'
+  | 'bots'
+  | 'runs'
+  | 'approvals'
+  | 'kill'
+  | 'queue'
+  | 'doctor'
+  | 'events'
+  | 'memory'
+  | 'plugins'
+  | 'triggers'
 >;
 
 /** Events that change a memory browser or a delegation tree. */
@@ -139,6 +148,24 @@ export class Feed {
       if (this.memoryWatch !== watch) return;
       // Memory text is model- or user-written: scrubbed once, here.
       this.set({ memories: scrubDeep(memories), memoryBot: watch.botId });
+    } catch (err) {
+      this.set({ error: errorMessage(err) });
+    }
+  }
+
+  /** Load plugins and inbound triggers (the integrations overlay); false clears them. */
+  async watchIntegrations(on: boolean): Promise<void> {
+    if (!on) {
+      this.set({ plugins: null, inbound: null });
+      return;
+    }
+    try {
+      const [plugins, inbound] = await Promise.all([
+        this.client.plugins.list(),
+        this.client.triggers.list(),
+      ]);
+      // Manifest text and Bot names are not ours: scrubbed once, here.
+      this.set({ plugins: scrubDeep(plugins), inbound: scrubDeep(inbound) });
     } catch (err) {
       this.set({ error: errorMessage(err) });
     }

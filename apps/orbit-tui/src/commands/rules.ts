@@ -1,3 +1,4 @@
+import { OrbitError } from '@orbit/core';
 import type { Context } from '../context';
 import { painter } from '../io';
 import { scrubControls } from '../render';
@@ -23,8 +24,13 @@ export async function rulesList(
       : r.expiresAt
         ? p('dim', `until ${r.expiresAt}`)
         : p('dim', 'no expiry');
+    const when = r.inputMatch
+      ? ` when ${Object.entries(r.inputMatch)
+          .map(([k, v]) => `${k}=${v}`)
+          .join(', ')}`
+      : '';
     ctx.io.out(
-      `${p('bold', r.id)}  ${p(r.effect === 'allow' ? 'green' : 'red', r.effect.padEnd(5))} ${scrubControls(r.toolPattern)}  ${p('dim', scope)}  ${state}`,
+      `${p('bold', r.id)}  ${p(r.effect === 'allow' ? 'green' : 'red', r.effect.padEnd(5))} ${scrubControls(r.toolPattern + when)}  ${p('dim', scope)}  ${state}`,
     );
   }
   return 0;
@@ -38,14 +44,27 @@ export async function rulesAdd(
     bot?: string;
     expires?: string;
     reason?: string;
+    /** `field=glob` (repeatable): top-level arguments that must match, one value per `*`. */
+    match?: string[];
     json?: boolean;
   },
 ): Promise<number> {
+  const inputMatch: Record<string, string> = {};
+  for (const m of o.match ?? []) {
+    const i = m.indexOf('=');
+    if (i < 1) {
+      throw new OrbitError('invalid_input', `--match takes field=glob, got "${m}"`, {
+        hint: "orbit rules add --tool mcp__google__send_draft --effect allow --match 'to=*@example.com'",
+      });
+    }
+    inputMatch[m.slice(0, i)] = m.slice(i + 1);
+  }
   const rule = await (
     await ctx.client()
   ).rules.create({
     toolPattern: o.tool,
     effect: o.effect,
+    inputMatch: Object.keys(inputMatch).length ? inputMatch : null,
     bot: o.bot ?? null,
     reason: o.reason ?? null,
     // Allow rules expire by default; deny rules last until revoked.
@@ -54,7 +73,13 @@ export async function rulesAdd(
   if (o.json) ctx.io.out(JSON.stringify(rule));
   else
     ctx.io.out(
-      `${painter(ctx.io)('green', '✔')} Rule ${rule.id}: ${rule.effect} ${rule.toolPattern}`,
+      `${painter(ctx.io)('green', '✔')} Rule ${rule.id}: ${rule.effect} ${rule.toolPattern}${
+        rule.inputMatch
+          ? ` when ${Object.entries(rule.inputMatch)
+              .map(([k, v]) => `${k}=${v}`)
+              .join(', ')}`
+          : ''
+      }`,
     );
   return 0;
 }

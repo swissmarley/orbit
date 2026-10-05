@@ -2,7 +2,11 @@
 import {
   MEMORY_KIND_WORD,
   MEMORY_SOURCE_WORD,
+  PLUGIN_STATE,
+  type PluginStatus,
   RUN_STATUS,
+  TIER_WORD,
+  TRIGGER_STATE,
   type RunEvent,
   type RunState,
   type Tone,
@@ -770,6 +774,148 @@ export function TreeOverlay(props: {
       <Text color="gray" wrap="wrap">
         Each child Run has its own approvals and inherits what is left of its parent&apos;s budget
         and its untrusted inputs. j/k scroll · Esc close
+      </Text>
+    </Box>
+  );
+}
+
+/** Lines of one plugin in full (tools with tiers, secrets, settings, warnings). */
+export function pluginDetailLines(
+  pl: PluginStatus,
+): { text: string; color?: string; bold?: boolean }[] {
+  const st = PLUGIN_STATE[pl.state];
+  const out: { text: string; color?: string; bold?: boolean }[] = [
+    { text: `${pl.name} (${pl.id} ${pl.version})`, bold: true },
+    { text: `${st.mark} ${st.label}: ${st.meaning}`, color: TONE_COLOR[st.tone] },
+  ];
+  if (pl.description) out.push({ text: pl.description });
+  out.push(
+    { text: `server ${pl.server}`, color: 'gray' },
+    { text: '' },
+    { text: 'Tools', bold: true },
+  );
+  for (const t of pl.tools) {
+    const w = TIER_WORD[t.tier];
+    out.push({
+      text: `${w.mark} ${w.label.padEnd(12)} ${t.name}${t.egress ? ' · egress' : ''}${t.available === false ? ' · not offered by the server' : ''}`,
+      color: TONE_COLOR[w.tone],
+    });
+  }
+  if (pl.secrets.length) {
+    out.push({ text: '' }, { text: 'Secrets (only this plugin receives them)', bold: true });
+    for (const s of pl.secrets) {
+      out.push({
+        text: `${s.set ? '✔ set     ' : s.required ? '◌ missing ' : '○ not set '} ${s.name}`,
+        color: s.set ? 'green' : s.required ? 'magenta' : 'gray',
+      });
+    }
+    out.push({
+      text: `Set one with: orbit plugin secret ${pl.id} <NAME> < file   (never typed here)`,
+      color: 'gray',
+    });
+  }
+  if (pl.settings.length) {
+    out.push({ text: '' }, { text: 'Settings', bold: true });
+    for (const s of pl.settings) {
+      const v = s.value ?? (s.default !== null ? `${s.default} (default)` : null);
+      out.push({
+        text: `${s.name} = ${v ?? (s.required ? '(required, not set)' : '(not set)')}`,
+        ...(v === null && s.required ? { color: 'magenta' } : {}),
+      });
+    }
+  }
+  out.push(
+    { text: '' },
+    {
+      text: `Bots: ${pl.bots.length ? pl.bots.map((b) => b.name).join(', ') : 'none list it yet'}`,
+    },
+  );
+  for (const w of pl.warnings) out.push({ text: `⚠ ${w}`, color: 'yellow' });
+  if (pl.error) out.push({ text: `✘ ${pl.error}`, color: 'red' });
+  return out;
+}
+
+/** Settings → Integrations in the terminal: plugins and inbound triggers. */
+export function IntegrationsOverlay(props: {
+  data: Data;
+  overlay: Extract<NonNullable<Ui['overlay']>, { kind: 'integrations' }>;
+  width: number;
+  height: number;
+}) {
+  const { data, overlay: o } = props;
+  const list = data.plugins ?? [];
+  const at = Math.max(0, Math.min(o.index, list.length - 1));
+  const room = Math.max(1, props.height - 5);
+  const selected = list[at];
+  let lines: { text: string; color?: string; bold?: boolean; current?: boolean }[];
+  if (o.open && selected) {
+    lines = pluginDetailLines(selected).flatMap((l) =>
+      wrapText(l.text, props.width - 4).map((text) => ({ ...l, text })),
+    );
+  } else {
+    lines = [{ text: 'Plugins', bold: true }];
+    list.forEach((pl, i) => {
+      const st = PLUGIN_STATE[pl.state];
+      const cur = i === at;
+      lines.push({
+        text: `${cur ? '›' : ' '} ${`${st.mark} ${st.label}`.padEnd(14)} ${pl.id.padEnd(11)} ${pl.name} · ${pl.tools.length} tools${pl.bots.length ? ` · ${pl.bots.length} Bot${pl.bots.length === 1 ? '' : 's'}` : ''}`,
+        color: TONE_COLOR[st.tone],
+        bold: cur,
+        current: cur,
+      });
+    });
+    lines.push({ text: '' }, { text: 'Inbound triggers', bold: true });
+    const inbound = data.inbound ?? [];
+    if (inbound.length === 0) {
+      lines.push({
+        text: 'None. Add a webhook, Slack, file or git trigger to a Bot (orbit triggers).',
+        color: 'gray',
+      });
+    }
+    for (const t of inbound) {
+      const st = TRIGGER_STATE[t.state];
+      lines.push({
+        text: `${`${st.mark} ${st.label}`.padEnd(14)} ${t.botName} · ${t.kind} · ${t.description}${t.detail ? ` (${t.detail})` : ''}`,
+        color: TONE_COLOR[st.tone],
+      });
+    }
+  }
+  const cursorLine = lines.findIndex((l) => l.current);
+  const scroll = o.open
+    ? Math.min(o.scroll, Math.max(0, lines.length - room))
+    : Math.max(0, Math.min(cursorLine - room + 2, lines.length - room));
+  return (
+    <Box
+      flexDirection="column"
+      borderStyle="double"
+      borderColor="cyan"
+      paddingX={1}
+      width={props.width}
+      height={props.height}
+      overflow="hidden"
+    >
+      <Text bold wrap="truncate">
+        Integrations
+      </Text>
+      {data.plugins === null ? (
+        <Text color="gray">loading…</Text>
+      ) : (
+        lines.slice(scroll, scroll + room).map((l, i) => (
+          <Text
+            key={i}
+            wrap="truncate"
+            {...(l.color ? { color: l.color } : {})}
+            bold={l.bold === true}
+          >
+            {l.text || ' '}
+          </Text>
+        ))
+      )}
+      <Box flexGrow={1} />
+      <Text color="gray" wrap="truncate">
+        {o.open
+          ? 'j/k scroll · e enable/disable · Esc back'
+          : 'j/k select · Enter open · e enable/disable · Esc close · ? help'}
       </Text>
     </Box>
   );

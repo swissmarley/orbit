@@ -267,6 +267,32 @@ export class OrbitClient {
     proposeBot: (goal: string) => this.call('proposeBot', { body: { goal } }),
   };
 
+  /** Plugins (ADR-014): reference plugins and ones you added. */
+  readonly plugins = {
+    list: () => this.call('listPlugins'),
+    get: (plugin: string) => this.call('getPlugin', { params: { plugin } }),
+    add: (dir: string) => this.call('addPlugin', { body: { dir } }),
+    remove: (plugin: string) => this.call('removePlugin', { params: { plugin } }),
+    /** Starts the server once to list its tools, then offers it to the Bots that list it. */
+    enable: (plugin: string) => this.call('enablePlugin', { params: { plugin } }),
+    disable: (plugin: string) => this.call('disablePlugin', { params: { plugin } }),
+    check: (plugin: string) => this.call('checkPlugin', { params: { plugin } }),
+    setSecret: (plugin: string, name: string, value: string) =>
+      this.call('setPluginSecret', { params: { plugin, name }, body: { value } }),
+    removeSecret: (plugin: string, name: string) =>
+      this.call('removePluginSecret', { params: { plugin, name } }),
+    setSetting: (plugin: string, name: string, value: string | null) =>
+      this.call('setPluginSetting', { params: { plugin, name }, body: { value } }),
+  };
+
+  /** Inbound triggers (webhooks, Slack, files, git). */
+  readonly triggers = {
+    list: () => this.call('listTriggers'),
+    /** Mint or rotate a webhook trigger's signing secret (shown once). */
+    webhookSecret: (bot: string, trigger: string) =>
+      this.call('webhookSecret', { params: { bot, trigger } }),
+  };
+
   readonly approvals = {
     list: (q: RouteQuery<'listApprovals'> = {}) => this.call('listApprovals', { query: q }),
     get: (approval: string) => this.call('getApproval', { params: { approval } }),

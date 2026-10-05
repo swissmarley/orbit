@@ -30,6 +30,20 @@ import {
   schedulesShow,
   tail,
 } from './commands/run';
+import {
+  pluginAdd,
+  pluginCheck,
+  pluginDisable,
+  pluginEnable,
+  pluginRemove,
+  pluginSecret,
+  pluginSetting,
+  pluginShow,
+  pluginsList,
+  templatesList,
+  triggersList,
+  webhookSecret,
+} from './commands/plugins';
 import { secretList, secretRemove, secretSet } from './commands/secrets';
 import { Context } from './context';
 import { type Io, painter } from './io';
@@ -82,6 +96,8 @@ export async function main(argv: string[], io: Io): Promise<number> {
     .command('create')
     .description('Create a Bot from flags or a YAML/JSON file')
     .option('-f, --file <path>', 'bot spec file (YAML or JSON)')
+    .option('-t, --template <id>', 'start from a template, e.g. inbox-triage (see orbit templates)')
+    .option('--plugins <list>', 'comma-separated plugin ids the Bot may use (see orbit plugins)')
     .option('-n, --name <name>', 'bot name')
     .option('-g, --goal <goal>', 'what the bot works toward')
     .option('-i, --instructions <text>', 'standing instructions')
@@ -261,6 +277,11 @@ export async function main(argv: string[], io: Io): Promise<number> {
     .option('-b, --bot <bot>', 'only for this Bot (default: all Bots)')
     .option('--expires <duration>', 'e.g. 7d or never (allow rules default to 7d)')
     .option('-r, --reason <text>', 'why')
+    .option(
+      '-m, --match <field=glob>',
+      "only when a top-level argument matches (repeatable; * is one value), e.g. 'to=*@example.com'",
+      (v: string, prev: string[] | undefined) => [...(prev ?? []), v],
+    )
     .option('--json', 'machine-readable output')
     .action((o: Parameters<typeof rulesAdd>[1]) => set(rulesAdd(context(), o)));
   rules
@@ -309,6 +330,99 @@ export async function main(argv: string[], io: Io): Promise<number> {
     .argument('<name>')
     .option('--json', 'machine-readable output')
     .action((name: string, o: { json?: boolean }) => set(secretRemove(context(), name, o)));
+
+  program
+    .command('plugins')
+    .description('Plugins (MCP servers Orbit runs for Bots) and their state')
+    .option('--json', 'machine-readable output')
+    .action((o: { json?: boolean }) => set(pluginsList(context(), o)));
+  const plugin = program
+    .command('plugin')
+    .description('Show, enable and set up a plugin (Settings → Integrations in the App)');
+  plugin
+    .command('show')
+    .argument('<id>', 'plugin id, e.g. github')
+    .option('--json', 'machine-readable output')
+    .action((id: string, o: { json?: boolean }) => set(pluginShow(context(), id, o)));
+  plugin
+    .command('enable')
+    .description('Start it once to list its tools, then offer it to the Bots that list it')
+    .argument('<id>')
+    .option('--json', 'machine-readable output')
+    .action((id: string, o: { json?: boolean }) => set(pluginEnable(context(), id, o)));
+  plugin
+    .command('disable')
+    .argument('<id>')
+    .option('--json', 'machine-readable output')
+    .action((id: string, o: { json?: boolean }) => set(pluginDisable(context(), id, o)));
+  plugin
+    .command('check')
+    .description('Start it once and list its tools (does not enable it)')
+    .argument('<id>')
+    .option('--json', 'machine-readable output')
+    .action((id: string, o: { json?: boolean }) => set(pluginCheck(context(), id, o)));
+  plugin
+    .command('add')
+    .description(
+      'Add a plugin from a directory with an orbit-plugin.json (stays off until enabled)',
+    )
+    .argument('<dir>')
+    .option('--json', 'machine-readable output')
+    .action((dir: string, o: { json?: boolean }) => set(pluginAdd(context(), dir, o)));
+  plugin
+    .command('rm')
+    .description('Forget a plugin you added, and its secrets')
+    .argument('<id>')
+    .option('--json', 'machine-readable output')
+    .action((id: string, o: { json?: boolean }) => set(pluginRemove(context(), id, o)));
+  plugin
+    .command('secret')
+    .description("Store one of the plugin's secrets (value from --value-file or stdin, never argv)")
+    .argument('<id>')
+    .argument('<name>', 'the secret name the plugin declares, e.g. GITHUB_TOKEN')
+    .option('--value-file <path>', 'read the value from a file (default: stdin)')
+    .option('--remove', 'remove it instead')
+    .option('--json', 'machine-readable output')
+    .action(
+      (id: string, name: string, o: { valueFile?: string; remove?: boolean; json?: boolean }) =>
+        set(pluginSecret(context(), id, name, o)),
+    );
+  plugin
+    .command('setting')
+    .description('Set a non-secret plugin setting (e.g. FS_ROOTS, BROWSER_ALLOWED_DOMAINS)')
+    .argument('<id>')
+    .argument('<name>')
+    .argument('[value]')
+    .option('--clear', 'clear it')
+    .option('--json', 'machine-readable output')
+    .action(
+      (
+        id: string,
+        name: string,
+        value: string | undefined,
+        o: { clear?: boolean; json?: boolean },
+      ) => set(pluginSetting(context(), id, name, value, o)),
+    );
+  program
+    .command('triggers')
+    .description('Inbound triggers (webhooks, Slack, files, git) and whether they listen')
+    .option('--json', 'machine-readable output')
+    .action((o: { json?: boolean }) => set(triggersList(context(), o)));
+  const trigger = program.command('trigger').description('Set up inbound triggers');
+  trigger
+    .command('webhook-secret')
+    .description("Mint (or rotate) a webhook trigger's signing secret; shown once")
+    .argument('<bot>', 'bot name or id')
+    .argument('<name>', 'the webhook trigger name')
+    .option('--json', 'machine-readable output')
+    .action((botRef: string, name: string, o: { json?: boolean }) =>
+      set(webhookSecret(context(), botRef, name, o)),
+    );
+  program
+    .command('templates')
+    .description('Ready-made Bots (orbit bot create --template <id>)')
+    .option('--json', 'machine-readable output')
+    .action((o: { json?: boolean }) => set(Promise.resolve(templatesList(context(), o))));
 
   program
     .command('tail')

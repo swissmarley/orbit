@@ -1,6 +1,7 @@
 import {
   type Bot,
   type MemoryHit,
+  type PluginStatus,
   RUN_STATUS,
   type RunEvent,
   type RunState,
@@ -35,6 +36,9 @@ export interface Data {
   memoryBot: string | null;
   /** The delegation tree the tree overlay shows. */
   tree: RouteResponse<'runTree'> | null;
+  /** Plugins and inbound triggers (the integrations overlay); null until loaded. */
+  plugins: PluginStatus[] | null;
+  inbound: RouteResponse<'listTriggers'> | null;
   connected: boolean;
   /** The first load finished (until then: "connecting…", never empty states). */
   loaded: boolean;
@@ -52,6 +56,8 @@ export const EMPTY_DATA: Data = {
   memories: [],
   memoryBot: null,
   tree: null,
+  plugins: null,
+  inbound: null,
   connected: false,
   loaded: false,
   error: null,
@@ -101,7 +107,9 @@ export type Overlay =
       back: Overlay;
     }
   /** The delegation tree of the selected Run. */
-  | { kind: 'tree'; runId: string; scroll: number };
+  | { kind: 'tree'; runId: string; scroll: number }
+  /** Plugins and inbound triggers: a list, one plugin opened in full. */
+  | { kind: 'integrations'; index: number; open: boolean; scroll: number };
 
 export interface Ui {
   focus: PaneId;
@@ -161,6 +169,8 @@ export type Command =
   | { kind: 'deleteMemory'; memoryId: string }
   /** Load (and keep fresh) the delegation tree of a Run; null stops. */
   | { kind: 'loadTree'; runId: string | null }
+  | { kind: 'loadIntegrations'; on: boolean }
+  | { kind: 'setPlugin'; pluginId: string; enabled: boolean }
   | { kind: 'feedback'; runId: string; rating: 'up' | 'down' };
 
 /** The subset of Ink's Key the bindings use. */
@@ -319,6 +329,41 @@ export function onKey(ui: Ui, data: Data, input: string, key: KeyInfo): KeyResul
       return { ui: { ...ui, overlay: { ...o, scroll: o.scroll + 1 } } };
     if (input === 'k' || key.upArrow)
       return { ui: { ...ui, overlay: { ...o, scroll: Math.max(0, o.scroll - 1) } } };
+    return { ui };
+  }
+  if (o?.kind === 'integrations') {
+    const list = data.plugins ?? [];
+    const at = clamp(o.index, list.length - 1);
+    if (key.escape || input === 'q' || input === 'i') {
+      if (o.open && !(input === 'i')) return next({ overlay: { ...o, open: false, scroll: 0 } });
+      return next({ overlay: null }, { kind: 'loadIntegrations', on: false });
+    }
+    if (input === '?') return next({ overlay: { kind: 'help', scroll: 0, back: o } });
+    if (input === 'j' || key.downArrow) {
+      return o.open
+        ? { ui: { ...ui, overlay: { ...o, scroll: o.scroll + 1 } } }
+        : next({ overlay: { ...o, index: clamp(at + 1, list.length - 1) } });
+    }
+    if (input === 'k' || key.upArrow) {
+      return o.open
+        ? { ui: { ...ui, overlay: { ...o, scroll: Math.max(0, o.scroll - 1) } } }
+        : next({ overlay: { ...o, index: clamp(at - 1, list.length - 1) } });
+    }
+    const pl = list[at];
+    if (key.return && pl) return next({ overlay: { ...o, index: at, open: true, scroll: 0 } });
+    if (input === 'e' && pl) {
+      const on = !pl.enabled;
+      return next({
+        overlay: {
+          kind: 'confirm',
+          message: on
+            ? `Enable ${pl.name}? Orbit starts it once to list its tools; Bots that list "${pl.id}" can then use them (external ones still ask you).`
+            : `Disable ${pl.name}? No Bot can use its tools until you enable it again.`,
+          command: { kind: 'setPlugin', pluginId: pl.id, enabled: on },
+          back: { ...o, index: at },
+        },
+      });
+    }
     return { ui };
   }
   if (o?.kind === 'memoryEdit') {
@@ -533,6 +578,12 @@ export function onKey(ui: Ui, data: Data, input: string, key: KeyInfo): KeyResul
     return next({
       focus: PANES[Math.min(PANES.length - 1, PANES.indexOf(ui.focus) + 1)] ?? 'approvals',
     });
+  }
+  if (input === 'i') {
+    return next(
+      { overlay: { kind: 'integrations', index: 0, open: false, scroll: 0 } },
+      { kind: 'loadIntegrations', on: true },
+    );
   }
   if (input === 'K') {
     const engaged = data.kill?.engaged === true;
@@ -770,6 +821,8 @@ export const HELP: readonly { keys: string; does: string }[] = [
   { keys: 'Enter / a', does: 'open the whole card; a there approves' },
   { keys: 'A (in the card)', does: 'approve and always allow this tool for the Bot (7 days)' },
   { keys: 'd', does: 'deny, with a reason the Bot will see' },
+  { keys: 'i', does: 'integrations: plugins and inbound triggers' },
+  { keys: 'Enter  e (integrations)', does: 'open a plugin / enable or disable it (asks first)' },
   { keys: 'K', does: 'global kill switch (asks first; only y confirms)' },
   { keys: 'R', does: 'refresh' },
   { keys: 'Enter', does: 'Bots: open the Timeline · Approvals: open the card' },

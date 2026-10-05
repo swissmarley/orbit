@@ -283,3 +283,55 @@ export function runLabel(run: { createdAt: string; trigger: { kind: string } | n
   const kind = RUN_KIND_WORD[run.trigger?.kind ?? 'manual'] ?? 'manual';
   return `the ${kind} Run of ${when}`;
 }
+
+/** A plugin's state (Settings → Integrations, `orbit plugins`, the TUI). */
+export const PLUGIN_STATE: Readonly<
+  Record<'disabled' | 'ready' | 'needs_setup' | 'changed' | 'error', StatusWord>
+> = {
+  disabled: {
+    mark: '○',
+    label: 'off',
+    tone: 'neutral',
+    meaning: 'not enabled: no Bot can use its tools',
+  },
+  ready: {
+    mark: '●',
+    label: 'on',
+    tone: 'success',
+    meaning: 'enabled and checked: Bots that list it can use its tools',
+  },
+  needs_setup: {
+    mark: '◌',
+    label: 'needs setup',
+    tone: 'attention',
+    meaning: 'enabled, but a secret or setting it needs is missing',
+  },
+  changed: {
+    mark: '◆',
+    label: 'review',
+    tone: 'attention',
+    meaning: 'its manifest changed since you enabled it: review it and enable it again',
+  },
+  error: {
+    mark: '✘',
+    label: 'error',
+    tone: 'danger',
+    meaning: 'its last check failed: the server did not start or list its tools',
+  },
+};
+
+/** An inbound trigger's listener (`orbit triggers`, Settings → Integrations). */
+export const TRIGGER_STATE: Readonly<
+  Record<'listening' | 'connecting' | 'needs_setup' | 'error' | 'off', StatusWord>
+> = {
+  listening: { mark: '●', label: 'listening', tone: 'success', meaning: 'ready to start Runs' },
+  connecting: { mark: '◌', label: 'connecting', tone: 'info', meaning: 'starting up' },
+  needs_setup: {
+    mark: '◌',
+    label: 'needs setup',
+    tone: 'attention',
+    meaning: 'a signing secret or token is missing',
+  },
+  error: { mark: '✘', label: 'error', tone: 'danger', meaning: 'not listening; see the detail' },
+  off: { mark: '○', label: 'off', tone: 'neutral', meaning: 'turned off, or its Bot is paused' },
+};

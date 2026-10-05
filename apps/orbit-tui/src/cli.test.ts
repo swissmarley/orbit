@@ -107,6 +107,127 @@ describe('orbit CLI', () => {
     expect(cli.text()).toMatch(/Open Orbit: http:\/\/localhost:5173\/login#ticket=/);
   });
 
+  it('plugins: list, show, setting, enable (a real plugin process), disable — human and --json', async () => {
+    const cli = harness(mockEnv());
+    expect(await cli.run('plugins', '--json')).toBe(0);
+    const list = cli.json<{ id: string; state: string }[]>();
+    expect(list.map((p) => p.id).sort()).toEqual([
+      'browser',
+      'filesystem',
+      'github',
+      'google',
+      'slack',
+    ]);
+    expect(list.every((p) => p.state === 'disabled')).toBe(true);
+    cli.reset();
+    expect(await cli.run('plugin', 'show', 'filesystem')).toBe(0);
+    expect(cli.text()).toMatch(/◇ read\s+read_file/);
+    expect(cli.text()).toMatch(/⇗ external\s+write_file/);
+    expect(cli.text()).toMatch(/FS_ROOTS = \(required, not set\)/);
+    cli.reset();
+    expect(await cli.run('plugin', 'enable', 'filesystem')).toBe(2);
+    expect(cli.err.join('\n')).toMatch(/needs setting FS_ROOTS/);
+    cli.reset();
+    expect(await cli.run('plugin', 'setting', 'filesystem', 'FS_ROOTS', home)).toBe(0);
+    cli.reset();
+    expect(await cli.run('plugin', 'enable', 'filesystem', '--json')).toBe(0);
+    expect(cli.json<{ state: string; tools: { available: boolean }[] }>()).toMatchObject({
+      state: 'ready',
+      tools: [{ available: true }, { available: true }, { available: true }, { available: true }],
+    });
+    cli.reset();
+    expect(await cli.run('plugins')).toBe(0);
+    expect(cli.text()).toMatch(/● on\s+filesystem/);
+    cli.reset();
+    expect(await cli.run('plugin', 'disable', 'filesystem')).toBe(0);
+    expect(cli.text()).toMatch(/○ off/);
+  }, 30_000);
+
+  it('plugin secrets come from a file or stdin, never argv, and are never printed', async () => {
+    const cli = harness(mockEnv());
+    const file = writeSpec(home, 'token.txt', 'ghp_supersecretvalue1234567890abcdef\n');
+    expect(
+      await cli.run('plugin', 'secret', 'github', 'GITHUB_TOKEN', '--value-file', file, '--json'),
+    ).toBe(0);
+    const out = cli.text();
+    expect(out).not.toContain('supersecret');
+    expect(cli.json<{ secrets: { name: string; set: boolean }[] }>().secrets).toContainEqual(
+      expect.objectContaining({ name: 'GITHUB_TOKEN', set: true }),
+    );
+    cli.reset();
+    expect(await cli.run('plugin', 'secret', 'github', 'NOT_DECLARED', '--value-file', file)).toBe(
+      2,
+    );
+  });
+
+  it('triggers, webhook secrets, templates and rules with --match', async () => {
+    const cli = harness(mockEnv());
+    const spec = writeSpec(
+      home,
+      'hooked.json',
+      JSON.stringify({
+        name: 'Hooked',
+        goal: 'React to deploys',
+        triggers: [{ kind: 'webhook', name: 'deploys' }],
+      }),
+    );
+    expect(await cli.run('bot', 'create', '-f', spec)).toBe(0);
+    cli.reset();
+    expect(await cli.run('triggers')).toBe(0);
+    expect(cli.text()).toMatch(/◌ needs setup\s+Hooked\s+webhook\s+deploys\s+POST \/hooks\/bot_/);
+    cli.reset();
+    expect(await cli.run('trigger', 'webhook-secret', 'hooked', 'deploys', '--json')).toBe(0);
+    const minted = cli.json<{ secret: string; path: string }>();
+    expect(minted.secret.length).toBeGreaterThanOrEqual(40);
+    cli.reset();
+    expect(await cli.run('triggers', '--json')).toBe(0);
+    expect(cli.json<{ state: string }[]>()).toEqual([
+      expect.objectContaining({ state: 'listening' }),
+    ]);
+    cli.reset();
+
+    expect(await cli.run('templates')).toBe(0);
+    expect(cli.text()).toMatch(/inbox-triage\s+Inbox Triage/);
+    cli.reset();
+    expect(await cli.run('bot', 'create', '--template', 'inbox-triage', '--json')).toBe(0);
+    expect(
+      cli.json<{ spec: { plugins: string[]; triggers: { cron: string }[] } }>().spec,
+    ).toMatchObject({
+      plugins: ['google'],
+      triggers: [{ cron: '0 8 * * 1-5' }],
+    });
+    cli.reset();
+    expect(await cli.run('bot', 'create', '--template', 'nope')).toBe(2);
+    cli.reset();
+
+    expect(
+      await cli.run(
+        'rules',
+        'add',
+        '--tool',
+        'mcp__google__send_draft',
+        '--effect',
+        'allow',
+        '--match',
+        'to=*@example.com',
+      ),
+    ).toBe(0);
+    expect(cli.text()).toMatch(/allow mcp__google__send_draft when to=\*@example\.com/);
+    cli.reset();
+    expect(
+      await cli.run(
+        'rules',
+        'add',
+        '--tool',
+        'mcp__google__send_draft',
+        '--effect',
+        'allow',
+        '--match',
+        'oops',
+      ),
+    ).toBe(2);
+  });
+
   it('doctor reports the active driver and auth method (human and --json)', async () => {
     const h = harness(mockEnv());
     expect(await h.run('doctor')).toBe(ExitCode.ok);

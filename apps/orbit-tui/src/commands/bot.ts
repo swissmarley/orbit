@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { type BotSpecInput, OrbitError } from '@orbit/core';
+import { BOT_TEMPLATES, type BotSpecInput, OrbitError, botTemplate } from '@orbit/core';
 import { parse as parseYaml } from 'yaml';
 import type { Context } from '../context';
 import { painter } from '../io';
@@ -7,6 +7,10 @@ import { scrubControls } from '../render';
 
 export interface BotCreateOptions {
   file?: string;
+  /** Start from a template (`orbit templates`); other flags override it. */
+  template?: string;
+  /** Comma-separated plugin ids the Bot may use. */
+  plugins?: string;
   name?: string;
   goal?: string;
   instructions?: string;
@@ -23,6 +27,15 @@ export interface BotCreateOptions {
 
 export function botSpecFromOptions(o: BotCreateOptions): BotSpecInput {
   let spec: Partial<BotSpecInput> = {};
+  if (o.template) {
+    const t = botTemplate(o.template);
+    if (!t) {
+      throw new OrbitError('invalid_input', `No template "${o.template}"`, {
+        hint: `Templates: ${BOT_TEMPLATES.map((x) => x.id).join(', ')} (orbit templates)`,
+      });
+    }
+    spec = structuredClone(t.spec);
+  }
   if (o.file) {
     const text = readFileSync(o.file, 'utf8');
     spec = (o.file.endsWith('.json') ? JSON.parse(text) : parseYaml(text)) as Partial<BotSpecInput>;
@@ -38,6 +51,11 @@ export function botSpecFromOptions(o: BotCreateOptions): BotSpecInput {
       .filter(Boolean);
   if (o.maxTurns) spec.maxTurns = Number(o.maxTurns);
   if (o.fixture) spec.mock = { fixture: o.fixture };
+  if (o.plugins)
+    spec.plugins = o.plugins
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean);
   const triggers = [...(spec.triggers ?? [])];
   if (o.cron) triggers.push({ kind: 'cron', cron: o.cron });
   if (o.every) {

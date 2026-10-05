@@ -267,6 +267,29 @@ describe('more untrusted text', () => {
   });
 });
 
+describe('M7: integrations', () => {
+  it('i shows plugins and inbound triggers in words; e enables after y', async () => {
+    const t = open();
+    await t.waitFor(/Mailer/);
+    await t.press('i');
+    const list = await t.waitFor(/Inbound triggers/);
+    expect(list).toMatchSnapshot();
+    expect(list).toMatch(/● on\s+github/);
+    expect(list).toMatch(/○ off\s+filesystem/);
+    expect(list).toMatch(/◌ needs setup\s+Mailer · webhook · deploys/);
+    await t.press('j', KEYS.enter);
+    const detail = await t.waitFor(/Secrets \(only this plugin receives them\)/);
+    expect(detail).toMatch(/⇗ external\s+git_push/);
+    expect(detail).toMatch(/never typed here/);
+    await t.press('e');
+    await t.waitFor(/Enable Filesystem\?/);
+    await t.press('y');
+    await t.waitFor(/● Filesystem is on/);
+    expect(t.mock.plugins.enable).toHaveBeenCalledWith('filesystem');
+    expect(t.mock.plugins.list.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
 describe('M6: memory browser and delegation tree', () => {
   it('m opens the memory browser with trust in words; Enter shows provenance; x deletes after y', async () => {
     const t = open();
