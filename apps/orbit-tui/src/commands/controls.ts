@@ -8,6 +8,24 @@ export async function stopRun(ctx: Context, runId: string, o: { json?: boolean }
   return 0;
 }
 
+/** Pause a running Run at its next tool call, or `--now` (ADR-016). */
+export async function pauseRun(
+  ctx: Context,
+  runId: string,
+  o: { now?: boolean; json?: boolean },
+): Promise<number> {
+  const run = await (await ctx.client()).runs.pause(runId, o.now ? { now: true } : {});
+  const now = o.now === true;
+  if (o.json) {
+    ctx.io.out(JSON.stringify({ runId, pauseRequested: true, now, status: run.status }));
+    return 0;
+  }
+  ctx.io.out(
+    `${painter(ctx.io)('yellow', '⏸')} Pause requested for ${runId}: ${now ? 'the engine stops now (its last turn is cut off)' : 'it pauses at its next tool call (if it finishes first, the request lapses)'}. Resume it with orbit resume ${runId}.`,
+  );
+  return 0;
+}
+
 export async function pauseBot(
   ctx: Context,
   botRef: string,

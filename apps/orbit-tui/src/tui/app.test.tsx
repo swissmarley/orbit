@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { KEYS, renderTerminal } from '../../test/render';
-import { approval, data, events, fakeClient, memories } from '../../test/tui-fixtures';
+import { approval, data, events, fakeClient, memories, run } from '../../test/tui-fixtures';
 import { App } from './app';
 
 const plain = (_style: unknown, text: string) => text;
@@ -128,6 +128,37 @@ describe('TUI actions', () => {
     await t.press('p', 'y');
     await t.waitFor(/paused Notes/);
     expect(t.mock.bots.pause).toHaveBeenCalledWith('bot_b');
+  });
+
+  it('P pauses the running Run through orbitd; a paused Run shows why and how to go on', async () => {
+    const running = data({
+      runs: [run('run_a2', 'bot_a', 'running'), run('run_a1', 'bot_a', 'completed')],
+    });
+    const t = open(WIDE, running);
+    await t.waitFor(/Mailer/);
+    await t.press('2', 'P');
+    await t.waitFor(/pausing run_a2 at its next tool call/);
+    expect(t.mock.runs.pause).toHaveBeenCalledWith('run_a2');
+    unmount?.();
+    const pausedRun = {
+      ...run('run_a2', 'bot_a', 'paused'),
+      pause: {
+        reason: 'owner' as const,
+        by: 'owner',
+        at: '2026-10-04T09:19:00.000Z',
+        interruptedTurn: false,
+        toolUseId: 't1',
+        toolName: 'Bash',
+        autoResume: false,
+        detail: null,
+      },
+    };
+    const p = open(WIDE, data({ runs: [pausedRun] }));
+    const frame = await p.waitFor(/Paused by owner before Bash ran/);
+    expect(frame).toMatch(/⏸ paused/);
+    expect(frame).toMatch(/shell: orbit shell mailer/);
+    await p.press('2');
+    await p.waitFor(/s stop · P pause · u resume/);
   });
 
   it('errors from orbitd show as a red toast, not a crash', async () => {

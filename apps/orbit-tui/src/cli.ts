@@ -6,7 +6,8 @@ import { doctor } from './commands/doctor';
 import { loginHelp } from './commands/login-help';
 import { approvalShow, approvalsList, approve, deny } from './commands/approvals';
 import { auditExport, auditList, auditVerify } from './commands/audit';
-import { killSwitch, pauseBot, stopRun } from './commands/controls';
+import { killSwitch, pauseBot, pauseRun, stopRun } from './commands/controls';
+import { shell } from './commands/shell';
 import { daemonStart, daemonStatus, daemonStop } from './commands/daemon';
 import {
   feedbackCmd,
@@ -199,13 +200,29 @@ export async function main(argv: string[], io: Io): Promise<number> {
 
   program
     .command('resume')
-    .description('Resume a parked (approvals decided) or rate-limited Run')
+    .description('Resume a parked (approvals decided), paused or rate-limited Run')
     .argument('<run>', 'run id')
     .option('--fixture <name>', 'mock scenario (MockDriver only)')
     .option('--json', 'stream events as NDJSON')
     .action((runId: string, o: { json?: boolean; fixture?: string }) =>
       set(resumeRun(context(), runId, o)),
     );
+
+  program
+    .command('pause')
+    .description('Pause a running Run at its next tool call (resume it with orbit resume)')
+    .argument('<run>', 'run id')
+    .option('--now', 'stop the engine now instead (its last turn is cut off)')
+    .option('--json', 'machine-readable output')
+    .action((runId: string, o: { now?: boolean; json?: boolean }) =>
+      set(pauseRun(context(), runId, o)),
+    );
+
+  program
+    .command('shell')
+    .description("Take over a Bot's workspace in your shell (holds the Bot until you exit)")
+    .argument('<bot>')
+    .action((b: string) => set(shell(context(), b)));
 
   program
     .command('stop')

@@ -13,6 +13,8 @@ export const ExitCode = {
   blocked: 7,
   /** The Run is parked waiting for your approval (`orbit approvals`). */
   waitingApproval: 10,
+  /** The Run is paused (`orbit resume <run>`, ADR-016). */
+  paused: 11,
   /** Usage limit reached; retry after reset (EX_TEMPFAIL). */
   rateLimited: 75,
   cancelled: 130,

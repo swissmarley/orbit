@@ -15,7 +15,10 @@ const FAKE_CLAUDE = join(import.meta.dirname, '../test/fake-claude-auth.mjs');
 /** Daemons the CLI auto-started in this process (one per test home). */
 const daemons: Daemon[] = [];
 
-function harness(env: Record<string, string | undefined>) {
+function harness(
+  env: Record<string, string | undefined>,
+  options: { mockDelayMs?: number; io?: Partial<Io> } = {},
+) {
   const out: string[] = [];
   const err: string[] = [];
   const io: Io = {
@@ -31,10 +34,11 @@ function harness(env: Record<string, string | undefined>) {
           env: e,
           port: 0,
           log: () => undefined,
-          service: { vaultKeySource: 'file', mock: { delayMs: 0 } },
+          service: { vaultKeySource: 'file', mock: { delayMs: options.mockDelayMs ?? 0 } },
         }),
       );
     },
+    ...options.io,
   };
   return {
     run: (...argv: string[]) => main(argv, io),
@@ -505,8 +509,8 @@ describe('orbit CLI', () => {
       const leaves = cases.filter(
         (c) => c.path !== '' && !cases.some((o) => o.path.startsWith(`${c.path} `)),
       );
-      // Not data: the TUI itself, the completion script, JSONL export.
-      const exempt = new Set(['tui', 'completion', 'audit export']);
+      // Not data: the TUI itself, the completion script, JSONL export, an interactive shell.
+      const exempt = new Set(['tui', 'completion', 'audit export', 'shell']);
       const missing = leaves.filter((c) => !exempt.has(c.path) && !c.opts.includes('--json'));
       expect(leaves.length).toBeGreaterThan(25);
       expect(missing.map((c) => c.path)).toEqual([]);
@@ -851,6 +855,87 @@ describe('orbit CLI', () => {
       expect(await h.run('tree', runId!)).toBe(0);
       expect(h.out[0]).toContain('✔ done Lead');
       expect(h.out[1]).toMatch(/^└─ ✔ done Researcher run_/);
+    });
+  });
+
+  describe('ADR-016: pause, resume, take-over', () => {
+    const until = async (cond: () => boolean) => {
+      for (let i = 0; i < 400 && !cond(); i++) await new Promise((r) => setTimeout(r, 10));
+      expect(cond()).toBe(true);
+    };
+
+    it('orbit pause parks a running Run at its next tool call; orbit resume continues it', async () => {
+      const h = harness(mockEnv(), { mockDelayMs: 30 });
+      await h.run('bot', 'create', '--name', 'Reader', '--goal', 'x', '--fixture', 'many-reads');
+      h.reset();
+      const running = h.run('run', 'reader', '--json');
+      await until(() => h.out.some((l) => l.includes('"session.init"')));
+      const runId = h.ndjson()[0]!.runId;
+      const other = harness(mockEnv());
+      expect(await other.run('pause', runId, '--json')).toBe(0);
+      expect(other.json<{ pauseRequested: boolean; now: boolean }>()).toMatchObject({
+        pauseRequested: true,
+        now: false,
+      });
+      expect(await running).toBe(ExitCode.paused);
+      expect(h.ndjson().at(-1)?.type).toBe('run.paused');
+      other.reset();
+      expect(await other.run('logs', runId)).toBe(0);
+      expect(other.text()).toMatch(/⏸ pause requested by owner — at the next tool call/);
+      expect(other.text()).toMatch(/⏸ Paused by owner before Read ran\./);
+      other.reset();
+      expect(await other.run('resume', runId)).toBe(ExitCode.ok);
+      expect(other.text()).toMatch(/▶ resumed after pause/);
+      expect(other.text()).toMatch(/✔ completed/);
+      other.reset();
+      expect(await other.run('pause', runId)).toBe(ExitCode.usage);
+      expect(other.err.join('\n')).toMatch(/only a running Run can be paused/);
+    });
+
+    it('orbit shell holds the Bot, runs $SHELL in its workspace with an allowlisted env, then releases it', async () => {
+      const seen: { shell: string; cwd: string; env: Record<string, string> }[] = [];
+      let pausedDuring: string | null = null;
+      let refusedDuring = 0;
+      const env = {
+        ...mockEnv(),
+        SHELL: '/bin/zsh-test',
+        ANTHROPIC_API_KEY: 'sk-ant-api03-PLANTED-000000',
+        CLAUDE_CODE_OAUTH_TOKEN: 'planted-oauth',
+      };
+      const h = harness(env, {
+        io: {
+          spawnShell: async (o) => {
+            seen.push(o);
+            const client = localClient(home);
+            pausedDuring = (await client!.bots.get('notes')).pausedAt;
+            const inner = harness(mockEnv());
+            refusedDuring = await inner.run('run', 'notes');
+            return 7;
+          },
+        },
+      });
+      await h.run('bot', 'create', '--name', 'Notes', '--goal', 'x', '--fixture', 'pong');
+      h.reset();
+      expect(await h.run('shell', 'notes')).toBe(7);
+      expect(seen).toHaveLength(1);
+      const [o] = seen;
+      expect(o!.shell).toBe('/bin/zsh-test');
+      expect(o!.cwd).toMatch(/workspaces/);
+      expect(o!.env.ORBIT_TAKEOVER).toBe('1');
+      expect(o!.env.PATH).toBe(process.env.PATH);
+      expect(o!.env.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(o!.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+      expect(o!.env.ORBIT_HOME).toBeUndefined();
+      expect(pausedDuring).not.toBeNull();
+      expect(refusedDuring).toBe(ExitCode.blocked);
+      expect(h.text()).toMatch(/Holding Notes while you work/);
+      expect(h.text()).toMatch(/Take-over ended; Notes may run again/);
+      const bot = await localClient(home)!.bots.get('notes');
+      expect(bot.pausedAt).toBeNull();
+      h.reset();
+      expect(await h.run('audit', '--json')).toBe(0);
+      const actions = h.json<{ action: string }[]>().map((a) => a.action);
+      expect(actions).toEqual(expect.arrayContaining(['takeover.started', 'takeover.ended']));
     });
   });
 });

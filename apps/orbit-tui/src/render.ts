@@ -8,6 +8,7 @@ import {
   formatLocalTime,
   formatTokens as tokens,
   formatWhen,
+  pauseReason,
   scrubControls,
 } from '@orbit/core';
 import { type painter } from './io';
@@ -162,7 +163,22 @@ export function renderEvent(raw: RunEvent, paint: Paint, cwd: string | null): st
         `  ${e.data.signal === 'thumbs_up' ? '▲' : e.data.signal === 'thumbs_down' ? '▼' : '✎'} feedback recorded (${e.data.signal.replace('_', ' ')})`,
       );
     case 'run.resumed':
-      return paint('cyan', `▶ resumed after ${e.data.reason.replace('_', ' ')}`);
+      return paint('cyan', `▶ resumed after ${RESUMED_AFTER[e.data.reason]}`);
+    case 'run.pause_requested':
+      return paint(
+        'yellow',
+        `  ⏸ pause requested by ${e.data.by} — ${e.data.now ? 'now: the engine stops mid-turn' : 'at the next tool call'}`,
+      );
+    case 'run.pause_lapsed':
+      return paint('dim', '  ⏸ pause request lapsed: the turn ended without another tool call');
+    case 'run.paused':
+      return paint(
+        'yellow',
+        `⏸ ${oneLine(
+          pauseReason({ ...e.data, at: e.ts }),
+          200,
+        )}${e.data.autoResume ? '' : ' Resume it with `orbit resume`, or stop it.'}`,
+      );
     case 'run.resume_scheduled':
       return paint('cyan', `  ⏰ resumes automatically at ${formatLocalTime(e.data.at)}`);
     case 'tool.result': {
@@ -224,6 +240,16 @@ export function renderEvent(raw: RunEvent, paint: Paint, cwd: string | null): st
       return null;
   }
 }
+
+const RESUMED_AFTER: Record<Extract<RunEvent, { type: 'run.resumed' }>['data']['reason'], string> =
+  {
+    approval: 'approval',
+    usage_limit: 'usage limit',
+    manual: 'manual resume',
+    delegation: 'delegation',
+    pause: 'pause',
+    interrupted: 'interruption (verify unanswered tool calls first)',
+  };
 
 export function renderRunRow(r: RunState, paint: Paint): string {
   const color: Record<string, Parameters<Paint>[0]> = {
