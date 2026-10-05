@@ -5,7 +5,7 @@ You are lead engineer on **Orbit** (repo `swissmarley/orbit`): a self-hostable p
 ## State
 
 - `main` and `claude/orbit-build` point at the same commit. M0–M7 are complete; each passed a safety review, and M4–M7 a UI review.
-- `pnpm check` passes with 1443 tests and 12 skipped; `pnpm test:e2e` (Playwright against a real orbitd, mock driver, axe in both themes) passes 16 tests. CI runs both with `ORBIT_DRIVER=mock` and no credentials, plus the Browser plugin's Chromium tests in the e2e job.
+- `pnpm check` passes with 1473 tests and 12 skipped; `pnpm test:e2e` (Playwright against a real orbitd, mock driver, axe in both themes) passes 16 tests. CI runs both with `ORBIT_DRIVER=mock` and no credentials, plus the Browser plugin's Chromium tests in the e2e job.
 - CI sets `NODE_OPTIONS=--max-old-space-size=6144`; `pnpm lint` runs ESLint in three processes (packages+tools, apps, plugins) to fit. Before the Browser plugin tests CI runs `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` so Chromium keeps its sandbox on Ubuntu 24.
 - Work on `claude/orbit-build`. Use Conventional Commits with the attribution lines. Fast-forward `main` when a milestone closes and CI is green.
 
@@ -40,8 +40,8 @@ npx vitest run -u --project @orbit/tui           # after intended TUI layout cha
   - `PluginManifest` (`@orbit/core`): tools with fixed tiers (+ `egress`), secrets by name (`scope: "orbit"` for ones only orbitd uses), owner settings, env allowlist, stdio or http server. Credential and loader variable names are refused.
   - `PluginRegistry`: reference plugins plus owner-added folders (not inside `$ORBIT_HOME`); off until enabled; enabling runs a check and pins the manifest hash; undeclared tools hidden; the engine sees manifest descriptions.
   - `PluginSegment`: one server per plugin per Run segment, started lazily in the Bot's workspace with `buildPluginEnv` (allowlist, env names, settings, its own secrets, `ORBIT_WORKSPACE`, `ORBIT_GIT_REPO`/`ORBIT_GIT_BRANCH` for worktree Bots, `ORBIT_DENIED_PATHS`). A call runs only after Orbit's PreToolUse decision authorized exactly that input.
-  - Tiers: exact-name overrides after `ORBIT_TOOL_TIERS`, raised to `tierFloor` (money → FINANCIAL; send/write/create/run/click → EXTERNAL; drafts/commit → WRITE_LOCAL).
-  - Reference plugins: GitHub (REST + git with explicit `GIT_DIR` from Orbit; `git_push` names branch and sha), Slack, Gmail & Calendar (`send_draft` names recipients and subject), Filesystem (deny list + hidden paths), Browser (Chromium behind a domain-filtering proxy).
+  - Tiers: exact-name overrides after `ORBIT_TOOL_TIERS`, raised to `tierFloor` (money → FINANCIAL; drafts and git commits → WRITE_LOCAL; READ only for read-like names; everything else EXTERNAL).
+  - Reference plugins: GitHub (REST + git with explicit `GIT_DIR` from Orbit, never inside nested repositories or submodules; `git_push` names branch and sha), Slack, Gmail & Calendar (`send_draft` names recipients and subject), Filesystem (deny list + hidden paths), Browser (Chromium behind a domain-filtering proxy).
 - **Inbound triggers** (`packages/runtime/src/triggers`, `TriggerRouter`): webhooks (constant-time HMAC before parsing; Orbit style with timestamp, GitHub style once per delivery id and per body), Slack Socket Mode (outbound `wss`; `users` required on the subscription engine), file and git watchers (chokidar; git with forced safe config, never inside `$ORBIT_HOME`). Content arrives in `<orbit-untrusted>` tags and the Run starts tainted.
 - **Templates**: `BOT_TEMPLATES` in `@orbit/core` (Inbox Triage), used by the CLI and the wizard.
 - **Clients** use only `@orbit/sdk-client` (`plugins`, `triggers` namespaces added); App Settings → Integrations (`src/screens/integrations.tsx`); TUI `i` overlay.
