@@ -1,7 +1,6 @@
 import { mkdirSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import {
   type Bot,
   OrbitError,
@@ -16,6 +15,7 @@ import { type AuditSink, type ToolTierOverride, effectivePluginTier } from '@orb
 import { isWithin, pluginDeniedPaths } from '@orbit/sandbox';
 import type { OrbitDb } from '@orbit/store';
 import type { Env } from '../env';
+import { orbitLayout } from '../layout';
 import { HttpMcpClient, type McpClient, type McpToolDef, StdioMcpClient } from './client';
 import {
   type LoadedManifest,
@@ -27,25 +27,26 @@ import {
   resolveHeaders,
 } from './manifest';
 
-/** The reference plugins shipped with Orbit (`plugins/*` in the repository); null if unknown. */
+/**
+ * The reference plugins shipped with Orbit: `plugins/*` in the repository,
+ * `plugins/*` of the npm package (bundled servers); null if unknown.
+ */
 export function builtinPluginsDir(): string | null {
   try {
-    return fileURLToPath(new URL('../../../../plugins', import.meta.url));
+    return orbitLayout().pluginsDir;
   } catch {
-    // Not loaded from a file (a bundled or browser-hosted test build).
+    // Not loaded from a file (a browser-hosted test build): no module directory.
     return null;
   }
 }
 
-/** Node and tsx for `${node}` / `${tsx}` in stdio commands (the dev tree runs TypeScript). */
+/**
+ * Node and tsx for `${node}` / `${tsx}` in stdio commands. The dev tree runs
+ * TypeScript servers; the package's reference servers are JavaScript and do
+ * not use `${tsx}` (an owner's plugin that does needs `tsx` on its PATH).
+ */
 export function defaultPluginPaths(): { node: string; tsx: string } {
-  let tsx = 'tsx';
-  try {
-    tsx = import.meta.resolve('tsx');
-  } catch {
-    // Packaged builds ship JavaScript plugin servers.
-  }
-  return { node: process.execPath, tsx };
+  return { node: process.execPath, tsx: orbitLayout().tsx ?? 'tsx' };
 }
 
 interface Row {
