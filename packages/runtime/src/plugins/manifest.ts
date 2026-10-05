@@ -121,6 +121,7 @@ export function buildPluginEnv(input: PluginEnvInput): Record<string, string> {
     if (v !== undefined && isAllowedPluginVar(s.name)) extra[s.name] = v;
   }
   for (const s of manifest.secrets) {
+    if (s.scope === 'orbit') continue;
     const v = input.secret(pluginSecretKey(manifest.id, s.name));
     if (v !== undefined && isAllowedPluginVar(s.name)) extra[s.name] = v;
   }

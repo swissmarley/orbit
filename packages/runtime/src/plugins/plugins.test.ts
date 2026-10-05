@@ -225,6 +225,27 @@ describe('plugin environment (ADR-014)', () => {
     }
   });
 
+  it("never passes an orbit-scoped secret to the plugin's process (review L6)", () => {
+    writePlugin(pluginDir(), {
+      secrets: [
+        { name: 'FAKE_TOKEN' },
+        { name: 'FAKE_APP_TOKEN', required: false, scope: 'orbit' },
+      ],
+    });
+    vault.set(pluginSecretKey('fake', 'FAKE_TOKEN'), 'fake-token-1234');
+    vault.set(pluginSecretKey('fake', 'FAKE_APP_TOKEN'), 'xapp-orbit-only-5678');
+    const env = buildPluginEnv({
+      manifest: loadManifest(pluginDir()).manifest,
+      source: ENV,
+      settings: {},
+      secret: (n) => vault.get(n),
+      workspace: null,
+    });
+    expect(env.FAKE_TOKEN).toBe('fake-token-1234');
+    expect(env.FAKE_APP_TOKEN).toBeUndefined();
+    expect(Object.values(env)).not.toContain('xapp-orbit-only-5678');
+  });
+
   it('a manifest cannot ask for credentials or loader variables', () => {
     for (const bad of [
       { env: ['ANTHROPIC_API_KEY'] },

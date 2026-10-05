@@ -345,6 +345,9 @@ export class OrbitService {
       },
       git: (repo) => gitRunner(repo, buildChildEnv('tool', env)),
       orbitHome: config.home,
+      // Until the engine resolves, assume the subscription engine (the strictest).
+      slackNeedsUsers: () =>
+        (this.engine?.resolution.driver ?? this.config.driver ?? 'cli') === 'cli',
       hasWebhookSecret: (bot, name) => this.vault.has(webhookSecretName(bot.id, name)),
       log: (m) => this.log('info', m),
       ...(opts.slack?.fetch ? { slackFetch: opts.slack.fetch } : {}),

@@ -67,6 +67,12 @@ export interface TriggerRouterDeps {
    * git configuration must never be run by orbitd (M7 safety review M5).
    */
   orbitHome?: string;
+  /**
+   * True on the subscription engine (CliDriver): a Claude subscription is for
+   * its owner's own use, so a Slack trigger must name the users who may start
+   * Runs instead of letting a whole channel do it (M7 safety review M6).
+   */
+  slackNeedsUsers?: () => boolean;
   /** Is the webhook's signing secret set? */
   hasWebhookSecret: (bot: Bot, name: string) => boolean;
   log?: (message: string) => void;
@@ -239,12 +245,20 @@ export class TriggerRouter {
     for (const { bot, trigger } of this.wanted().values()) {
       if (trigger.kind !== 'slack') continue;
       if (!slackMatches(trigger, m)) continue;
+      if (this.slackUsersMissing(trigger)) {
+        this.deps.log?.(`Slack message for ${bot.spec.name} ignored: the trigger names no users`);
+        continue;
+      }
       this.fire(bot, trigger, {
         source: `slack:${m.channel}`,
         context: `Slack channel ${m.channel}, message ts ${m.ts}${m.threadTs ? `, thread ${m.threadTs}` : ''}, from user ${m.user}.`,
         text: m.text,
       });
     }
+  }
+
+  private slackUsersMissing(trigger: SlackTrigger): boolean {
+    return trigger.users.length === 0 && (this.deps.slackNeedsUsers?.() ?? false);
   }
 
   /** Inbound triggers with their listener state (webhooks included). */
@@ -279,6 +293,13 @@ export class TriggerRouter {
                 }
               : { ...base, state: 'needs_setup', detail: 'no signing secret yet' },
           );
+        } else if (trigger.kind === 'slack' && this.slackUsersMissing(trigger)) {
+          out.push({
+            ...base,
+            state: 'needs_setup',
+            detail:
+              'name the Slack users who may start Runs ("users"): on your Claude subscription only you may use it',
+          });
         } else if (trigger.kind === 'slack') {
           const s = this.slack?.state ?? { state: 'off' as const };
           out.push({

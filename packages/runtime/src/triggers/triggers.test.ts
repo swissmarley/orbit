@@ -406,6 +406,35 @@ describe('file and git triggers', () => {
     expect(fired).toEqual([]);
   });
 
+  it('on the subscription engine a Slack trigger must name its users (review M6)', () => {
+    const fired: InboundContent[] = [];
+    let cli = true;
+    const open = makeBot([{ kind: 'slack', channels: ['C0123ABC'] }]);
+    const r = new TriggerRouter({
+      bots: () => [open],
+      fire: (_b, _t, _ref, content) => {
+        fired.push(content);
+        return { fired: true, runId: 'run_x' };
+      },
+      slack: { appToken: () => undefined, apiUrl: 'http://x' },
+      git: () => () => Promise.resolve(''),
+      hasWebhookSecret: () => false,
+      slackNeedsUsers: () => cli,
+    });
+    expect(r.status()[0]).toMatchObject({
+      state: 'needs_setup',
+      detail: expect.stringMatching(/name the Slack users/) as unknown as string,
+    });
+    const deliver = (r as unknown as { onSlack: (m: unknown) => void }).onSlack.bind(r);
+    const m = { type: 'app_mention', channel: 'C0123ABC', user: 'U0ANYONE', text: 'hi', ts: '1.1' };
+    deliver({ ...m, threadTs: null });
+    expect(fired).toEqual([]);
+    // Positive control: with an API key (not the subscription) the channel may start Runs.
+    cli = false;
+    deliver({ ...m, threadTs: null });
+    expect(fired).toHaveLength(1);
+  });
+
   it('reports webhook triggers without a secret as needing setup', () => {
     const r = router(makeBot([{ kind: 'webhook', name: 'deploys' }]), []);
     expect(r.status()).toEqual([

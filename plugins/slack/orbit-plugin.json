@@ -45,8 +45,9 @@
     },
     {
       "name": "SLACK_APP_TOKEN",
-      "description": "App-level token (xapp-…) for Orbit's Slack trigger over Socket Mode; the plugin's tools do not use it",
-      "required": false
+      "description": "App-level token (xapp-…) for Orbit's Slack trigger over Socket Mode; only orbitd uses it, the plugin never gets it",
+      "required": false,
+      "scope": "orbit"
     }
   ],
   "settings": [

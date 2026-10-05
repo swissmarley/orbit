@@ -56,7 +56,14 @@ orbit plugin secret slack SLACK_APP_TOKEN < app-token.txt
 ```
 
 Orbit opens the Socket Mode connection outward; nothing listens on a public
-URL. The plugin's tools never use the app-level token.
+URL. Only orbitd uses the app-level token: the manifest gives it
+`"scope": "orbit"`, so it never reaches the plugin's process.
+
+A Slack trigger names the channels it listens to and, with `users`, the Slack
+user ids allowed to start Runs. On your Claude subscription (the `claude`
+login engine) `users` is required: the subscription is for your own use, so a
+trigger without it stays "needs setup" and starts nothing. With an API key a
+trigger may leave `users` empty to let everyone in the channels start Runs.
 
 `SLACK_API_URL` (default `https://slack.com/api`) may be set in orbitd's
 environment to point the plugin elsewhere (tests use a local fake).

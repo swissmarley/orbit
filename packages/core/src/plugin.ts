@@ -76,6 +76,12 @@ export const PluginSecret = z.object({
   name: VarName,
   description: z.string().trim().max(300).default(''),
   required: z.boolean().default(true),
+  /**
+   * `plugin` (default): passed to the plugin's server. `orbit`: used by orbitd
+   * itself (e.g. the Slack trigger's app-level token) and never given to the
+   * plugin's process.
+   */
+  scope: z.enum(['plugin', 'orbit']).default('plugin'),
 });
 export type PluginSecret = z.infer<typeof PluginSecret>;
 
