@@ -1,0 +1,18 @@
+{
+  "name": "@orbit/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Orbit desktop shell (Tauri): the App from the local orbitd in its own window",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "tauri": "tauri",
+    "build": "tauri build",
+    "dev": "tauri dev",
+    "icons": "tauri icon ../orbit-app/public/favicon.svg"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.1"
+  }
+}

@@ -137,6 +137,11 @@ export default tseslint.config(
     ...tseslint.configs.disableTypeChecked,
   },
   {
+    // The desktop shell's bundled start page runs in the webview.
+    files: ['apps/orbit-desktop/shell/**/*.js'],
+    languageOptions: { globals: { ...globals.browser } },
+  },
+  {
     // This file defines the restricted patterns, so it necessarily contains them.
     files: ['eslint.config.js'],
     rules: { 'no-restricted-syntax': 'off' },

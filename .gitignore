@@ -18,3 +18,5 @@ test-results/
 apps/orbit-app/src-tauri/target/
 # orbit-bots build (copied from the root by packaging/npm/scripts/build.ts)
 packaging/npm/LICENSE
+apps/orbit-desktop/src-tauri/target/
+apps/orbit-desktop/src-tauri/gen/
