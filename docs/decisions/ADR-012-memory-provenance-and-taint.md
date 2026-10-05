@@ -23,8 +23,10 @@ orbitd is the only writer; the files are a human-readable mirror and are never
 read back. Search text is reduced to quoted word tokens before it reaches
 FTS5, so no operator or column filter can be injected. Every title and body
 goes through the process redactor before it is stored. A Bot keeps at most
-1000 memories; the oldest that nobody chose to keep (not the owner's, not
-pinned) is evicted first. Deleting a memory deletes its row, its index entry
+1000 memories; when full, the oldest Bot note or summary goes first
+(untrusted ones before trusted ones) — never the owner's facts or feedback,
+never a pinned memory. Control characters are stripped (a NUL would break
+every later engine spawn). Deleting a memory deletes its row, its index entry
 and its file; the audit log records ids and kinds only, never memory text.
 FTS5 is SQLite-specific; a Postgres adapter would use `tsvector` (ADR-007).
 
@@ -38,8 +40,10 @@ Untrusted memories cannot be pinned.
 
 **Context.** A new Run is offered, within `memory.maxContextChars`, pinned
 memories, the latest feedback, memories relevant to the task (FTS over the
-prompt) and the latest summaries — **trusted ones only**. Every memory reaches
-the model inside `<orbit-memory source=… trust=… run=…>` tags (our own tags
+prompt) and the latest summaries — **trusted ones only**. The memory section
+goes with the first prompt of a Run (on stdin), never on a command line
+where other local users could read it; resumed segments already have it.
+Every memory reaches the model inside `<orbit-memory source=… trust=… run=…>` tags (our own tags
 inside the text are neutralised), after a preamble that says memory is
 context, not instructions. Untrusted memories are only counted ("3 more were
 influenced by untrusted content"). The Bot can still find them with
@@ -63,8 +67,10 @@ is tainted with `file:<path>` plus those sources — at permission time, before
 the content reaches the model. A shell that can bring outside content in (no
 containment) or runs while the Run is already tainted marks the whole
 workspace (`*`), because Orbit cannot know which files it touched. An
-untainted Run that rewrites a whole file (Write) clears that file's mark. The
-owner can clear the marks after checking the files (Bot → Memory & team,
+untainted Run that rewrites a whole file (Write) clears that file's mark.
+Paths are canonical (symlinks resolved like the policy's file checks, case
+folded on case-insensitive volumes), so a file has one key. The owner can
+clear the marks after checking the files (Bot → Memory & team,
 audited).
 
 **Triage path.** Post-run summaries have three modes per Bot:

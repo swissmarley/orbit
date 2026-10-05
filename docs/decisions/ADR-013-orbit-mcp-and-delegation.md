@@ -64,7 +64,8 @@ model, maxTurns) goes to the engine as `agents` (SDK) / `--agents` (CLI). A
 subagent's tools must be a subset of the Bot's tools; Orbit appends a short
 note that its tool calls are governed by Orbit's policy and that tool content
 is untrusted. Every subagent tool call still goes through the same PreToolUse
-hook (verified in M1 against Claude Code 2.1.289 with `--forward-subagent-text`).
+hook (verified live in M6 against Claude Code 2.1.289: a subagent's `Read` reached
+the hook with its `parent_tool_use_id`).
 
 **Delegation is park-and-resume (like approvals, ADR-003).**
 `delegate_to_bot(bot, task)` checks that the target is in the parent Bot's
@@ -81,10 +82,13 @@ with approvals and delegations waits for both.
 
 **What carries across.**
 
-- _Budgets:_ the child's ceiling (`budgetCap`) is what the parent had left of
-  tool calls, tokens and cost (and its wall clock); the child's spend is added
-  to the parent's (`delegated`) and counts against the parent's budgets on
-  resume.
+- _Budgets:_ the child's ceiling (`budgetCap`) is half of what the parent has
+  left of tool calls, tokens and cost after the ceilings of its unfinished
+  children (which stay reserved until they end), plus the wall clock the
+  parent has left. Parallel delegations therefore never add up to more than
+  the parent's budget. The child's spend is added to the parent's
+  (`delegated`) and counts against the parent's budgets on resume. A child
+  whose parent has ended does not start.
 - _Taint:_ the child starts with the parent's untrusted sources
   (`inheritedTaint`), so it cannot auto-allow EXTERNAL actions either; the
   parent is tainted with `delegate:<Bot>` when an answer comes back, whatever
@@ -110,6 +114,11 @@ and the TUI shows it with `t`; the CLI has `orbit tree <run>`.
 - `/mcp/orbit` is not in the contract table or `openapi.json`: it is a
   different protocol for engines, not a client route. Its whole surface is in
   `packages/runtime/src/orbit-tools/mcp.ts`.
-- The CLI engine's MCP tool calls are verified at unit and contract level;
-  a live check against Claude Code (HTTP MCP config, tool-name and input
-  shape through the hook) is recorded in PLAN §7 until it has run.
+- The CLI transport was verified live (Claude Code 2.1.289): the engine
+  called `mcp__orbit__memory_write` over `/mcp/orbit`, the hook saw the
+  tool name and input, and the call consumed its authorization. The SDK's
+  in-process server is covered by the contract suite with an injected
+  `query()`; its live check waits for an API key (PLAN §7).
+- The engine may run an `Agent` subagent in the background, so the subagent
+  tree can read "finished" at launch; its tool calls are still decided by
+  Orbit (PLAN §7).

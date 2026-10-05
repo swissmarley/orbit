@@ -422,7 +422,9 @@ function MemoryAndTeam({ bot }: { bot: Bot }) {
   const bots = useBots();
   const actions = useActions();
   const count = memory.data?.length ?? 0;
+  const capped = count >= 500;
   const untrusted = (memory.data ?? []).filter((m) => m.taint.length > 0).length;
+  const shown = (n: number) => (memory.isPending ? '…' : `${n}${capped ? '+' : ''}`);
   const subagents = Object.entries(s.subagents);
   const peer = (ref: string) =>
     bots.data?.find((b) => b.id === ref || b.spec.name.toLowerCase() === ref.trim().toLowerCase());
@@ -436,7 +438,7 @@ function MemoryAndTeam({ bot }: { bot: Bot }) {
             search={{ bot: bot.id }}
             className="text-xs text-accent hover:underline"
           >
-            Browse {count} {count === 1 ? 'memory' : 'memories'}
+            Browse {shown(count)} {count === 1 ? 'memory' : 'memories'}
           </Link>
         </CardHeader>
         <CardContent className="text-sm">
@@ -449,9 +451,16 @@ function MemoryAndTeam({ bot }: { bot: Bot }) {
             </Def>
             <Def term="Memory tools">{s.memory.tools ? 'search, read and write notes' : 'off'}</Def>
             <Def term="Untrusted">
-              {untrusted === 0
-                ? 'none'
-                : `${untrusted} — never offered automatically; reading one taints the Run`}
+              {memory.isPending ? (
+                '…'
+              ) : untrusted === 0 ? (
+                'none'
+              ) : (
+                <span className="text-warning">
+                  <span aria-hidden>⚠</span> {shown(untrusted)} — never offered automatically;
+                  reading one taints the Run
+                </span>
+              )}
             </Def>
           </dl>
         </CardContent>
@@ -521,7 +530,16 @@ function MemoryAndTeam({ bot }: { bot: Bot }) {
           {subagents.length === 0 ? (
             <p className="text-fg-muted">
               None. Subagents take routine sub-tasks inside a Run; their tool calls go through the
-              same policy.
+              same policy. Add them under{' '}
+              <Link
+                to="/bots/$botId"
+                params={{ botId: bot.id }}
+                search={{ tab: 'config' }}
+                className="text-accent underline underline-offset-2"
+              >
+                Config
+              </Link>{' '}
+              (<span className="font-mono text-xs">subagents</span>).
             </p>
           ) : (
             <ul className="flex flex-col gap-3">
@@ -549,7 +567,18 @@ function MemoryAndTeam({ bot }: { bot: Bot }) {
         </CardHeader>
         <CardContent className="flex flex-col gap-2 text-sm">
           {s.delegation.allowedBots.length === 0 ? (
-            <p className="text-fg-muted">Nobody: this Bot works alone.</p>
+            <p className="text-fg-muted">
+              Nobody: this Bot works alone. Add peers under{' '}
+              <Link
+                to="/bots/$botId"
+                params={{ botId: bot.id }}
+                search={{ tab: 'config' }}
+                className="text-accent underline underline-offset-2"
+              >
+                Config
+              </Link>{' '}
+              (<span className="font-mono text-xs">delegation.allowedBots</span>).
+            </p>
           ) : (
             <ul className="flex flex-wrap gap-2">
               {s.delegation.allowedBots.map((ref) => {
@@ -574,11 +603,13 @@ function MemoryAndTeam({ bot }: { bot: Bot }) {
               })}
             </ul>
           )}
-          <p className="text-xs text-fg-muted">
-            Up to {s.delegation.maxChildrenPerRun} delegations per Run. Each one is a child Run with
-            its own approvals, what is left of this Run's budget and its untrusted inputs; its
-            answer comes back as untrusted data.
-          </p>
+          {s.delegation.allowedBots.length > 0 ? (
+            <p className="text-xs text-fg-muted">
+              Up to {s.delegation.maxChildrenPerRun} delegations per Run. Each one is a child Run
+              with its own approvals, what is left of this Run's budget and its untrusted inputs;
+              its answer comes back as untrusted data.
+            </p>
+          ) : null}
         </CardContent>
       </Card>
     </div>

@@ -102,6 +102,21 @@ describe('Memory browser', () => {
     await waitFor(() => expect(h.service.memory.count(botId)).toBe(1));
   });
 
+  it('j/k move through the list with one tab stop, keeping focus on the selected row', async () => {
+    const { h } = await withMemories();
+    m = mountApp('/memory', { h });
+    const list = await screen.findByRole('region', { name: 'Memories' });
+    const rows = await within(list).findAllByRole('button');
+    expect(rows.map((r) => r.tabIndex)).toEqual([0, -1]);
+    rows[0]?.focus();
+    const user = userEvent.setup();
+    await user.keyboard('j');
+    await waitFor(() => expect(document.activeElement?.textContent).toContain('Launch owner'));
+    expect(window.location.search).toContain('memory=mem_');
+    await user.keyboard('k');
+    await waitFor(() => expect(document.activeElement?.textContent).toContain('Rumour'));
+  });
+
   it('adds a trusted memory written by you', async () => {
     const { h, botId } = await withMemories();
     m = mountApp(`/memory?bot=${botId}`, { h });

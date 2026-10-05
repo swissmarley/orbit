@@ -245,28 +245,40 @@ export function NewBotScreen() {
                 ) : null}
                 <Button
                   disabled={d.goal.trim().length < 3 || asking || triageLeft === 0}
+                  title={triageLeft === 0 ? 'Daily triage limit reached' : undefined}
                   onClick={() => void askClaude()}
                   aria-describedby={`${ids}-ask-cost`}
                 >
                   <BotIcon aria-hidden /> {asking ? 'Asking Claude…' : 'Ask Claude to propose'}
                 </Button>
-                <Button variant="primary" disabled={d.goal.trim().length < 3} onClick={suggest}>
+                <Button
+                  variant="primary"
+                  disabled={d.goal.trim().length < 3 || asking}
+                  onClick={suggest}
+                >
                   <Sparkles aria-hidden /> Suggest a setup
                 </Button>
               </div>
-              <p id={`${ids}-ask-cost`} className="text-right text-xs text-fg-muted">
-                “Suggest a setup” uses local rules and is free. “Ask Claude” makes one call to{' '}
-                <span className="font-mono">
-                  {doctor.data?.models.triage ?? 'the triage model'}
-                </span>
-                {mock
-                  ? ' (demo mode: no model is called)'
-                  : subscription
-                    ? ' on your Claude subscription (counts toward your usage limits)'
-                    : ' with your API key'}
-                {triageLeft !== null && triage.data
-                  ? ` — ${triageLeft} of ${triage.data.limit} triage calls left today.`
-                  : '.'}
+              <p id={`${ids}-ask-cost`} className="text-xs text-fg-muted">
+                “Suggest a setup” uses local rules and is free.{' '}
+                {mock ? (
+                  'Demo mode: “Ask Claude” makes a local, free proposal — no model is called.'
+                ) : (
+                  <>
+                    “Ask Claude” makes one call to{' '}
+                    <span className="font-mono">
+                      {doctor.data?.models.triage ?? 'the triage model'}
+                    </span>
+                    {subscription
+                      ? ' on your Claude subscription (it counts toward your usage limits).'
+                      : ' with your API key.'}
+                  </>
+                )}{' '}
+                {triageLeft === 0
+                  ? 'The daily triage limit is used up (it resets at midnight).'
+                  : triageLeft !== null && triage.data
+                    ? `${triageLeft} of ${triage.data.limit} triage calls left today.`
+                    : ''}
               </p>
             </>
           ) : null}

@@ -209,7 +209,7 @@ describe('TUI key model', () => {
 });
 
 describe('M6: memory browser, delegation tree, feedback', () => {
-  const withMem = (over = {}) => data({ memories: memories(), ...over });
+  const withMem = (over = {}) => data({ memories: memories(), memoryBot: 'bot_a', ...over });
   const openMemory = () => press(INITIAL_UI, 'm', {}, withMem());
 
   it('m opens the selected Bot’s memory and loads it; elsewhere it says where it works', () => {
@@ -292,7 +292,49 @@ describe('M6: memory browser, delegation tree, feedback', () => {
       patch: { title: 'Launch owneR', body: 'Ada owns the launch.\nIt opens Tuesday.\nx' },
     });
     expect(saved.ui.overlay).toMatchObject({ kind: 'memory' });
-    expect(press(ui, '', { escape: true }, d).command).toBeUndefined();
+    // Esc with changes asks; any key but y returns to the editor.
+    const esc = press(ui, '', { escape: true }, d);
+    expect(esc.command).toBeUndefined();
+    expect(esc.ui.overlay).toMatchObject({ kind: 'confirm', message: /Discard/ });
+    expect(press(esc.ui, 'n', {}, d).ui.overlay).toMatchObject({ kind: 'memoryEdit' });
+    expect(press(esc.ui, 'y', {}, d).ui.overlay).toMatchObject({ kind: 'memory' });
+  });
+
+  it('the editor has a cursor: arrows move it, typing inserts there', () => {
+    const d = withMem();
+    let ui = press(openMemory().ui, 'e', {}, d).ui;
+    ui = press(ui, '', { tab: true }, d).ui; // body, cursor at the end
+    ui = press(ui, '', { upArrow: true }, d).ui; // to line 1
+    for (let i = 0; i < 30; i++) ui = press(ui, '', { leftArrow: true }, d).ui;
+    ui = press(ui, '>', {}, d).ui;
+    expect(ui.overlay).toMatchObject({
+      body: '>Ada owns the launch.\nIt opens Tuesday.',
+      cursor: 1,
+    });
+    ui = press(ui, '', { backspace: true }, d).ui;
+    ui = press(ui, '', { downArrow: true }, d).ui;
+    ui = press(ui, '!', {}, d).ui;
+    expect(ui.overlay).toMatchObject({ body: 'Ada owns the launch.\n!It opens Tuesday.' });
+  });
+
+  it('no key acts on a memory before this Bot’s list has loaded', () => {
+    const d = data({ memories: memories(), memoryBot: 'bot_b' });
+    const ui = press(INITIAL_UI, 'm', {}, d).ui;
+    expect(press(ui, 'x', {}, d).ui.overlay).toMatchObject({ kind: 'memory' });
+    expect(press(ui, 'e', {}, d).ui.overlay).toMatchObject({ kind: 'memory' });
+  });
+
+  it('? opens the help over the browser and goes back to it; Esc stops the watch', () => {
+    const d = withMem();
+    const ui = openMemory().ui;
+    const help = press(ui, '?', {}, d).ui;
+    expect(help.overlay).toMatchObject({ kind: 'help' });
+    expect(press(help, '', { escape: true }, d).ui.overlay).toMatchObject({ kind: 'memory' });
+    expect(press(ui, '', { escape: true }, d).command).toEqual({
+      kind: 'loadMemory',
+      botId: null,
+      query: '',
+    });
   });
 
   it('t shows the delegation tree of the selected Run and stops following it on close', () => {

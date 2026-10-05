@@ -1,3 +1,6 @@
+import { mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { openDatabase } from '@orbit/store';
 import { describe, expect, it } from 'vitest';
 import { WHOLE_WORKSPACE, WorkspaceTaint, workspaceRelative } from './workspace-taint';
@@ -47,10 +50,7 @@ describe('WorkspaceTaint', () => {
 });
 
 describe('workspace paths are canonical (review M6 M2)', () => {
-  it('a symlink inside the workspace resolves to the file it points to', async () => {
-    const { mkdtempSync, symlinkSync, writeFileSync } = await import('node:fs');
-    const { tmpdir } = await import('node:os');
-    const { join } = await import('node:path');
+  it('a symlink inside the workspace resolves to the file it points to', () => {
     const ws = mkdtempSync(join(tmpdir(), 'orbit-ws-'));
     writeFileSync(join(ws, 'notes.md'), 'x');
     symlinkSync(join(ws, 'notes.md'), join(ws, 'alias.md'));

@@ -82,7 +82,7 @@ export async function perform(
       return command.patch.trusted
         ? `✓ marked trusted: ${m.title}`
         : command.patch.pinned !== undefined && command.patch.title === undefined
-          ? `${m.pinned ? '📌 pinned' : 'unpinned'}: ${m.title}`
+          ? `${m.pinned ? 'pinned' : 'unpinned'}: ${m.title}`
           : `✔ saved: ${m.title}`;
     }
     case 'deleteMemory':
@@ -160,7 +160,9 @@ export function App({ client, paint, size, refreshDelayMs }: AppProps) {
       return;
     }
     if (command.kind === 'loadMemory') {
-      void feed.watchMemory({ botId: command.botId, query: command.query });
+      void feed.watchMemory(
+        command.botId === null ? null : { botId: command.botId, query: command.query },
+      );
       return;
     }
     if (command.kind === 'loadTree') {
@@ -194,6 +196,12 @@ export function App({ client, paint, size, refreshDelayMs }: AppProps) {
   const paneHeight = Math.max(3, bodyHeight - (narrow ? 1 : 0));
   const sideWidth = Math.max(24, Math.floor(columns * 0.26));
   const rightWidth = Math.max(30, Math.floor(columns * 0.34));
+  const memoryShown =
+    overlay?.kind === 'memory'
+      ? overlay
+      : overlay?.kind === 'confirm' && overlay.back?.kind === 'memory'
+        ? overlay.back
+        : null;
   const cardApproval =
     overlay?.kind === 'card' ? data.approvals.find((a) => a.id === overlay.approvalId) : undefined;
 
@@ -252,11 +260,14 @@ export function App({ client, paint, size, refreshDelayMs }: AppProps) {
       <StatusBar data={data} width={columns} />
       {overlay?.kind === 'help' ? (
         <HelpOverlay width={Math.min(columns, 90)} height={bodyHeight} scroll={overlay.scroll} />
-      ) : overlay?.kind === 'memory' ? (
+      ) : memoryShown ? (
+        // The browser stays on screen under its confirm prompts (UI review M5).
         <MemoryOverlay
           data={data}
-          overlay={overlay}
-          botName={data.bots.find((b) => b.id === overlay.botId)?.spec.name ?? overlay.botId}
+          overlay={memoryShown}
+          botName={
+            data.bots.find((b) => b.id === memoryShown.botId)?.spec.name ?? memoryShown.botId
+          }
           width={columns}
           height={bodyHeight}
         />

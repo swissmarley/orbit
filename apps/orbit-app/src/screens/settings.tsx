@@ -1,5 +1,5 @@
 /** @jsxRuntime automatic @jsxImportSource react */
-import { formatTokens, scrubControls } from '@orbit/core/browser';
+import { formatCost, formatTokens, scrubControls } from '@orbit/core/browser';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { Download, KeyRound, LogOut, Octagon, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { useId, useState } from 'react';
@@ -409,9 +409,13 @@ export function TriageUsageCard() {
           <span className="font-mono text-xs">
             {doctor.data?.models.triage ?? 'the triage model'}
           </span>
-          {subscription
-            ? ' on your Claude subscription — they count toward your usage limits.'
-            : ' with your API credentials.'}{' '}
+          {doctor.data?.driver === 'mock'
+            ? ' — in demo mode a local, free engine answers instead.'
+            : subscription
+              ? ' on your Claude subscription — they count toward your usage limits.'
+              : doctor.data
+                ? ' with your API credentials.'
+                : '.'}{' '}
           Orbit never makes these calls without counting them here, and stops at the daily limit (
           <span className="font-mono text-xs">triage.maxCallsPerDay</span>).
         </p>
@@ -426,8 +430,8 @@ export function TriageUsageCard() {
                 {triage.data.callsToday} of {triage.data.limit}
               </span>{' '}
               calls today · {formatTokens(triage.data.inputTokensToday)} in /{' '}
-              {formatTokens(triage.data.outputTokensToday)} out · ~$
-              {triage.data.costUsdToday.toFixed(4)}
+              {formatTokens(triage.data.outputTokensToday)} out ·{' '}
+              {formatCost(triage.data.costUsdToday)}
               {triage.data.limit === 0 ? ' · turned off' : ''}
             </p>
             {triage.data.recent.length > 0 ? (
@@ -529,7 +533,8 @@ function BotBudgets() {
         </tbody>
       </table>
       <p className="px-4 pb-3 text-xs text-fg-subtle">
-        Edit a Bot's config to change its budgets (a new version, with undo). — means no limit.
+        Edit a Bot's config to change its budgets (a new version, with undo). A dash (—) means no
+        limit.
       </p>
     </Card>
   );

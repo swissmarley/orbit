@@ -16,6 +16,10 @@ export const GLOBAL_KEYS: readonly { keys: string; does: string }[] = [
   { keys: 'y', does: 'confirm a question (any other key cancels)' },
   { keys: 'Esc', does: 'close a dialog or step back' },
 ];
+export const MEMORY_KEYS: readonly { keys: string; does: string }[] = [
+  { keys: 'j k / ↓ ↑', does: 'move through the memories' },
+  { keys: '/', does: 'search the full text' },
+];
 export const RUN_KEYS: readonly { keys: string; does: string }[] = [
   { keys: '[ ]', does: 'step the replay one event back / forward' },
   { keys: 'L', does: 'back to live' },
@@ -96,6 +100,7 @@ export function KeyboardHelp() {
             <Section title="Everywhere" keys={GLOBAL_KEYS} />
             <Section title="Inbox" keys={INBOX_KEYS} />
             <Section title="Run view" keys={RUN_KEYS} />
+            <Section title="Memory" keys={MEMORY_KEYS} />
           </div>
         </DialogContent>
       ) : null}

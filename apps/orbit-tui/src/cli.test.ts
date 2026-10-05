@@ -646,7 +646,7 @@ describe('orbit CLI', () => {
       const note = listed.find((m) => m.kind === 'note')!;
       h.reset();
       expect(await h.run('memory', 'show', note.id)).toBe(0);
-      expect(h.text()).toContain('by Bot');
+      expect(h.text()).toContain('by the Bot');
       const body = join(home, 'body.md');
       writeFileSync(body, 'Prefer short answers.\n');
       h.reset();

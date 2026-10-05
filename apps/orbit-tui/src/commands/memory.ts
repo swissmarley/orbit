@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import {
+  MEMORY_KIND_WORD,
   MEMORY_SOURCE_WORD,
   type Memory,
   OrbitError,
@@ -31,10 +32,9 @@ export function memoryRow(m: Memory, p: Paint): string {
   return [
     p('dim', m.id),
     p(TONE[trust.tone] ?? 'white', `${trust.mark} ${trust.label}`.padEnd(11)),
-    m.kind.padEnd(8),
-    p('dim', MEMORY_SOURCE_WORD[m.source].padEnd(8)),
+    MEMORY_KIND_WORD[m.kind].padEnd(14),
     p('dim', formatWhen(m.createdAt).padEnd(22)),
-    `${m.pinned ? '📌 ' : ''}${scrubControls(m.title)}`,
+    `${m.pinned ? 'pinned · ' : ''}${scrubControls(m.title)}`,
   ].join(' ');
 }
 
@@ -81,7 +81,7 @@ export async function memoryShow(ctx: Context, id: string, o: { json?: boolean }
   ctx.io.out(
     p(
       'dim',
-      `${m.id} · ${m.kind} · by ${MEMORY_SOURCE_WORD[m.source]} · ${formatWhen(m.createdAt)}${m.runId ? ` · run ${m.runId}` : ''}${m.editedAt ? ' · edited by you' : ''}`,
+      `${m.id} · ${MEMORY_KIND_WORD[m.kind]} · by ${MEMORY_SOURCE_WORD[m.source]} · ${formatWhen(m.createdAt)}${m.runId ? ` · run ${m.runId}` : ''}${m.editedAt ? ' · edited by you' : ''}`,
     ),
   );
   ctx.io.out(

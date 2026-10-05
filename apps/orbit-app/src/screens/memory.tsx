@@ -1,6 +1,8 @@
 /** @jsxRuntime automatic @jsxImportSource react */
 import {
   type Bot,
+  FEEDBACK_SIGNAL_WORD,
+  MEMORY_KIND_WORD,
   MEMORY_SOURCE_WORD,
   MEMORY_TRUST,
   type Memory,
@@ -22,14 +24,15 @@ import { Field, Input, Label, Select, Textarea } from '../components/ui/input';
 import { Kbd } from '../components/ui/misc';
 import { useActions } from '../lib/actions';
 import { cn } from '../lib/cn';
+import { memoryListKey } from '../lib/memory-list';
 import { useBots, useMemoryList } from '../lib/queries';
 
 const KINDS: { value: MemoryKind | ''; label: string }[] = [
   { value: '', label: 'Everything' },
-  { value: 'note', label: 'Bot notes' },
-  { value: 'summary', label: 'Run summaries' },
-  { value: 'feedback', label: 'Your feedback' },
-  { value: 'fact', label: 'Your facts' },
+  ...(Object.keys(MEMORY_KIND_WORD) as MemoryKind[]).map((k) => ({
+    value: k,
+    label: MEMORY_KIND_WORD[k],
+  })),
 ];
 
 /** Trust as a symbol + word (never colour alone), its meaning in the tooltip. */
@@ -58,7 +61,10 @@ function MemoryRow({
     <li>
       <button
         type="button"
+        data-memory-id={m.id}
         onClick={onSelect}
+        // One tab stop for the list; j/k and the arrows move inside it.
+        tabIndex={selected ? 0 : -1}
         aria-current={selected ? 'true' : undefined}
         className={cn(
           'flex w-full flex-col gap-1 rounded-md border px-3 py-2 text-left hover:bg-surface-2',
@@ -67,7 +73,7 @@ function MemoryRow({
       >
         <span className="flex flex-wrap items-center gap-2">
           <TrustBadge memory={m} />
-          <span className="text-xs text-fg-muted">{m.kind}</span>
+          <span className="text-xs text-fg-muted">{MEMORY_KIND_WORD[m.kind]}</span>
           {m.pinned ? (
             <span className="text-xs text-fg-muted">
               <Pin className="inline size-3" aria-hidden /> pinned
@@ -295,23 +301,37 @@ function AddDialog({
   );
 }
 
-function Detail({ m, botName }: { m: Memory; botName: string | null }) {
+function Detail({
+  m,
+  botName,
+  headingRef,
+}: {
+  m: Memory;
+  botName: string | null;
+  headingRef: React.RefObject<HTMLHeadingElement | null>;
+}) {
   const actions = useActions();
   const [editing, setEditing] = useState(false);
   const untrusted = m.taint.length > 0;
+  // After an action that re-renders the card, keep keyboard focus on it.
+  const refocus = () => setTimeout(() => headingRef.current?.focus(), 0);
   return (
     <Card role="region" aria-label="Selected memory">
       <CardHeader className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <TrustBadge memory={m} />
-          <Badge>{m.kind}</Badge>
+          <Badge>{MEMORY_KIND_WORD[m.kind]}</Badge>
           {m.pinned ? (
             <Badge tone="info">
               <Pin className="size-3" aria-hidden /> pinned
             </Badge>
           ) : null}
         </div>
-        <CardTitle className="break-words">{scrubControls(m.title)}</CardTitle>
+        <CardTitle className="break-words">
+          <span ref={headingRef} tabIndex={-1} className="focus:outline-none">
+            {scrubControls(m.title)}
+          </span>
+        </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <p className="text-sm whitespace-pre-wrap break-words text-fg">{scrubControls(m.body)}</p>
@@ -343,7 +363,7 @@ function Detail({ m, botName }: { m: Memory; botName: string | null }) {
           {m.signal ? (
             <>
               <dt className="text-fg-muted">Feedback</dt>
-              <dd>{m.signal.replace('_', ' ')}</dd>
+              <dd>{FEEDBACK_SIGNAL_WORD[m.signal]}</dd>
             </>
           ) : null}
           <dt className="text-fg-muted">Trust</dt>
@@ -367,6 +387,7 @@ function Detail({ m, botName }: { m: Memory; botName: string | null }) {
                     confirm: 'Mark trusted',
                   });
                   if (ok) await actions.updateMemory(m, { trusted: true });
+                  refocus();
                 })().catch(() => undefined)
               }
             >
@@ -391,7 +412,10 @@ function Detail({ m, botName }: { m: Memory; botName: string | null }) {
                   confirm: 'Delete',
                   danger: true,
                 });
-                if (ok) await actions.deleteMemory(m);
+                if (ok) {
+                  await actions.deleteMemory(m);
+                  refocus();
+                }
               })().catch(() => undefined)
             }
           >
@@ -452,6 +476,26 @@ export function MemoryScreen() {
   const name = (id: string) => bots.data?.find((b) => b.id === id)?.spec.name ?? null;
   const items = list.data ?? [];
   const selected = items.find((m) => m.id === search.memory) ?? items[0] ?? null;
+  const detailRef = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  const select = (id: string, via: 'pointer' | 'keys') => {
+    set({ memory: id });
+    if (via === 'keys') {
+      setTimeout(
+        () =>
+          listRef.current?.querySelector<HTMLButtonElement>(`[data-memory-id="${id}"]`)?.focus(),
+        0,
+      );
+    } else if (!window.matchMedia('(min-width: 1024px)').matches) {
+      // One column: the detail is below the list; bring it (and focus) to the user.
+      setTimeout(() => {
+        detailRef.current?.scrollIntoView({ block: 'start' });
+        headingRef.current?.focus();
+      }, 0);
+    }
+  };
+  const filtered = Boolean(search.q) || Boolean(search.bot) || kind !== undefined;
 
   return (
     <div className="flex flex-col gap-4">
@@ -521,10 +565,17 @@ export function MemoryScreen() {
       ) : items.length === 0 ? (
         <EmptyState
           icon={<Brain aria-hidden />}
-          title={search.q ? 'Nothing matches' : 'No memories yet'}
+          title={filtered ? 'Nothing here' : 'No memories yet'}
+          action={
+            bots.data?.length ? (
+              <Button variant="primary" onClick={() => setAdding(true)}>
+                <Plus aria-hidden /> Add memory
+              </Button>
+            ) : undefined
+          }
         >
-          {search.q
-            ? 'Try other words, or clear the filters.'
+          {filtered
+            ? 'Nothing matches these filters. Try other words, another Bot or kind.'
             : 'Bots remember the result of each finished Run, notes they save, and your feedback (thumbs, edits, denials). You can add facts yourself.'}
         </EmptyState>
       ) : (
@@ -534,26 +585,43 @@ export function MemoryScreen() {
               {items.length} {items.length === 1 ? 'memory' : 'memories'}
               {items.length === 200 ? ' (newest 200)' : ''}
             </p>
-            <ul className="flex max-h-[70vh] flex-col gap-2 overflow-y-auto pr-1">
+            <ul
+              ref={listRef}
+              className="flex max-h-[70vh] flex-col gap-2 overflow-y-auto pr-1"
+              onKeyDown={(e) => {
+                if (e.metaKey || e.ctrlKey || e.altKey) return;
+                const at = items.findIndex((x) => x.id === selected?.id);
+                const next = memoryListKey(e.key, at, items.length);
+                const target = next === null ? undefined : items[next];
+                if (!target) return;
+                e.preventDefault();
+                select(target.id, 'keys');
+              }}
+            >
               {items.map((m) => (
                 <MemoryRow
                   key={m.id}
                   m={m}
                   botName={search.bot ? null : name(m.botId)}
                   selected={selected?.id === m.id}
-                  onSelect={() => set({ memory: m.id })}
+                  onSelect={() => select(m.id, 'pointer')}
                 />
               ))}
             </ul>
           </section>
-          <div className="flex flex-col gap-2">
+          <div ref={detailRef} className="flex flex-col gap-2">
             {search.memory && selected?.id !== search.memory ? (
               <p role="status" className="text-sm text-fg-muted">
                 That memory is gone (deleted) or outside these filters.
               </p>
             ) : null}
             {selected ? (
-              <Detail key={selected.id} m={selected} botName={name(selected.botId)} />
+              <Detail
+                key={selected.id}
+                m={selected}
+                botName={name(selected.botId)}
+                headingRef={headingRef}
+              />
             ) : null}
           </div>
         </div>

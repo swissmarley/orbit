@@ -121,11 +121,15 @@ export class Feed {
 
   /** Load the memory browser's list and keep it fresh; null stops. */
   async watchMemory(watch: { botId: string; query: string } | null): Promise<void> {
+    const sameList =
+      watch !== null &&
+      this.memoryWatch?.botId === watch.botId &&
+      this.memoryWatch.query === watch.query &&
+      this.data.memoryBot === watch.botId;
     this.memoryWatch = watch;
-    if (!watch) {
-      this.set({ memories: [] });
-      return;
-    }
+    // Never show (or act on) another Bot's or another search's list while loading.
+    if (!sameList) this.set({ memories: [], memoryBot: null });
+    if (!watch) return;
     try {
       const memories = await this.client.memory.list({
         bot: watch.botId,
@@ -134,7 +138,7 @@ export class Feed {
       });
       if (this.memoryWatch !== watch) return;
       // Memory text is model- or user-written: scrubbed once, here.
-      this.set({ memories: scrubDeep(memories) });
+      this.set({ memories: scrubDeep(memories), memoryBot: watch.botId });
     } catch (err) {
       this.set({ error: errorMessage(err) });
     }

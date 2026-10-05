@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { KEYS, renderTerminal } from '../../test/render';
-import { approval, data, events, fakeClient } from '../../test/tui-fixtures';
+import { approval, data, events, fakeClient, memories } from '../../test/tui-fixtures';
 import { App } from './app';
 
 const plain = (_style: unknown, text: string) => text;
@@ -272,7 +272,7 @@ describe('M6: memory browser and delegation tree', () => {
     const t = open();
     await t.waitFor(/Mailer/);
     await t.press('m');
-    const list = await t.waitFor(/Memory · Mailer/);
+    const list = await t.waitFor(/Owner disliked a result/);
     expect(list).toMatchSnapshot();
     expect(list).toMatch(/✓ trusted/);
     expect(list).toMatch(/⚠ untrusted/);
@@ -293,7 +293,7 @@ describe('M6: memory browser and delegation tree', () => {
     await t.press('m');
     await t.waitFor(/Launch owner/);
     await t.press('e');
-    await t.waitFor(/Edit memory mem_1/);
+    await t.waitFor(/Edit memory · Launch owner/);
     await t.press(KEYS.backspace, 'R', '\u0013');
     await t.waitFor(/saved/);
     expect(t.mock.memory.update).toHaveBeenCalledWith('mem_1', {
@@ -318,5 +318,34 @@ describe('M6: memory browser and delegation tree', () => {
     await t.press('j', '2', '+');
     await t.waitFor(/feedback saved/);
     expect(t.mock.runs.feedback).toHaveBeenCalledWith('run_b1', { rating: 'up' });
+  });
+});
+
+describe('M6: long memories (UI review H1, H2)', () => {
+  const long = Array.from(
+    { length: 12 },
+    (_, i) => `Paragraph ${i + 1}: ${'the launch owner keeps notes about the window '.repeat(3)}`,
+  ).join('\n');
+
+  it('a long memory wraps inside the box and scrolls with j/k at 80×24', async () => {
+    const fake = fakeClient(data());
+    fake.mock.memory.list.mockResolvedValue([{ ...memories()[0]!, body: long }] as never);
+    const t = renderTerminal(<App client={fake.client} paint={plain} refreshDelayMs={5} />, {
+      columns: 80,
+      rows: 24,
+    });
+    unmount = t.unmount;
+    await t.waitFor(/Mailer/);
+    await t.press('m');
+    await t.waitFor(/Launch owner/);
+    await t.press(KEYS.enter);
+    const first = await t.waitFor(/Paragraph 1:/);
+    const lines = first.split('\n');
+    expect(lines.length).toBeLessThanOrEqual(24);
+    expect(lines[2]).toMatch(/║ Memory · Mailer/);
+    expect(first).toMatch(/✓ trusted/);
+    expect(first).not.toMatch(/⏎/);
+    await t.press('j', 'j', 'j', 'j', 'j', 'j');
+    await t.waitFor((f) => !f.includes('Paragraph 1:') && f.includes('Paragraph 4:'));
   });
 });

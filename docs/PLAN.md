@@ -491,6 +491,35 @@ list|show|add|edit|rm`, `feedback`, `tree`, `triage`; delegating Runs are
   `/mcp/orbit` with its segment token, the call matched the policy's
   authorization and the memory was written; the session closed with the
   segment.
+- Safety review: one HIGH, fixed — parallel `delegate_to_bot` calls in one
+  segment each got the parent's whole remaining budget; unfinished children
+  now keep their ceiling reserved and a new child gets at most half of what
+  is left. Also fixed: M1 children of a Run that ended at a daemon restart no
+  longer start (recovery stops them), M2 workspace taint keys are canonical
+  (symlinks, case-insensitive volumes), M3 memory text reaches the engine
+  with the first prompt on stdin instead of `--append-system-prompt` on argv,
+  control characters are stripped from memory and a failed spawn cleans up,
+  M4 eviction never drops the owner's feedback (untrusted Bot notes first);
+  LOW: memory context built inside the segment's try, sanitized field names
+  and tainted edit-feedback from tainted Runs, no memory titles in the
+  append-only event log, the per-Run note limit counts across segments,
+  delegation taint audited, contained shells exposed to marked files,
+  parked-for-delegation status kept `delegating`, children get the wall clock
+  their parent has left, new tests for the `/mcp/orbit` Host and body guards,
+  the global kill across delegation, cycles and depth. All hard constraints
+  PASS.
+- UI review: fixed the TUI memory view (split before scrubbing, wrapped and
+  scrollable at 80×24), a real TUI editor (cursor, arrows, discard prompt),
+  no stale or other-Bot list in the browser (and the watch stops on close),
+  the browser kept on screen under its confirm prompts, `?` inside TUI
+  overlays, shorter help rows, no emoji; App: delegated spend in the cost
+  meter and inherited ceilings on every meter, thumbs that look saved only
+  when saved, Settings rows in the palette only while searching, j/k / arrow
+  navigation with one tab stop and focus kept after actions on the Memory
+  screen (help lists it), loading states and "500+" on the Memory & team tab,
+  kind and signal words from `@orbit/core`, one `formatCost`, clearer wizard
+  cost note (demo mode says no model is called; disabled reason), triage card
+  wording, delegation link names, no duplicated delegation sentence on cards.
 
 ### M7 — Plugins, MCP registry, Slack
 
@@ -579,4 +608,6 @@ milestone that will pick them up. Shipped code paths contain no TODO stubs.
 | Async (background) subagents: the engine may launch an `Agent` call in the background, so `subagent.stopped` (and the subagent tree) reads "finished" at launch; its tool calls are still decided by Orbit | M6   | M7                                                   | observed live with Claude Code 2.1.289; tracking completion needs the task-notification messages modelled in the normalizer                                |
 | SDK in-process Orbit MCP server verified live (`createSdkMcpServer` + hook input shape for `mcp__orbit__*`)                                                                                                | M6   | first session with an API key                        | covered by the SDK contract test with an injected `query()`; the CLI transport was verified live                                                           |
 | Memory export/import and retention settings (today: bounded at 1000 per Bot, oldest unkept evicted; delete in the browser)                                                                                 | M6   | M8                                                   | packaging/hardening milestone                                                                                                                              |
-| Editing memory in the TUI appends at the end of the text (no cursor movement inside it)                                                                                                                    | M6   | M8                                                   | the App and `orbit memory edit --body` edit freely                                                                                                         |
+| Daily budgets (`maxCostUsdPerDay`, `maxRunsPerDay`) of a delegating Bot do not count its children's spend (each child counts against its own Bot's daily budgets and the parent's per-Run budget)          | M6   | M7                                                   | M6 safety review L5; per-Run ceilings already bound every delegation                                                                                       |
+| Memory summary titles show the UTC date of the Run; feedback text names the raw Run id                                                                                                                     | M6   | M7                                                   | content polish from the M6 UI review                                                                                                                       |
+| App: Esc in the approval card's edit textarea does not leave edit mode, and Ctrl+K / `?` open over a modal                                                                                                 | M5   | M7                                                   | seen in the M6 UI review screenshots; predates M6                                                                                                          |

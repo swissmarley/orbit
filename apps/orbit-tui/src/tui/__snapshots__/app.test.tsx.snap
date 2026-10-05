@@ -5,9 +5,9 @@ exports[`M6: memory browser and delegation tree > m opens the memory browser wit
 ╔══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗
 ║ Memory · Mailer · 3 shown                                                                                            ║
 ║                                                                                                                      ║
-║ › ✓ trusted   note     Bot      Launch owner                                                                         ║
-║   ⚠ untrusted note     Bot      Rumour from a web page                                                               ║
-║   ✓ trusted   feedback feedback Owner disliked a result                                                              ║
+║ › ✓ trusted   Bot note      9:15 AM      Launch owner                                                                ║
+║   ⚠ untrusted Bot note      9:15 AM      Rumour from a web page                                                      ║
+║   ✓ trusted   your feedback 9:15 AM      Owner disliked a result                                                     ║
 ║                                                                                                                      ║
 ║                                                                                                                      ║
 ║                                                                                                                      ║
@@ -20,7 +20,7 @@ exports[`M6: memory browser and delegation tree > m opens the memory browser wit
 ║                                                                                                                      ║
 ║                                                                                                                      ║
 ║                                                                                                                      ║
-║ j/k select · Enter open · / search · e edit · x delete · T trust · P pin · Esc close                                 ║
+║ j/k · Enter open · / search · e · x · T · P · ? keys · Esc                                                           ║
 ╚══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝
 "
 `;
@@ -86,16 +86,16 @@ exports[`TUI rendering > help overlay lists every binding 1`] = `
 ║  p                            pause / resume the selected Bot                          ║
 ║  s                            stop the selected Run (Timeline)                         ║
 ║  u                            resume a parked or rate-limited Run (Timeline)           ║
-║  t                            delegation tree of the selected Run (Timeline)           ║
-║  + / -                        rate a finished Run good / not good (Timeline)           ║
-║  m                            the selected Bot's memory (Bots): Enter view, / search…  ║
-║  T / P (memory)               mark an untrusted memory reviewed / pin a trusted one    ║
-║  Ctrl-S (editing)             save the memory (Tab switches title / text, Esc cancel…  ║
+║  t                            delegation tree of the Run (Timeline)                    ║
+║  + / -                        rate a finished Run (Timeline)                           ║
+║  m                            the selected Bot's memory (Bots pane)                    ║
+║  Enter / (memory)             open a memory / search memories                          ║
+║  e  x (memory)                edit / delete (asks first)                               ║
+║  T  P (memory)                mark reviewed and trusted / pin                          ║
+║  Ctrl-S (editing)             save; Tab: title or text; Esc: back                      ║
 ║  g G                          Timeline top / follow live                               ║
 ║  Enter / a                    open the whole card; a there approves                    ║
 ║  A (in the card)              approve and always allow this tool for the Bot (7 days)  ║
-║  d                            deny, with a reason the Bot will see                     ║
-║  K                            global kill switch (asks first; only y confirms)         ║
 ╚════════════════════════════════════════════════════════════════════════════════════════╝
 "
 `;

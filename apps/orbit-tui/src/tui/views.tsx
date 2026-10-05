@@ -1,5 +1,6 @@
 /** @jsxRuntime automatic @jsxImportSource react */
 import {
+  MEMORY_KIND_WORD,
   MEMORY_SOURCE_WORD,
   RUN_STATUS,
   type RunEvent,
@@ -7,6 +8,7 @@ import {
   type Tone,
   formatClock,
   formatLocalTime,
+  formatWhen,
   memoryTrust,
 } from '@orbit/core';
 import { Box, Text } from 'ink';
@@ -497,15 +499,45 @@ export function TabBar({ focus, pending }: { focus: PaneId; pending: number }) {
   );
 }
 
+/**
+ * Word-wrap to `width` columns (long words are broken), so overlays can count
+ * real screen lines and scroll by them.
+ */
+export function wrapText(text: string, width: number): string[] {
+  const w = Math.max(4, width);
+  const out: string[] = [];
+  for (const raw of text.split('\n')) {
+    let line = '';
+    for (const word of raw.split(/(\s+)/)) {
+      if (word === '') continue;
+      if (line.length + word.length <= w) {
+        line += word;
+        continue;
+      }
+      if (line.trim() !== '') out.push(line.trimEnd());
+      line = /^\s+$/.test(word) ? '' : word;
+      while (line.length > w) {
+        out.push(line.slice(0, w));
+        line = line.slice(w);
+      }
+    }
+    out.push(line.trimEnd());
+  }
+  return out;
+}
+
+type MemoryOverlayState = Extract<NonNullable<Ui['overlay']>, { kind: 'memory' }>;
+
 /** The memory browser of one Bot: list with trust in words, a memory in full, search. */
 export function MemoryOverlay(props: {
   data: Data;
-  overlay: Extract<NonNullable<Ui['overlay']>, { kind: 'memory' }>;
+  overlay: MemoryOverlayState;
   botName: string;
   width: number;
   height: number;
 }) {
   const { data, overlay: o } = props;
+  const loaded = data.memoryBot === o.botId;
   const m = selectedMemory(data, o);
   const inner = Math.max(10, props.width - 4);
   const room = Math.max(1, props.height - 5);
@@ -513,69 +545,79 @@ export function MemoryOverlay(props: {
     <Text bold wrap="truncate">
       Memory · {short(props.botName, 40)}
       {o.query ? <Text color="gray"> · matching “{short(o.query, 30)}”</Text> : null}
-      <Text color="gray"> · {data.memories.length} shown</Text>
+      {loaded ? <Text color="gray"> · {data.memories.length} shown</Text> : null}
     </Text>
   );
   const footer = (
     <Text color="gray" wrap="truncate">
       {o.search !== null
-        ? 'type to search · Enter search · Esc cancel'
+        ? 'type · Enter search · Esc cancel'
         : o.open
-          ? 'j/k scroll · e edit · x delete · T trust · P pin · Esc back'
-          : 'j/k select · Enter open · / search · e edit · x delete · T trust · P pin · Esc close'}
+          ? 'j/k scroll · e edit · x delete · T trust · P pin · ? keys · Esc back'
+          : 'j/k · Enter open · / search · e · x · T · P · ? keys · Esc'}
     </Text>
   );
   let body: React.ReactNode[];
-  if (o.open && m) {
-    const trust = memoryTrust(m);
-    const lines: React.ReactNode[] = [
-      <Text key="title" bold wrap="wrap">
-        {clean(m.title)}
-      </Text>,
-      <Text key="meta" color="gray" wrap="wrap">
-        {m.id} · {m.kind} · by {MEMORY_SOURCE_WORD[m.source]} · {formatClock(m.createdAt)}
-        {m.runId ? ` · run ${m.runId}` : ''}
-        {m.editedAt ? ' · edited by you' : ''}
-        {m.pinned ? ' · pinned' : ''}
-      </Text>,
-      <Text key="trust" color={TONE_COLOR[trust.tone]} wrap="wrap">
-        {trust.mark} {trust.label}
-        {m.taint.length
-          ? ` — from ${clean(m.taint.join(', '))}; never offered to Runs automatically`
-          : ''}
-      </Text>,
-      <Text key="gap"> </Text>,
-      ...clean(m.body)
-        .split('\n')
-        .map((l, i) => (
-          <Text key={`l${i}`} wrap="wrap">
-            {l || ' '}
-          </Text>
-        )),
-    ];
-    const scroll = Math.min(o.scroll, Math.max(0, lines.length - room));
-    body = lines.slice(scroll, scroll + room);
-  } else if (data.memories.length === 0) {
+  if (!loaded) {
     body = [
-      <Text key="empty" color="gray" wrap="wrap">
-        {o.query
-          ? 'No memories match.'
-          : 'No memories yet. Bots remember the result of each finished Run, notes they save, and your feedback (+/- on a Run, edits, denials).'}
+      <Text key="loading" color="gray">
+        loading…
       </Text>,
     ];
+  } else if (o.open && m) {
+    const trust = memoryTrust(m);
+    const meta = `${MEMORY_KIND_WORD[m.kind]} · by ${MEMORY_SOURCE_WORD[m.source]} · ${formatWhen(m.createdAt)}${m.runId ? ` · run ${m.runId}` : ''}${m.editedAt ? ' · edited by you' : ''}${m.pinned ? ' · pinned' : ''}`;
+    const trustLine = `${trust.mark} ${trust.label}${m.taint.length ? ` — from ${clean(m.taint.join(', '))}; never offered to Runs automatically` : ''}`;
+    // Every row is one screen line: split, scrub and wrap first (UI review H1).
+    const rows: { text: string; color?: string; bold?: boolean }[] = [
+      ...wrapText(clean(m.title), inner).map((t) => ({ text: t, bold: true })),
+      ...wrapText(meta, inner).map((t) => ({ text: t, color: 'gray' })),
+      ...wrapText(trustLine, inner).map((t) => ({ text: t, color: TONE_COLOR[trust.tone] })),
+      { text: ' ' },
+      ...m.body
+        .split('\n')
+        .flatMap((l) => wrapText(clean(l), inner))
+        .map((t) => ({ text: t })),
+    ];
+    const scroll = Math.min(o.scroll, Math.max(0, rows.length - room));
+    body = rows.slice(scroll, scroll + room).map((r, i) => (
+      <Text
+        key={i}
+        wrap="truncate"
+        {...(r.color ? { color: r.color } : {})}
+        {...(r.bold ? { bold: true } : {})}
+      >
+        {r.text || ' '}
+      </Text>
+    ));
+  } else if (data.memories.length === 0) {
+    body = wrapText(
+      o.query
+        ? 'No memories match.'
+        : 'No memories yet. Bots remember the result of each finished Run, notes they save, and your feedback (+/- on a Run, edits, denials).',
+      inner,
+    ).map((t, i) => (
+      <Text key={i} color="gray" wrap="truncate">
+        {t}
+      </Text>
+    ));
   } else {
     const top = Math.max(0, Math.min(o.index - Math.floor(room / 2), data.memories.length - room));
     body = data.memories.slice(top, top + room).map((x, i) => {
       const at = top + i === o.index;
       const trust = memoryTrust(x);
-      const label = `${trust.mark} ${trust.label}`.padEnd(11);
-      const meta = `${x.kind.padEnd(8)} ${MEMORY_SOURCE_WORD[x.source].padEnd(8)} `;
+      const label = `${trust.mark} ${trust.label}`.padEnd(12);
+      const kind = MEMORY_KIND_WORD[x.kind].padEnd(14);
+      const when = formatClock(x.createdAt).padEnd(13);
+      const titleRoom = Math.max(10, inner - 2 - 12 - 14 - 13 - (x.pinned ? 9 : 0));
       return (
         <Text key={x.id} wrap="truncate" {...(at ? { inverse: true } : {})}>
           {at ? '› ' : '  '}
-          <Text color={TONE_COLOR[trust.tone]}>{label}</Text> {meta}
-          {x.pinned ? '📌 ' : ''}
-          {short(x.title, Math.max(10, inner - 36))}
+          <Text color={TONE_COLOR[trust.tone]}>{label}</Text>
+          {kind}
+          <Text color="gray">{when}</Text>
+          {x.pinned ? <Text color="cyan">pinned · </Text> : null}
+          {short(x.title, titleRoom)}
         </Text>
       );
     });
@@ -606,16 +648,51 @@ export function MemoryOverlay(props: {
   );
 }
 
-/** Editing a memory: title and text, saved with Ctrl-S. */
+const CURSOR = '\uE000';
+
+/** Editing a memory: title and text with a cursor, saved with Ctrl-S. */
 export function MemoryEditOverlay(props: {
   overlay: Extract<NonNullable<Ui['overlay']>, { kind: 'memoryEdit' }>;
   width: number;
   height: number;
 }) {
   const o = props.overlay;
-  const room = Math.max(1, props.height - 7);
-  const bodyLines = o.body.split('\n');
-  const shown = bodyLines.slice(Math.max(0, bodyLines.length - room));
+  const inner = Math.max(10, props.width - 4);
+  const withCursor = (text: string, on: boolean) => {
+    const clean = scrubControls(text).replaceAll(CURSOR, '');
+    const at = Math.min(o.cursor, clean.length);
+    return on ? `${clean.slice(0, at)}${CURSOR}${clean.slice(at)}` : clean;
+  };
+  const render = (line: string, key: number | string) => {
+    const i = line.indexOf(CURSOR);
+    if (i < 0) {
+      return (
+        <Text key={key} wrap="truncate">
+          {line || ' '}
+        </Text>
+      );
+    }
+    const after = line.slice(i + 1);
+    return (
+      <Text key={key} wrap="truncate">
+        {line.slice(0, i)}
+        <Text inverse>{after[0] ?? ' '}</Text>
+        {after.slice(1)}
+      </Text>
+    );
+  };
+  const titleLines = wrapText(withCursor(o.title, o.field === 'title'), inner - 8);
+  const bodyLines = wrapText(withCursor(o.body, o.field === 'body'), inner);
+  const room = Math.max(1, props.height - 6 - titleLines.length - (o.untrusted ? 1 : 0));
+  // Keep the cursor's line in view.
+  const cursorLine = Math.max(
+    0,
+    bodyLines.findIndex((l) => l.includes(CURSOR)),
+  );
+  const top =
+    o.field === 'body'
+      ? Math.max(0, Math.min(cursorLine - room + 1, bodyLines.length - room))
+      : Math.max(0, bodyLines.length - room);
   return (
     <Box
       flexDirection="column"
@@ -627,28 +704,24 @@ export function MemoryEditOverlay(props: {
       overflow="hidden"
     >
       <Text bold wrap="truncate">
-        Edit memory {o.memoryId}
+        Edit memory · {short(o.original.title, Math.max(10, inner - 16))}
       </Text>
-      <Text wrap="truncate">
-        <Text bold {...(o.field === 'title' ? { color: 'cyan' } : {})}>
-          {o.field === 'title' ? '▶ Title ' : '  Title '}
-        </Text>
-        {scrubControls(o.title)}
-        {o.field === 'title' ? <Text inverse> </Text> : null}
+      <Text bold {...(o.field === 'title' ? { color: 'cyan' } : {})}>
+        {o.field === 'title' ? '▶ Title' : '  Title'}
       </Text>
+      {titleLines.map((l, i) => render(l, `t${i}`))}
       <Text bold {...(o.field === 'body' ? { color: 'cyan' } : {})}>
         {o.field === 'body' ? '▶ Text' : '  Text'}
       </Text>
-      {shown.map((l, i) => (
-        <Text key={i} wrap="wrap">
-          {scrubControls(l) || ' '}
-          {o.field === 'body' && i === shown.length - 1 ? <Text inverse> </Text> : null}
-        </Text>
-      ))}
+      {bodyLines.slice(Math.max(0, top), Math.max(0, top) + room).map((l, i) => render(l, i))}
       <Box flexGrow={1} />
+      {o.untrusted ? (
+        <Text color="yellow" wrap="truncate">
+          ⚠ untrusted: editing keeps it untrusted (T in the browser marks it reviewed)
+        </Text>
+      ) : null}
       <Text color="gray" wrap="truncate">
-        Tab title/text · Enter new line · Ctrl-S save · Esc cancel · editing keeps an untrusted
-        memory untrusted
+        ←→↑↓ move · Tab title/text · Ctrl-S save · Esc back
       </Text>
     </Box>
   );
