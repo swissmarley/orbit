@@ -237,6 +237,16 @@ function Engine() {
                 ? `available ${d.sandbox.docker.version ?? ''}`
                 : 'not available'}
             </Row>
+            {d.engineKey ? (
+              <Row term="Engine key">
+                {d.engineKey.delivery === 'proxied'
+                  ? 'proxied — the API key stays in orbitd (key proxy)'
+                  : "in the engine — Bedrock / Vertex credentials are in the engine's environment"}
+                {d.engineKey.subprocessScrub === false
+                  ? ' · subprocess scrub off (no bubblewrap)'
+                  : ''}
+              </Row>
+            ) : null}
             <Row term="Docker Bots">
               {d.sandbox.dockerSandbox.ready
                 ? 'ready — the API key stays on the host (key proxy)'

@@ -265,6 +265,126 @@
                         }
                       ]
                     },
+                    "engineKey": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "delivery": {
+                              "type": "string",
+                              "enum": [
+                                "proxied",
+                                "in_engine"
+                              ]
+                            },
+                            "subprocessScrub": {
+                              "type": [
+                                "boolean",
+                                "null"
+                              ]
+                            },
+                            "detail": {
+                              "type": "string"
+                            },
+                            "proxy": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "port": {
+                                      "anyOf": [
+                                        {
+                                          "type": "integer",
+                                          "minimum": -9007199254740991,
+                                          "maximum": 9007199254740991
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "activeSegments": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "api": {
+                                      "type": "object",
+                                      "properties": {
+                                        "forwarded": {
+                                          "type": "integer",
+                                          "minimum": -9007199254740991,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "refused": {
+                                          "type": "integer",
+                                          "minimum": -9007199254740991,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "failed": {
+                                          "type": "integer",
+                                          "minimum": -9007199254740991,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "recent": {
+                                          "type": "array",
+                                          "items": {
+                                            "type": "object",
+                                            "properties": {
+                                              "at": {
+                                                "type": "string"
+                                              },
+                                              "target": {
+                                                "type": "string"
+                                              },
+                                              "reason": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "at",
+                                              "target",
+                                              "reason"
+                                            ],
+                                            "additionalProperties": false
+                                          }
+                                        }
+                                      },
+                                      "required": [
+                                        "forwarded",
+                                        "refused",
+                                        "failed",
+                                        "recent"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "required": [
+                                    "port",
+                                    "activeSegments",
+                                    "api"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "delivery",
+                            "subprocessScrub",
+                            "detail",
+                            "proxy"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "compliance": {
                       "type": "object",
                       "properties": {
@@ -789,6 +909,7 @@
                     "authLabel",
                     "cli",
                     "apiCredential",
+                    "engineKey",
                     "compliance",
                     "warnings",
                     "refusal",

@@ -92,8 +92,10 @@ import {
   MAX_WEBHOOK_BYTES,
   WEBHOOK_KEEP_MS,
   createDriver,
+  apiUpstream,
   createSandboxManager,
   driverTriage,
+  keyProxyCredential,
   mockTriage,
   childBudget,
   remainingBudget,
@@ -103,7 +105,13 @@ import {
   systemProbes,
   validateTriggers,
 } from '@orbit/runtime';
-import { SandboxManager, defaultRunner, detectSandboxSupport } from '@orbit/sandbox';
+import {
+  type EngineCredential,
+  SandboxManager,
+  defaultRunner,
+  detectSandboxSupport,
+  parseUpstream,
+} from '@orbit/sandbox';
 import {
   BotRepo,
   Controls,
@@ -121,6 +129,7 @@ import type {
   DenyBody,
   DockerSandboxStatus,
   DoctorReport,
+  EngineKeyStatus,
   QueueSnapshot,
   SessionPrincipal,
   Takeover as TakeoverInfo,
@@ -243,6 +252,8 @@ export class OrbitService {
   private readonly requestPrincipal = new AsyncLocalStorage<SessionPrincipal>();
   /** Workspaces, containers and the Docker sandbox's host-side proxies (ADR-004, ADR-018). */
   private readonly sandbox: SandboxManager;
+  /** Where orbitd's key proxies (host engines and Docker sandboxes) get the key. */
+  private readonly keyCredential: EngineCredential;
   /** When retention last swept memory (ms); orbitd sweeps at start and once a day. */
   private memorySweptAt = Number.NEGATIVE_INFINITY;
 
@@ -332,9 +343,12 @@ export class OrbitService {
       },
     });
 
+    // One key source for both key proxies (one apiKeyHelper cache, ADR-018).
+    this.keyCredential = keyProxyCredential(env, config.sdk.apiKeyHelper);
     this.sandbox = createSandboxManager(config.home, env, {
       legacyName: (bot) => this.m2WorkspaceName(bot),
       apiKeyHelper: config.sdk.apiKeyHelper,
+      credential: this.keyCredential,
       // Refusals name a host:port or an API route, never a query string or a header.
       onProxyRefusal: (botId, proxy, r) =>
         this.log(
@@ -561,6 +575,9 @@ export class OrbitService {
         ...(this.opts.queryFn ? { queryFn: this.opts.queryFn } : {}),
         mock: this.opts.mock ?? { delayMs: this.config.driver === 'mock' ? 120 : 0 },
         secrets: this.redactor,
+        credential: this.keyCredential,
+        // Refusals name an API route, never the segment token, a query string or a header.
+        onKeyProxyRefusal: (r) => this.log('warn', `key proxy refused ${r.target}: ${r.reason}`),
       });
       for (const w of resolution.warnings) this.log('warn', w.message);
       this.orchestrator.setDriver(handle.driver);
@@ -2028,6 +2045,42 @@ export class OrbitService {
     };
   }
 
+  /** How the SDK engine gets its API credential (ADR-018); null for other drivers. */
+  private engineKeyStatus(r: AuthResolution): EngineKeyStatus | null {
+    const k = r.engineKey;
+    if (r.driver !== 'sdk' || k === null) return null;
+    const proxy = this.engine?.handle.keyProxy?.status() ?? null;
+    const detail =
+      k.delivery === 'proxied'
+        ? "The API key stays in orbitd: engines on the host reach the API through orbitd's loopback key proxy with a token per Run segment, Docker Bots through their own socket." +
+          (k.subprocessScrub === false
+            ? ' Without bubblewrap Claude Code runs shell commands without subprocess isolation; their environment holds no secret.'
+            : k.subprocessScrub === true
+              ? ' Claude Code also isolates its shell commands and tools (subprocess scrub).'
+              : '')
+        : "Bedrock and Vertex credentials cannot go through the key proxy: they are in the engine's environment, and Claude Code scrubs them from its shell commands and tools" +
+          (k.subprocessScrub === false ? ' once bubblewrap is installed.' : '.');
+    return {
+      delivery: k.delivery,
+      subprocessScrub: k.subprocessScrub,
+      detail,
+      proxy: proxy
+        ? { port: proxy.port, activeSegments: proxy.activeSegments, api: proxy.api }
+        : null,
+    };
+  }
+
+  /** Why the key proxy cannot forward to orbitd's ANTHROPIC_BASE_URL, or null. */
+  private keyProxyUpstreamProblem(r: AuthResolution): string | null {
+    if (r.driver !== 'sdk' || r.engineKey?.delivery !== 'proxied') return null;
+    try {
+      parseUpstream(apiUpstream(this.opts.env));
+      return null;
+    } catch (err) {
+      return err instanceof OrbitError ? `${err.message}. ${err.hint ?? ''}`.trim() : null;
+    }
+  }
+
   async doctor(): Promise<DoctorReport> {
     const env = this.opts.env;
     const [r, sandbox] = await Promise.all([
@@ -2035,6 +2088,7 @@ export class OrbitService {
       detectSandboxSupport(defaultRunner(buildChildEnv('tool', env)), { pathEnv: env.PATH ?? '' }),
     ]);
     const dockerSandbox = await this.dockerSandboxStatus(r, sandbox.docker.available);
+    const upstreamProblem = this.keyProxyUpstreamProblem(r);
     const c = this.config;
     const listen = this.opts.listen ?? { tls: false, container: false };
     return {
@@ -2047,12 +2101,21 @@ export class OrbitService {
         ? { ...r.cli, error: r.cli.error ? this.redactor.redactString(r.cli.error) : null }
         : null,
       apiCredential: r.apiCredential,
+      engineKey: this.engineKeyStatus(r),
       compliance: r.guard,
       warnings: [
         ...r.warnings.map((w) => ({
           code: w.code,
           message: this.redactor.redactString(w.message),
         })),
+        ...(upstreamProblem
+          ? [
+              {
+                code: 'key_proxy_upstream',
+                message: `SDK Runs cannot start: ${this.redactor.redactString(upstreamProblem)}`,
+              },
+            ]
+          : []),
         // A dev origin is trusted with credentialed CORS: whatever else runs on
         // that port later is trusted too (review M5 MEDIUM-2).
         ...(c.api.allowedOrigins.length > 0
