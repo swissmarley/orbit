@@ -100,6 +100,8 @@ export interface World {
   workspace(botId: string): string;
   /** Add, set up and enable the corpus plugin (its server runs for real). */
   enableCorpusPlugin(): Promise<void>;
+  /** A temporary folder outside $ORBIT_HOME, removed with the World. */
+  scratch(prefix: string): string;
   close(): Promise<void>;
 }
 
@@ -132,6 +134,7 @@ export async function corpusWorld(
   });
   h.service.orchestrator.setDriver(engine);
   let n = 0;
+  const scratches: string[] = [];
 
   const w: World = {
     h,
@@ -199,9 +202,14 @@ export async function corpusWorld(
       const enabled = await h.json('POST', '/v1/plugins/corpus/enable');
       if (enabled.status !== 200) throw new Error(`enable plugin: ${JSON.stringify(enabled.body)}`);
     },
+    scratch(prefix) {
+      const dir = mkdtempSync(join(tmpdir(), `orbit-corpus-${prefix}-`));
+      scratches.push(dir);
+      return dir;
+    },
     async close() {
       await h.close();
-      rmSync(fixturesDir, { recursive: true, force: true });
+      for (const dir of [fixturesDir, ...scratches]) rmSync(dir, { recursive: true, force: true });
     },
   };
   return w;

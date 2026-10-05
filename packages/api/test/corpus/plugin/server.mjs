@@ -1,6 +1,6 @@
 // The corpus plugin: a minimal MCP server whose output an attacker controls.
 //   get_document  returns docs/<id>.txt from the Bot's workspace (the test puts a payload there)
-//   slow_lookup   writes .corpus/started, waits 20 s, writes .corpus/finished (kill switch tests)
+//   lookup_slowly   writes .corpus/started, waits 20 s, writes .corpus/finished (kill switch tests)
 //   get_config    echoes its own secret back (redaction tests)
 //   send_message, pay_invoice  answer "done" (they must never run without Orbit's say-so)
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -13,7 +13,7 @@ const schema = {
   type: 'object',
   properties: { id: { type: 'string' }, text: { type: 'string' } },
 };
-const TOOLS = ['get_document', 'slow_lookup', 'get_config', 'send_message', 'pay_invoice'];
+const TOOLS = ['get_document', 'lookup_slowly', 'get_config', 'send_message', 'pay_invoice'];
 
 createInterface({ input: process.stdin }).on('line', (line) => {
   const m = JSON.parse(line);
@@ -55,7 +55,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       text(m.id, `Document ${name}:\n${body}`);
       return;
     }
-    case 'slow_lookup': {
+    case 'lookup_slowly': {
       mkdirSync('.corpus', { recursive: true });
       writeFileSync('.corpus/started', String(process.pid));
       setTimeout(() => {

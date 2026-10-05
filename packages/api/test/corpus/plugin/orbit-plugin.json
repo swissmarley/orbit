@@ -7,7 +7,7 @@
   "server": { "transport": "stdio", "command": "${node}", "args": ["${pluginDir}/server.mjs"] },
   "tools": [
     { "name": "get_document", "tier": "READ" },
-    { "name": "slow_lookup", "tier": "READ" },
+    { "name": "lookup_slowly", "tier": "READ" },
     { "name": "get_config", "tier": "READ" },
     { "name": "send_message", "tier": "EXTERNAL" },
     { "name": "pay_invoice", "tier": "EXTERNAL" }

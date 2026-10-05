@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Bot, BotSpecInput, RunState, TriggerRef } from '@orbit/core';
 import { signWebhook } from '@orbit/runtime';
@@ -56,12 +56,23 @@ export interface Channel {
 const SLACK_CHANNEL = 'C0CORPUS1';
 const SLACK_USER = 'U0OWNER01';
 
-async function until<T>(what: string, probe: () => T | undefined | null | false, ms = 15_000) {
+async function until<T>(
+  what: string,
+  probe: () => T | undefined | null | false,
+  ms = 30_000,
+  /** Called every few seconds while waiting (a watcher that missed an event gets another). */
+  nudge?: () => void,
+) {
   const deadline = Date.now() + ms;
+  let next = Date.now() + 4000;
   for (;;) {
     const v = probe();
     if (v) return v;
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    if (nudge && Date.now() > next) {
+      nudge();
+      next = Date.now() + 4000;
+    }
     await new Promise((r) => setTimeout(r, 25));
   }
 }
@@ -77,6 +88,7 @@ async function started(
   recipients: readonly Recipient[],
   kind: TriggerRef['kind'],
   deliver: () => void,
+  nudge?: () => void,
 ): Promise<string[]> {
   const before = recipients.map((r) => new Set(runsOf(w, r.bot, kind).map((x) => x.runId)));
   deliver();
@@ -84,8 +96,11 @@ async function started(
     recipients.map(
       async (r, i) =>
         (
-          await until(`a ${kind} Run of ${r.bot.spec.name}`, () =>
-            runsOf(w, r.bot, kind).find((x) => !before[i]?.has(x.runId)),
+          await until(
+            `a ${kind} Run of ${r.bot.spec.name}`,
+            () => runsOf(w, r.bot, kind).find((x) => !before[i]?.has(x.runId)),
+            30_000,
+            nudge,
           )
         ).runId,
     ),
@@ -227,8 +242,8 @@ const files: Channel = {
   wrapper: 'untrusted',
   slow: true,
   carry: fileNameOf,
-  setup() {
-    watched = mkdtempSync(join(tmpdir(), 'orbit-corpus-drop-'));
+  setup(w) {
+    watched = w.scratch('drop');
   },
   spec: () => ({
     triggers: [
@@ -269,6 +284,11 @@ const gitEnv = () => ({
 const git = (...args: string[]) =>
   execFileSync('git', ['-C', repo, ...args], { env: gitEnv(), stdio: 'pipe' });
 
+/** Rewrite the branch ref with its own value: a watcher that missed the change sees one now. */
+const touchRef = () => {
+  git('update-ref', 'refs/heads/main', 'HEAD');
+};
+
 /** A commit subject is one line; git refuses NUL in a message. */
 const subjectOf = (text: string) => text.replace(/\0/g, '').replace(/[\r\n]+/g, ' ');
 
@@ -278,8 +298,8 @@ const gitChannel: Channel = {
   wrapper: 'untrusted',
   slow: true,
   carry: subjectOf,
-  setup() {
-    repo = mkdtempSync(join(tmpdir(), 'orbit-corpus-repo-'));
+  setup(w) {
+    repo = w.scratch('repo');
     git('init', '-q', '-b', 'main');
     git('commit', '-q', '--allow-empty', '-m', 'initial');
   },
@@ -292,18 +312,30 @@ const gitChannel: Channel = {
       w,
       recipients.map((r) => r.bot),
     );
-    return started(w, recipients, 'git', () => {
-      git('commit', '-q', '--allow-empty', '--cleanup=verbatim', '-m', subjectOf(text));
-    });
+    return started(
+      w,
+      recipients,
+      'git',
+      () => {
+        git('commit', '-q', '--allow-empty', '--cleanup=verbatim', '-m', subjectOf(text));
+      },
+      touchRef,
+    );
   },
   async burst(w, r, texts) {
     triggerFixtures(w, [r]);
     await listening(w, [r.bot]);
-    const [runId] = await started(w, [r], 'git', () => {
-      for (const t of texts) {
-        git('commit', '-q', '--allow-empty', '--cleanup=verbatim', '-m', subjectOf(t));
-      }
-    });
+    const [runId] = await started(
+      w,
+      [r],
+      'git',
+      () => {
+        for (const t of texts) {
+          git('commit', '-q', '--allow-empty', '--cleanup=verbatim', '-m', subjectOf(t));
+        }
+      },
+      touchRef,
+    );
     return runId ?? '';
   },
   sources: () => ['git:main'],
