@@ -23,6 +23,9 @@ pnpm orbit daemon start|stop|status|restart | queue | schedules | bot create …
 pnpm orbit              # in a terminal: the full-screen TUI (also `orbit tui`; ? shows the keys)
 pnpm orbit tail <run> | bot run|logs <bot> | completion bash|zsh|fish
 pnpm orbit memory list|show|add|edit|rm … | feedback <run> up|down | tree <run> | triage
+pnpm orbit plugins | plugin show|enable|disable|check|add|rm <id> | plugin secret <id> NAME < file
+pnpm orbit plugin setting <id> NAME value | triggers | trigger webhook-secret <bot> <name>
+pnpm orbit templates | bot create --template inbox-triage | rules add … --match 'to=*@example.com'
 pnpm orbitd             # the daemon in the foreground (log otherwise: $ORBIT_HOME/logs/orbitd.log)
 pnpm --filter @orbit/api openapi   # regenerate packages/api/openapi.json after contract changes
 pnpm --filter @orbit/app build && pnpm orbit app   # the App, served by orbitd; one-time sign-in link (ADR-011)
@@ -36,10 +39,13 @@ pnpm --filter @orbit/app dev | storybook   # Vite dev server (needs ORBIT_ALLOWE
   permission types, redaction, the shared status/tier vocabulary and local
   times (`vocabulary.ts`); `@orbit/core/browser` is the Node-free subset
 - `packages/store` SQLite (Drizzle): append-only events, run projections, bots
-- `packages/runtime` orchestrator, scheduler, triggers, drivers (Sdk/Cli/Mock),
+- `packages/runtime` orchestrator, scheduler, drivers (Sdk/Cli/Mock),
   AuthResolver, rate limits, Orbit's MCP tools (`src/orbit-tools`: toolset,
-  per-segment sessions, the minimal MCP server) and the triage path
-  (`src/triage.ts`) (ADR-013)
+  per-segment sessions, the minimal MCP server), the triage path
+  (`src/triage.ts`) (ADR-013), plugins (`src/plugins`: manifest loader,
+  allowlisted plugin env, minimal MCP client, `PluginRegistry`, per-segment
+  `PluginSegment`) and inbound triggers (`src/triggers`: webhook HMAC, Slack
+  Socket Mode, file/git watchers, `TriggerRouter`) (ADR-014)
 - `packages/policy` tiers (ADR-009), PolicyEngine, rules, approval queue + grants,
   approval cards, hash-chained audit log, secrets vault
 - `packages/sandbox` directory / git-worktree workspaces with Claude Code's native
@@ -61,12 +67,18 @@ pnpm --filter @orbit/app dev | storybook   # Vite dev server (needs ORBIT_ALLOWE
   web App (React 19, Vite, Tailwind v4, Radix/shadcn-style `components/ui`,
   TanStack Router/Query): pure logic in `src/lib` (`inbox.ts` key model,
   `timeline.ts`, `diff.ts`, `wizard.ts`, `actions.ts` writes with toasts/Undo,
-  `live.ts` SSE feed), `src/components`, `src/screens`, stories in
-  `src/stories`, Playwright in `e2e/`; `plugins/*` (M7)
+  `live.ts` SSE feed), `src/components`, `src/screens` (Settings →
+  Integrations in `integrations.tsx`), stories in `src/stories`, Playwright in
+  `e2e/`
+- `plugins/*` reference plugins (each `orbit-plugin.json` + `src/server.ts` +
+  `src/tools.ts`): `kit` (the stdio MCP server helper), `github`, `slack`,
+  `google`, `filesystem`, `browser`; `tools/guards/plugins.test.ts` checks every
+  manifest against its server
 - `tools/guards` repo-wide security invariant tests
 
 Dependency direction: `core` ← `store` ← `policy`, `memory`, `sandbox` ← `runtime` ←
 `api` ← `apps/*`. Clients only talk to orbitd through `@orbit/sdk-client`.
+Plugins depend on `@orbit/plugin-kit` only (they run as separate processes).
 
 ## Conventions
 
@@ -105,6 +117,15 @@ Dependency direction: `core` ← `store` ← `policy`, `memory`, `sandbox` ← `
 - Delegation (ADR-013): `delegate_to_bot` parks the parent (`delegating`) and
   resumes it with the answers as untrusted data; children inherit the parent's
   taint and remaining budget; stopping a Run stops its children.
+- Plugins (ADR-014): orbitd starts them per Run segment in the Bot's
+  workspace and proxies them to the engine; a call runs only if policy allowed
+  exactly that input. Declared tiers are exact names placed after
+  `ORBIT_TOOL_TIERS` and never below the name's floor (`tierFloor`); plugin
+  output is untrusted. A plugin is off until the owner enables it; a changed
+  manifest is held back. Secrets are vault entries `plugin_<id>_<NAME>`.
+- Inbound triggers deliver untrusted content: `<orbit-untrusted>` tags, the
+  Run starts tainted with the trigger as its source, never while the
+  trigger's previous Run is in flight.
 - Model spend outside a Run goes only through `TriagePath` (counted, capped by
   `triage.maxCallsPerDay`, refused under a kill switch or usage-limit hold,
   shown to the owner).
@@ -128,11 +149,20 @@ Dependency direction: `core` ← `store` ← `policy`, `memory`, `sandbox` ← `
   aliases (`opus`, `sonnet`, `haiku`).
 - Default-deny tool policy; EXTERNAL actions need approval; FINANCIAL is
   always handed back to the human. Budgets are enforced in runtime code.
-- `/mcp/orbit` takes only per-segment tokens (never the API token or a
-  cookie), refuses any `Origin`, and runs a tool call only if Orbit's policy
-  allowed exactly that call first. The CLI engine gets the token in a 0600
-  `--mcp-config` file, never on a command line; the SDK engine uses an
-  in-process server.
+- `/mcp/orbit` and `/mcp/plugins/<id>` take only per-segment tokens (never the
+  API token or a cookie), refuse any `Origin`, and run a tool call only if
+  Orbit's policy allowed exactly that call first.
+  The CLI engine gets the token in a 0600 `--mcp-config` file, never on a
+  command line; the SDK engine uses an in-process server.
+- Plugin processes get `buildPluginEnv` (base allowlist + the manifest's env
+  names, settings and its own secrets except `scope: "orbit"` ones, plus
+  `ORBIT_WORKSPACE`, a worktree Bot's `ORBIT_GIT_REPO`/`ORBIT_GIT_BRANCH` and
+  `ORBIT_DENIED_PATHS`); manifests cannot name credential or loader variables.
+  Plugin git uses an explicit `GIT_DIR` from Orbit, never the workspace's
+  `.git`. `/hooks/<bot>/<trigger>` verifies the HMAC in constant time before
+  parsing or storing anything (GitHub style: each signed body once); Slack is
+  Socket Mode (outbound `wss`), and on the subscription a Slack trigger must
+  name its `users`.
 
 ## Drivers (packages/runtime/src/drivers)
 
@@ -151,7 +181,11 @@ Dependency direction: `core` ← `store` ← `policy`, `memory`, `sandbox` ← `
 ## Testing
 
 - Tests sit next to code as `*.test.ts`; live tests are `*.live.test.ts`.
-- CI uses `ORBIT_DRIVER=mock` and no credentials, ever.
+- CI uses `ORBIT_DRIVER=mock` and no credentials, ever. Plugin tests use local
+  fakes (node:http servers, bare git remotes); the Browser plugin's Chromium
+  tests skip without a browser and run in CI's e2e job.
+- `pnpm lint` runs ESLint in three processes (packages+tools, apps, plugins) to
+  stay inside CI's 6 GB heap.
 - API tests use `@orbit/api/testing` (in-memory service, injectable clock);
   CLI tests start orbitd in-process through `Io.startDaemon`. Real-process
   tests set `ORBIT_PORT=0` (a developer's own orbitd may hold 7420).

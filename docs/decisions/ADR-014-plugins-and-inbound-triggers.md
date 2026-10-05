@@ -73,18 +73,24 @@ allowed call of a Run segment, with `cwd` = the Bot's workspace, and stopped
 when the segment ends (one process per plugin per segment: no state leaks
 between Bots or Runs). Its environment is `buildChildEnv('plugin', …)`: the
 base allowlist (PATH, HOME, locale, temp, proxies), the manifest's env names,
-its settings, its own secrets and `ORBIT_WORKSPACE` — never an API key, OAuth
-token, hook or MCP token. Processes it starts in turn (git, a browser) get the
+its settings, its own secrets (except those with `"scope": "orbit"`, which
+only orbitd uses) and Orbit's own context: `ORBIT_WORKSPACE`, a worktree
+Bot's `ORBIT_GIT_REPO` / `ORBIT_GIT_BRANCH`, and `ORBIT_DENIED_PATHS` (the
+credential stores the engine sandbox denies, `/proc`, `/sys` and
+`$ORBIT_HOME`) — never an API key, OAuth token, hook or MCP token. Processes it starts in turn (git, a browser) get the
 same environment or a narrower one.
 
 **Policy.** Plugin tool tiers become exact-name overrides
 (`mcp__<id>__<tool>`, no globs) placed **after** `ORBIT_TOOL_TIERS`, so they
 can never match Orbit's own tools or built-ins, and an unknown tool is still
 denied. A declared tier can remove a heuristic false positive (a read that
-looks like a write) but cannot lower a tool below what its name says when the
-name moves money (FINANCIAL stays FINANCIAL) or sends (`send_*`, `post_*`,
-`publish_*`… stay at least EXTERNAL); the Integrations view shows such
-corrections. Plugin output is always untrusted (it taints the Run). `egress`
+looks like a write) but cannot lower a tool below the floor its name sets
+(`tierFloor`): a name that moves money stays FINANCIAL; a name that sends,
+writes, creates, changes, runs or clicks anything stays at least EXTERNAL,
+because a plugin runs outside the Bot's sandbox; drafting and a commit stay
+at least WRITE_LOCAL; only a name with none of these may be READ. The
+Integrations view shows such corrections. The engine sees the manifest's tool
+descriptions (pinned by its hash), never what the server says at run time. Plugin output is always untrusted (it taints the Run). `egress`
 tools behave like WebFetch: allowed in a clean Run, asked for in a tainted one.
 
 **Calls.** A plugin tool call runs only if Orbit's PreToolUse decision allowed
@@ -99,10 +105,17 @@ plugins that are not enabled (demo mode).
 **Git commits from worktree Bots** (M2 deferral): the GitHub plugin's
 `git_commit` (WRITE_LOCAL: a commit on the Bot's own `orbit/<bot>` branch)
 and `git_push` (EXTERNAL) run git in the plugin process, outside the engine
-sandbox, with hooks disabled (`core.hooksPath=/dev/null`) so nothing the Bot
-wrote executes, and push credentials passed through `GIT_CONFIG_*`
-environment variables, never on a command line. Pushing is refused for any
-branch but the Bot's own and never forces.
+sandbox. The repository and branch are the ones Orbit names
+(`ORBIT_GIT_REPO`, `ORBIT_GIT_BRANCH`); git runs with an explicit `GIT_DIR`
+(the worktree's entry in the owner's repository, found by its back-pointer to
+the workspace) and `GIT_WORK_TREE`, so the workspace's `.git` file — which
+the Bot can rewrite to point at a repository and configuration of its own —
+is never read. Hooks are disabled (`core.hooksPath=/dev/null`), signatures
+are neither made nor shown, and push credentials pass through `GIT_CONFIG_*`
+environment variables, never on a command line. Commits and pushes happen
+only with exactly the Bot's branch checked out; `git_push` names the branch
+and the commit sha (so the approval card shows both), pushes exactly that
+sha, and never forces.
 
 **Inbound triggers** (`TriggerSpec` kinds `webhook`, `slack`, `file`, `git`):
 
@@ -112,17 +125,31 @@ branch but the Bot's own and never forces.
   verified **in constant time before anything is parsed or stored**: Orbit's
   style signs `<timestamp>.<body>` (`X-Orbit-Timestamp`, `X-Orbit-Signature:
 sha256=…`, five minutes of skew, each signature accepted once); GitHub's
-  style (`X-Hub-Signature-256`) is accepted per trigger, deduplicated by
-  delivery id. The key is a vault secret (`webhook_<bot>_<trigger>`, minted by
+  style (`X-Hub-Signature-256`) is accepted per trigger. GitHub signs only the
+  body — not the delivery id or event name — so each signed body is accepted
+  once (and each delivery id), per Bot and trigger, remembered 30 days; Orbit
+  style's keys are kept a day. A GitHub-style signature has no timestamp, so a
+  body captured more than 30 days ago could be replayed: prefer Orbit style
+  where the sender supports it. The key is a vault secret (`webhook_<bot>_<trigger>`, minted by
   `orbit trigger webhook-secret`). Every failure answers the same 401. No bearer
   token or cookie is needed or accepted there, and any `Origin` is refused.
 - **Slack**: Socket Mode (`apps.connections.open` with the app-level token
   from the Slack plugin's secrets, then a WebSocket Orbit opens outward); no
-  public URL. Messages and mentions in the configured channels start Runs;
-  every envelope is acknowledged.
+  public URL (and a `wss://` URL only). Messages and mentions in the
+  configured channels start Runs, optionally only from listed `users`; every
+  envelope is acknowledged, and channel, user and timestamp must have Slack's
+  shapes before they reach a prompt.
+- **Who may start Runs on a subscription.** A Claude subscription is for its
+  owner's own use. On the subscription engine (CliDriver) a Slack trigger must
+  list the Slack users who may start Runs; without `users` it stays "needs
+  setup" and starts nothing. With an API key a trigger may leave `users`
+  empty. Webhooks are signed with a secret only the owner mints and hands to
+  a system they configure.
 - **Files and git**: chokidar watches the configured paths (file triggers) or
   a repository's branch ref (git triggers), debounced; a burst of changes is one
-  Run.
+  Run. The git a git trigger runs inside orbitd gets forced configuration (no
+  fsmonitor, hooks or signature programs, inherited `GIT_*` dropped) and never
+  watches a repository inside `$ORBIT_HOME`, where Bots can write.
 
 Everything a trigger delivers is untrusted: the payload, message, file
 names or commit subjects go into the prompt inside `<orbit-untrusted
@@ -130,6 +157,20 @@ source=…>` tags (our own tags neutralised, size-capped), and the Run starts
 tainted with the trigger as its source, so it cannot auto-allow an EXTERNAL
 action. Triggers obey the kill switch, a paused Bot, `maxRunsPerDay`, and
 never start a Run while the trigger's previous one is still in flight.
+
+**Reference plugins.** The Filesystem plugin refuses `ORBIT_DENIED_PATHS`
+(except the Bot's own workspace) and hidden files and folders even inside the
+owner's chosen roots, after following symlinks, and fails closed on a
+malformed list. Gmail's `send_draft` names the draft's recipients and subject
+and sends only a draft that matches them (no Cc or Bcc the approval did not
+show). The Browser plugin runs Chromium behind a local filtering proxy that
+admits only the owner's allowed domains (DNS rebinding to a private address is
+recorded in PLAN §7). Plugin folders inside `$ORBIT_HOME` are refused when
+added.
+
+**Verified live** (opt-in, haiku): Claude Code called the Filesystem plugin's
+`read_file` through `/mcp/plugins/filesystem` with the per-segment token and
+Orbit's PreToolUse authorization (`packages/api/src/m7.live.test.ts`).
 
 ## Consequences
 
