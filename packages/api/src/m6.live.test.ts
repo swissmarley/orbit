@@ -35,7 +35,8 @@ describe.skipIf(!live)('live M6: subagents and Orbit MCP tools', () => {
         subagents: {
           reader: {
             description: 'Reads one file and reports what it says. Use it for any file reading.',
-            prompt: 'Read the file you are given with the Read tool and report its content briefly.',
+            prompt:
+              'Read the file you are given with the Read tool and report its content briefly.',
             tools: ['Read'],
             model: 'haiku',
           },
