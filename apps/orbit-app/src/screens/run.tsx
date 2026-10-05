@@ -11,6 +11,8 @@ import {
   formatLocalTime,
   formatTimeOfDay,
   formatTokens,
+  pauseNextStep,
+  pauseReason,
   replayRun,
   scrubControls,
 } from '@orbit/core/browser';
@@ -31,6 +33,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { confirmAction } from '../components/confirm';
 import { Meter } from '../components/sparkline';
+import { TakeOverButton } from '../components/takeover';
 import { ErrorState, ListSkeleton, PageHeader } from '../components/states';
 import { StatusBadge, Time } from '../components/status';
 import { Timeline } from '../components/timeline';
@@ -60,8 +63,10 @@ function Controls({ run }: { run: RunState }) {
   const bot = useBot(run.botId);
   const live = !TERMINAL_RUN_STATUSES.includes(run.status);
   const resumable =
-    (run.status === 'waiting_approval' && run.pendingApprovals.length === 0) ||
+    ((run.status === 'waiting_approval' || run.status === 'paused') &&
+      run.pendingApprovals.length === 0) ||
     run.status === 'rate_limited';
+  const running = run.status === 'running';
   const paused = (bot.data?.pausedAt ?? null) !== null;
   return (
     <>
@@ -94,6 +99,34 @@ function Controls({ run }: { run: RunState }) {
           {paused ? 'Resume Bot' : 'Pause Bot'}
         </Button>
       ) : null}
+      {running ? (
+        <>
+          <Button
+            disabled={run.pauseRequested !== null}
+            title="Stops at the run's next tool call; resume it whenever you like"
+            onClick={() => void actions.pauseRun(run.runId).catch(() => undefined)}
+          >
+            <Pause aria-hidden /> {run.pauseRequested ? 'Pause requested' : 'Pause run'}
+          </Button>
+          <Button
+            variant="ghost"
+            disabled={run.pauseRequested?.now === true}
+            onClick={() =>
+              void (async () => {
+                const ok = await confirmAction({
+                  title: 'Pause this run now?',
+                  body: 'The engine stops mid-turn. When you resume, the Bot is told that a tool call without a result may or may not have happened.',
+                  confirm: 'Pause now',
+                });
+                if (ok) await actions.pauseRun(run.runId, true);
+              })().catch(() => undefined)
+            }
+          >
+            Pause now
+          </Button>
+        </>
+      ) : null}
+      {bot.data ? <TakeOverButton bot={bot.data} /> : null}
       {live ? (
         <Button
           variant="danger"
@@ -579,6 +612,12 @@ export function RunScreen() {
             </Badge>
           ) : null}
           {r.resumeAt ? <Badge tone="info">↻ resumes {formatLocalTime(r.resumeAt)}</Badge> : null}
+          {r.pauseRequested ? (
+            <Badge tone="warning" title="Requested by you">
+              <span aria-hidden>{RUN_STATUS.paused.mark}</span>
+              {r.pauseRequested.now ? 'pausing now' : 'pauses at its next tool call'}
+            </Badge>
+          ) : null}
           {r.taintSources.length > 0 ? (
             <Badge tone="warning" title={`Untrusted content from: ${r.taintSources.join(', ')}`}>
               ⚠ untrusted input — external actions always ask
@@ -610,6 +649,16 @@ export function RunScreen() {
         >
           <span aria-hidden>✘</span> Failed ({r.error.code}): {scrubControls(r.error.message)}
           {r.error.retryable ? ' — you can run it again.' : ''}
+        </div>
+      ) : null}
+      {r.status === 'paused' && r.pause ? (
+        <div
+          data-testid="pause-banner"
+          role="status"
+          className="rounded-lg border border-warning/40 bg-warning-bg px-4 py-2 text-sm text-warning"
+        >
+          <span aria-hidden>{RUN_STATUS.paused.mark}</span> {scrubControls(pauseReason(r.pause))}{' '}
+          {pauseNextStep(r.pause)}
         </div>
       ) : null}
       {r.usageLimit ? (

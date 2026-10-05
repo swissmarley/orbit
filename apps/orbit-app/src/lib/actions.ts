@@ -107,6 +107,13 @@ export function useActions() {
         toast.success('Run stopped');
       },
 
+      /** Pause a running Run at its next tool call, or `now` (ADR-016). */
+      async pauseRun(runId: string, now = false): Promise<void> {
+        await c.runs.pause(runId, now ? { now: true } : {}).catch(fail('Could not pause the run'));
+        void refresh(keys.run(runId), keys.runs, keys.queue);
+        toast.success(now ? 'Pausing the run now' : 'The run pauses at its next tool call');
+      },
+
       async resumeRun(runId: string): Promise<void> {
         await c.runs.resume(runId).catch(fail('Could not resume the run'));
         void refresh(keys.run(runId), keys.runs, keys.queue);

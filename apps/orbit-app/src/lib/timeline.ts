@@ -7,6 +7,7 @@ import {
   formatDuration,
   formatLocalTime,
   formatTokens,
+  pauseReason,
   scrubControls,
 } from '@orbit/core/browser';
 import { type DiffLine, toolDiff } from './diff';
@@ -94,6 +95,16 @@ export function summarizeToolInput(input: unknown, cwd: string | null): string {
 }
 
 const HELD = 'Waiting for your owner';
+
+const RESUMED_AFTER: Record<Extract<RunEvent, { type: 'run.resumed' }>['data']['reason'], string> =
+  {
+    approval: 'your decision',
+    usage_limit: 'the usage limit reset',
+    manual: 'a manual resume',
+    delegation: 'the delegated Runs answered',
+    pause: 'a pause',
+    interrupted: 'an interruption (told to verify unanswered tool calls first)',
+  };
 
 /** Fold a Run's events into timeline rows. Pure: the replay scrubber calls it on a prefix. */
 export function buildTimeline(events: readonly RunEvent[]): TimelineItem[] {
@@ -341,7 +352,28 @@ export function buildTimeline(events: readonly RunEvent[]): TimelineItem[] {
         );
         break;
       case 'run.resumed':
-        note(e, '▶', 'info', `Resumed after ${e.data.reason.replace('_', ' ')}`);
+        note(e, '▶', 'info', `Resumed after ${RESUMED_AFTER[e.data.reason]}`);
+        break;
+      case 'run.pause_requested':
+        note(
+          e,
+          RUN_STATUS.paused.mark,
+          'warning',
+          e.data.now
+            ? `${e.data.by} paused the run now: the engine stops mid-turn`
+            : `${e.data.by} asked to pause the run at its next tool call`,
+        );
+        break;
+      case 'run.pause_lapsed':
+        note(
+          e,
+          RUN_STATUS.paused.mark,
+          'neutral',
+          'The pause request lapsed: the turn ended without another tool call',
+        );
+        break;
+      case 'run.paused':
+        note(e, RUN_STATUS.paused.mark, 'warning', pauseReason({ ...e.data, at: e.ts }));
         break;
       case 'run.resume_scheduled':
         note(e, '⏰', 'info', `Resumes automatically at ${formatLocalTime(e.data.at)}`);
