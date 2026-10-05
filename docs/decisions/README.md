@@ -20,3 +20,4 @@ deviate from the mission brief or pick between real alternatives.
 | [012](ADR-012-memory-provenance-and-taint.md)  | Memory with provenance, persistent taint, metered triage path  | Accepted |
 | [013](ADR-013-orbit-mcp-and-delegation.md)     | Orbit MCP tools, subagents and peer-Bot delegation             | Accepted |
 | [014](ADR-014-plugins-and-inbound-triggers.md) | Plugins behind Orbit's MCP endpoint; verified inbound triggers | Accepted |
+| [016](ADR-016-run-pause-retry-and-takeover.md) | Run pause, interrupted-Run retry and terminal take-over        | Accepted |
