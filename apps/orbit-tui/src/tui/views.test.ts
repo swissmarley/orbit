@@ -38,7 +38,7 @@ describe('timeline wording', () => {
       ]),
       plain,
     );
-    expect(lines[0]).toMatch(/⏸ held for your approval \(apr_1\)/);
+    expect(lines[0]).toMatch(/◆ held for your approval \(apr_1\)/);
     expect(lines[1]).toMatch(/✗ denied — Your owner denied this/);
   });
 });

@@ -107,7 +107,7 @@ export function renderEvent(raw: RunEvent, paint: Paint, cwd: string | null): st
         return `${paint('green', `      ✓ allowed — ${e.data.reason}`)}${tier}`;
       // A call held for an approval is a pause, not a failure.
       if (e.data.approvalId && e.data.reason.startsWith('Waiting for your owner'))
-        return `${paint('magenta', `      ⏸ held for your approval (${e.data.approvalId})`)}${tier}`;
+        return `${paint('magenta', `      ${RUN_STATUS.waiting_approval.mark} held for your approval (${e.data.approvalId})`)}${tier}`;
       return `${paint('red', `      ✗ denied — ${e.data.reason}`)}${tier}`;
     }
     case 'approval.requested':
@@ -128,7 +128,10 @@ export function renderEvent(raw: RunEvent, paint: Paint, cwd: string | null): st
       return paint('red', `  ■ ${e.data.scope} kill switch (${e.data.by})`);
     case 'run.parked':
       return e.data.approvalIds.length > 0
-        ? paint('magenta', `⏸ waiting for your approval (${e.data.approvalIds.join(', ')})`)
+        ? paint(
+            'magenta',
+            `${RUN_STATUS.waiting_approval.mark} waiting for your approval (${e.data.approvalIds.join(', ')})`,
+          )
         : paint('cyan', `⇢ waiting for delegated Runs (${e.data.delegations.join(', ')})`);
     case 'delegation.started':
       return `  ${paint('cyan', '⇢')} delegated to ${paint('bold', e.data.childBotName)} ${paint('dim', `(${e.data.childRunId})`)} ${oneLine(e.data.task, 80)}`;

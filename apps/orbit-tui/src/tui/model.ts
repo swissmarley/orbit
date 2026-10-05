@@ -919,7 +919,6 @@ export const HELP: readonly { keys: string; does: string }[] = [
   { keys: 't', does: 'delegation tree of the Run (Timeline)' },
   { keys: '+ / -', does: 'rate a finished Run (Timeline)' },
   { keys: 'm', does: "the selected Bot's memory (Bots pane)" },
-  { keys: 'orbit shell <bot>', does: "in a terminal: take over the Bot's workspace" },
   { keys: 'Enter / (memory)', does: 'open a memory / search memories' },
   { keys: 'e  x (memory)', does: 'edit / delete (asks first)' },
   { keys: 'T  P (memory)', does: 'mark reviewed and trusted / pin' },
@@ -934,13 +933,23 @@ export const HELP: readonly { keys: string; does: string }[] = [
   { keys: 'R', does: 'refresh' },
   {
     keys: 'M',
-    does: 'mouse on / off (or orbit tui --mouse): click selects, wheel scrolls; actions keep their keys',
+    does: 'mouse on / off: click selects, wheel scrolls',
   },
   { keys: 'Enter', does: 'Bots: open the Timeline · Approvals: open the card' },
   { keys: 'Esc', does: 'close a card, prompt or this help' },
   { keys: 'y', does: 'confirm a question (any other key cancels)' },
   { keys: '?', does: 'this help (j/k scroll)' },
   { keys: 'q, Ctrl-C', does: 'quit (Bots keep running in orbitd)' },
+];
+
+/** The Timeline keys for a paused Run, as the pause banner spells them (see `onKey`). */
+export const PAUSED_RUN_KEYS = 'u resumes · s stops';
+
+/** Terminal commands the help overlay lists after the keys (they are not keys). */
+export const CLI_HELP: readonly { command: string; does: string }[] = [
+  { command: 'orbit shell <bot>', does: "take over the Bot's workspace" },
+  { command: 'orbit approve <id> --edit …', does: 'edit a call, then approve it' },
+  { command: 'orbit tui --mouse', does: 'start with the mouse on' },
 ];
 
 /** Status symbols (also spelled out next to Runs), for the help overlay. */

@@ -16,6 +16,7 @@ import {
   formatLocalTime,
   formatWhen,
   memoryTrust,
+  pauseNextStep,
   pauseReason,
   slugify,
 } from '@orbit/core';
@@ -26,9 +27,11 @@ import { sandboxNeeds } from '../commands/plugins';
 import { renderDiff, renderEvent, scrubControls } from '../render';
 import type { Approval } from '@orbit/sdk-client';
 import {
+  CLI_HELP,
   type Data,
   HELP,
   LEGEND,
+  PAUSED_RUN_KEYS,
   type PaneId,
   type Ui,
   runsOf,
@@ -253,6 +256,48 @@ export function timelineLines(events: readonly RunEvent[], paint: Paint): string
   return lines;
 }
 
+/** Rows the paused-Run banner may take from a timeline pane `height` rows tall (3 to 5). */
+export function pauseRows(height: number): number {
+  return Math.max(3, Math.min(5, Math.floor((height - 4) / 3)));
+}
+
+/** `rows` cut to `max`, the last kept one ending in "…" when anything was cut. */
+function clip(rows: string[], max: number, inner: number): string[] {
+  if (rows.length <= max) return rows;
+  const kept = rows.slice(0, max);
+  const last = kept[max - 1] ?? '';
+  kept[max - 1] = `${last.length >= inner ? last.slice(0, Math.max(0, inner - 1)) : last}…`;
+  return kept;
+}
+
+/**
+ * Why a paused Run is paused, then what to do about it and its keys, wrapped
+ * to `inner` columns in at most `max` rows (the timeline gives them up). When
+ * it does not fit, the reason is shortened, never the next step.
+ */
+export function pauseBanner(run: RunState | undefined, inner: number, max = 3): string[] {
+  if (run?.status !== 'paused' || !run.pause) return [];
+  const head = `${RUN_STATUS.paused.mark} ${short(pauseReason(run.pause), 300)}`;
+  // The keys stay on one row: their spaces are held as a placeholder while wrapping.
+  const keys = run.pause.autoResume ? '' : ` (${PAUSED_RUN_KEYS.replace(/ /g, KEEP)})`;
+  const tail = `${pauseNextStep(run.pause)}${keys}`;
+  const wrap = (text: string) => wrapText(text, inner).map((l) => l.replaceAll(KEEP, ' '));
+  const whole = wrap(`${head} ${tail}`);
+  if (whole.length <= max) return whole;
+  const tailRows = wrap(tail);
+  const room = max - tailRows.length;
+  if (room < 1) return clip(whole, max, inner);
+  return [...clip(wrap(head), room, inner), ...tailRows];
+}
+
+/** A space that does not break a line (private use; never shown). */
+const KEEP = '\uE000';
+
+/** Inner text width of a pane (border and padding take four columns). */
+export function paneInner(width: number | string, columns: number): number {
+  return (typeof width === 'number' ? width : columns) - 4;
+}
+
 export function TimelinePane(props: {
   data: Data;
   run: RunState | undefined;
@@ -261,10 +306,16 @@ export function TimelinePane(props: {
   width: number | string;
   height: number;
   paint: Paint;
+  columns?: number;
 }) {
   const { run, ui } = props;
   const lines = timelineLines(props.data.events, props.paint);
-  const visible = Math.max(1, props.height - 4 - (run?.status === 'paused' && run.pause ? 1 : 0));
+  const banner = pauseBanner(
+    run,
+    paneInner(props.width, props.columns ?? 80),
+    pauseRows(props.height),
+  );
+  const visible = Math.max(1, props.height - 4 - banner.length);
   const maxScroll = Math.max(0, lines.length - visible);
   const scroll = Math.min(ui.scroll, maxScroll);
   const end = lines.length - scroll;
@@ -282,11 +333,11 @@ export function TimelinePane(props: {
       ) : (
         <Text color="gray">No run selected. Pick a Bot and press r to run it.</Text>
       )}
-      {run?.status === 'paused' && run.pause ? (
-        <Text color="yellow" wrap="truncate">
-          ⏸ {short(pauseReason(run.pause), 200)}
+      {banner.map((l, i) => (
+        <Text key={`pause${i}`} color="yellow" wrap="truncate">
+          {l}
         </Text>
-      ) : null}
+      ))}
       {shown.map((l, i) => (
         <Text key={i} wrap="truncate">
           {l}
@@ -458,9 +509,14 @@ export function HelpOverlay(props: { width: number; height: number; scroll: numb
         {l.means}
       </Text>
     )),
-    <Text key="edit" color="gray" wrap="wrap">
-      Edit-then-approve: orbit approve &lt;id&gt; --edit …
+    <Text key="cli-title" bold>
+      In a terminal
     </Text>,
+    ...CLI_HELP.map((c) => (
+      <Text key={`cli-${c.command}`} color="gray" wrap="wrap">
+        {c.command} — {c.does}
+      </Text>
+    )),
   ];
   const per = stacked ? 2 : 1;
   const room = Math.max(1, Math.floor((props.height - 3) / per));

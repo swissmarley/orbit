@@ -32,6 +32,9 @@ import {
   StatusBar,
   TabBar,
   TimelinePane,
+  paneInner,
+  pauseBanner,
+  pauseRows,
   timelineLines,
 } from './views';
 
@@ -259,9 +262,15 @@ export function App({ client, paint, size, refreshDelayMs, mouse }: AppProps) {
     overlay?.kind === 'card' ? data.approvals.find((a) => a.id === overlay.approvalId) : undefined;
 
   // Keep the timeline scroll inside the text (g and overscroll would otherwise look dead).
+  const timelineWidth = narrow ? columns : columns - sideWidth - rightWidth;
+  const bannerRows = pauseBanner(
+    run,
+    paneInner(timelineWidth, columns),
+    pauseRows(paneHeight),
+  ).length;
   const maxScroll = Math.max(
     0,
-    timelineLines(data.events, paint).length - Math.max(1, paneHeight - 4),
+    timelineLines(data.events, paint).length - Math.max(1, paneHeight - 4 - bannerRows),
   );
   useEffect(() => {
     if (ui.scroll > maxScroll) setUi((u) => ({ ...u, scroll: maxScroll }));
@@ -294,6 +303,7 @@ export function App({ client, paint, size, refreshDelayMs, mouse }: AppProps) {
         width={w}
         height={paneHeight}
         paint={paint}
+        columns={columns}
       />
     ),
     approvals: (w: number | string) => (
@@ -351,7 +361,7 @@ export function App({ client, paint, size, refreshDelayMs, mouse }: AppProps) {
       ) : (
         <Box>
           {panes.bots(sideWidth)}
-          {panes.timeline(columns - sideWidth - rightWidth)}
+          {panes.timeline(timelineWidth)}
           {panes.approvals(rightWidth)}
         </Box>
       )}

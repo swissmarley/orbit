@@ -229,7 +229,7 @@ describe('orbit CLI', () => {
       expect(await cli.run('plugin', 'install', 'clock')).toBe(2);
       expect(cli.text()).toContain(`integrity ${integrity} ✔ matched`);
       expect(cli.text()).toMatch(/◇ read\s+get_time/);
-      expect(cli.text()).toContain('sandbox   no workspace · no network');
+      expect(cli.text()).toContain('sandbox   no workspace and no network access');
       expect(cli.err.join('\n')).toMatch(/needs your confirmation/);
       cli.reset();
       // A terminal: asked, and "n" installs nothing.
@@ -967,7 +967,7 @@ describe('orbit CLI', () => {
       });
 
       h.reset();
-      expect(await h.run('memory', 'import', 'copy', out)).toBe(ExitCode.usage);
+      expect(await h.run('memory', 'import', 'copy', out)).toBe(0);
       expect(h.text()).toMatch(/1 memory: 1 trusted, 0 untrusted/);
       expect(h.text()).toMatch(
         /1 claims to be written by you; they are trusted only because you chose to import/,
@@ -994,6 +994,9 @@ describe('orbit CLI', () => {
       h.reset();
       expect(await h.run('memory', 'import', 'copy', out, '--yes')).toBe(ExitCode.usage);
       expect(h.text()).toMatch(/✘ line 1: not JSON/);
+      h.reset();
+      expect(await h.run('memory', 'import', 'copy', out)).toBe(ExitCode.usage);
+      expect(h.err.join('\n')).toMatch(/Nothing was imported: fix the lines above/);
 
       h.reset();
       expect(await h.run('memory', 'sweep', '--json')).toBe(0);
@@ -1143,7 +1146,7 @@ describe('orbit CLI', () => {
       other.reset();
       expect(await other.run('logs', runId)).toBe(0);
       expect(other.text()).toMatch(/⏸ pause requested by owner — at the next tool call/);
-      expect(other.text()).toMatch(/⏸ Paused by owner before Read ran\./);
+      expect(other.text()).toMatch(/⏸ Paused by you before Read ran\./);
       other.reset();
       expect(await other.run('resume', runId)).toBe(ExitCode.ok);
       expect(other.text()).toMatch(/▶ resumed after pause/);
