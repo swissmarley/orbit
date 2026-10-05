@@ -78,6 +78,12 @@ export interface DriverRunRequest {
   maxBudgetUsd?: number | null | undefined;
   /** SDK only: run the engine elsewhere (e.g. `docker exec` into the Bot's container). */
   spawnEngine?: unknown;
+  /**
+   * SDK only: the engine authenticates with a placeholder key through Orbit's
+   * host-side key proxy (docker sandbox, ADR-018). No API credential and no
+   * apiKeyHelper go to the engine, and it reports ANTHROPIC_API_KEY as its source.
+   */
+  apiKeyProxied?: boolean | undefined;
   /** MockDriver scenario. */
   mockFixture?: string | undefined;
   /** Orbit's MCP tools for this segment; null/omitted = none. */

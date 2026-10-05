@@ -26,9 +26,11 @@ import {
   type AuditSink,
   type PolicyEngine,
   type ToolTierOverride,
+  type PathMount,
   buildApprovalCard,
   classifyTool,
   fileAccessContext,
+  toHostPath,
 } from '@orbit/policy';
 import {
   type MemoryStore,
@@ -62,6 +64,16 @@ export interface PreparedWorkspace {
   engineSandbox: Record<string, unknown> | null;
   /** SDK engine spawner (docker exec); undefined = run locally. */
   spawnEngine?: unknown;
+  /** The engine authenticates through Orbit's host-side key proxy (docker, ADR-018). */
+  apiKeyProxied?: boolean;
+  /**
+   * Container Bots: engine-visible paths and the host paths behind them.
+   * Policy, workspace-file taint and approval cards map tool paths through
+   * these and refuse everything else (ADR-018).
+   */
+  mounts?: readonly PathMount[];
+  /** Called once when the Run segment that prepared the workspace ends. */
+  release?: () => void;
   /** Worktree Bots: the owner's repository and the Bot's own branch (for plugins that run git). */
   git?: { repo: string; branch: string };
 }
@@ -890,13 +902,10 @@ export class Orchestrator {
 
   private async segment(seg: Segment): Promise<RunState> {
     const { runId, bot } = seg;
-    const { config } = this.deps;
-    const driver = this.driver;
-    const append = this.appender(runId, bot.id);
     const prior = this.state(runId);
     let ws: PreparedWorkspace;
     try {
-      ws = await this.workspaces(bot, driver.kind);
+      ws = await this.workspaces(bot, this.driver.kind);
     } catch (err) {
       // Review M1: never leave a Run looking queued or running when nothing executes.
       this.deps.store.append(
@@ -915,6 +924,19 @@ export class Orchestrator {
       this.deps.approvals.cancelForRun(runId, 'system', 'expired');
       return this.state(runId);
     }
+    try {
+      return await this.segmentIn(seg, ws, prior);
+    } finally {
+      // The Bot's host-side proxies stop forwarding once no Run holds them (ADR-018).
+      ws.release?.();
+    }
+  }
+
+  private async segmentIn(seg: Segment, ws: PreparedWorkspace, prior: RunState): Promise<RunState> {
+    const { runId, bot } = seg;
+    const { config } = this.deps;
+    const driver = this.driver;
+    const append = this.appender(runId, bot.id);
     // Review M2: a kill switch engaged while the workspace was prepared wins.
     const blockedBy = this.blockedBy(bot.id, runId);
     if (blockedBy) {
@@ -968,8 +990,12 @@ export class Orchestrator {
     let lastAssistantText: string | null = null;
     const files = fileAccessContext({
       workspace: ws.path,
-      readRoots: bot.spec.readRoots,
+      // A container sees only its mounts: the read-only ones are its read roots.
+      readRoots: ws.mounts
+        ? ws.mounts.filter((m) => !m.writable).map((m) => m.host)
+        : bot.spec.readRoots,
       orbitHome: config.home,
+      ...(ws.mounts ? { mounts: ws.mounts } : {}),
     });
     // Orbit's own tiers first: no plugin declaration can reach Orbit's tools (ADR-014).
     const overrides: readonly ToolTierOverride[] = [
@@ -1113,6 +1139,7 @@ export class Orchestrator {
         botName: bot.spec.name,
         runId,
         workspace: ws.path,
+        mounts: ws.mounts ?? null,
         untrusted: [...taint],
         delegatedBy: this.delegationChain(prior.parentRunId),
       });
@@ -1281,6 +1308,7 @@ export class Orchestrator {
             ? null
             : Math.max(0.01, budgets.maxCostUsdPerRun - spentBefore.costUsd),
         spawnEngine: ws.spawnEngine,
+        apiKeyProxied: ws.apiKeyProxied,
         mockFixture: seg.mockFixture ?? bot.spec.mock?.fixture,
         orbitTools: orbit?.binding ?? null,
         pluginServers: orbit?.pluginServers ?? null,
@@ -1518,17 +1546,22 @@ export class Orchestrator {
   ): void {
     const wt = this.deps.workspaceTaint;
     if (!wt) return;
+    /** Workspace-relative key of a tool path (container paths mapped to the host first). */
+    const relOf = (p: string): string | null => {
+      const host = ws.mounts ? toHostPath(p, ws.mounts) : p;
+      return host === null ? null : workspaceRelative(ws.path, host);
+    };
     const read = FILE_READS[toolName];
     if (read) {
       const p = input[read.key];
-      const rel = workspaceRelative(ws.path, typeof p === 'string' && p ? p : ws.path);
+      const rel = typeof p === 'string' && p ? relOf(p) : workspaceRelative(ws.path, ws.path);
       if (rel !== null) expose(wt.exposure(bot.id, rel, { directory: read.directory }));
       return;
     }
     const writeKey = FILE_WRITES[toolName];
     if (writeKey) {
       const p = input[writeKey];
-      const rel = typeof p === 'string' ? workspaceRelative(ws.path, p) : null;
+      const rel = typeof p === 'string' ? relOf(p) : null;
       if (rel === null || rel === '') return;
       if (taint.size > 0) wt.mark(bot.id, rel, [...taint], runId);
       else if (toolName === 'Write') wt.clear(bot.id, rel);
