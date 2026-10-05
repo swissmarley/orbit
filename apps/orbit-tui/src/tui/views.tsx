@@ -15,6 +15,8 @@ import {
   formatLocalTime,
   formatWhen,
   memoryTrust,
+  pauseReason,
+  slugify,
 } from '@orbit/core';
 import { Box, Text } from 'ink';
 import type { painter } from '../io';
@@ -173,7 +175,9 @@ export function BotsPane(props: {
   const listRows = Math.max(1, Math.min(data.bots.length, Math.floor((props.height - 3) / 2)));
   const at = bot ? data.bots.indexOf(bot) : 0;
   const first = Math.max(0, Math.min(at - listRows + 1, data.bots.length - listRows));
-  const runRows = Math.max(0, props.height - 5 - listRows);
+  // Focused: the selected Bot's terminal-only action (a take-over; the footer lists the keys).
+  const actions = props.focused && bot !== undefined;
+  const runRows = Math.max(0, props.height - 5 - listRows - (actions ? 1 : 0));
   return (
     <Pane id="bots" focused={props.focused} width={props.width} height={props.height}>
       {!data.loaded ? (
@@ -222,6 +226,14 @@ export function BotsPane(props: {
           })}
         </Box>
       ) : null}
+      {actions ? (
+        <>
+          <Box flexGrow={1} />
+          <Text color="gray" wrap="truncate">
+            shell: orbit shell {slugify(bot.spec.name)}
+          </Text>
+        </>
+      ) : null}
     </Pane>
   );
 }
@@ -250,7 +262,7 @@ export function TimelinePane(props: {
 }) {
   const { run, ui } = props;
   const lines = timelineLines(props.data.events, props.paint);
-  const visible = Math.max(1, props.height - 4);
+  const visible = Math.max(1, props.height - 4 - (run?.status === 'paused' && run.pause ? 1 : 0));
   const maxScroll = Math.max(0, lines.length - visible);
   const scroll = Math.min(ui.scroll, maxScroll);
   const end = lines.length - scroll;
@@ -262,11 +274,17 @@ export function TimelinePane(props: {
         <Text wrap="truncate" color="gray">
           {run.runId} · <Text color={s.color}>{s.label}</Text>
           {run.resumeAt ? ` · resumes ${formatLocalTime(run.resumeAt)}` : ''}
+          {run.pauseRequested ? ' · ⏸ pause requested' : ''}
           {scroll > 0 ? ` · ↑${scroll}` : ''}
         </Text>
       ) : (
         <Text color="gray">No run selected. Pick a Bot and press r to run it.</Text>
       )}
+      {run?.status === 'paused' && run.pause ? (
+        <Text color="yellow" wrap="truncate">
+          ⏸ {short(pauseReason(run.pause), 200)}
+        </Text>
+      ) : null}
       {shown.map((l, i) => (
         <Text key={i} wrap="truncate">
           {l}

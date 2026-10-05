@@ -238,6 +238,13 @@ export const BotSpec = z.object({
     .prefault({}),
   /** Resume after a subscription usage limit resets (RateLimitManager). */
   autoResumeAfterUsageLimit: z.boolean().default(true),
+  /**
+   * A Run that orbitd stopped under (a daemon stop or crash, ADR-016):
+   * `resume` retries it automatically when that is safe (its session is
+   * known, fewer than 2 retries, no allowed EXTERNAL call without a result)
+   * and otherwise pauses it for you; `fail` ends it as `interrupted`.
+   */
+  onInterrupt: z.enum(['resume', 'fail']).default('resume'),
   /** Scheduled triggers (cron, interval); manual Runs need no trigger. */
   triggers: z.array(TriggerSpec).max(20).default([]),
   /** Queue priority of this Bot's Runs (higher first). Manual Runs get +10. */

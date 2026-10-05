@@ -155,6 +155,8 @@ export type Command =
   | { kind: 'runBot'; botId: string }
   | { kind: 'pauseBot'; botId: string; paused: boolean }
   | { kind: 'stopRun'; runId: string }
+  /** Pause a running Run at its next tool call (ADR-016). */
+  | { kind: 'pauseRun'; runId: string }
   | { kind: 'resumeRun'; runId: string }
   | { kind: 'approve'; approvalId: string; always: boolean }
   | { kind: 'deny'; approvalId: string; reason: string | null }
@@ -680,6 +682,21 @@ export function onKey(ui: Ui, data: Data, input: string, key: KeyInfo): KeyResul
           },
         });
       }
+      if (input === 'P') {
+        // Not destructive (it resumes where it stopped), so no confirmation.
+        if (run.status !== 'running') {
+          return next({
+            toast: {
+              text:
+                run.status === 'paused'
+                  ? 'Already paused — u resumes it'
+                  : 'Only a running Run can be paused (s stops it)',
+              tone: 'info',
+            },
+          });
+        }
+        return next({}, { kind: 'pauseRun', runId: run.runId });
+      }
       if (input === 'u') return next({}, { kind: 'resumeRun', runId: run.runId });
       if (input === 't') {
         return next(
@@ -734,6 +751,7 @@ export function onKey(ui: Ui, data: Data, input: string, key: KeyInfo): KeyResul
     d: ['approvals', 'd denies in Approvals — press 3'],
     s: ['timeline', 's stops a Run from the Timeline — press 2'],
     u: ['timeline', 'u resumes a Run from the Timeline — press 2'],
+    P: ['timeline', 'P pauses a running Run from the Timeline — press 2'],
     r: ['bots', 'r runs a Bot from the Bots pane — press 1'],
     p: ['bots', 'p pauses a Bot from the Bots pane — press 1'],
     m: ['bots', "m opens the selected Bot's memory from the Bots pane — press 1"],
@@ -809,10 +827,12 @@ export const HELP: readonly { keys: string; does: string }[] = [
   { keys: 'r', does: 'run the selected Bot now' },
   { keys: 'p', does: 'pause / resume the selected Bot' },
   { keys: 's', does: 'stop the selected Run (Timeline)' },
-  { keys: 'u', does: 'resume a parked or rate-limited Run (Timeline)' },
+  { keys: 'P', does: 'pause the running Run at its next tool call (Timeline)' },
+  { keys: 'u', does: 'resume a parked, paused or rate-limited Run (Timeline)' },
   { keys: 't', does: 'delegation tree of the Run (Timeline)' },
   { keys: '+ / -', does: 'rate a finished Run (Timeline)' },
   { keys: 'm', does: "the selected Bot's memory (Bots pane)" },
+  { keys: 'orbit shell <bot>', does: "in a terminal: take over the Bot's workspace" },
   { keys: 'Enter / (memory)', does: 'open a memory / search memories' },
   { keys: 'e  x (memory)', does: 'edit / delete (asks first)' },
   { keys: 'T  P (memory)', does: 'mark reviewed and trusted / pin' },

@@ -21,4 +21,5 @@ deviate from the mission brief or pick between real alternatives.
 | [013](ADR-013-orbit-mcp-and-delegation.md)     | Orbit MCP tools, subagents and peer-Bot delegation              | Accepted |
 | [014](ADR-014-plugins-and-inbound-triggers.md) | Plugins behind Orbit's MCP endpoint; verified inbound triggers  | Accepted |
 | [015](ADR-015-hosted-mode-tls-oidc-roles.md)   | Hosted mode: TLS, OIDC sign-in and roles                        | Accepted |
+| [016](ADR-016-run-pause-retry-and-takeover.md) | Run pause, interrupted-Run retry and terminal take-over         | Accepted |
 | [017](ADR-017-packaging-and-distribution.md)   | Packaging: one npm package, one container, a thin desktop shell | Accepted |

@@ -56,6 +56,9 @@ export async function perform(
     case 'stopRun':
       await client.runs.stop(command.runId);
       return `■ stop requested for ${command.runId}`;
+    case 'pauseRun':
+      await client.runs.pause(command.runId);
+      return `⏸ pausing ${command.runId} at its next tool call`;
     case 'resumeRun':
       await client.runs.resume(command.runId);
       return `▶ resuming ${command.runId}`;
@@ -236,7 +239,7 @@ export function App({ client, paint, size, refreshDelayMs }: AppProps) {
   const hints: Record<Ui['focus'], string> = {
     bots: 'j/k select · r run · p pause · m memory · i plugins · [ ] runs · Tab panes · ? help · q quit',
     timeline:
-      'j/k scroll · g/G top/live · s stop · u resume · t tree · +/- rate · [ ] runs · Tab panes · ? help · q quit',
+      'j/k scroll · g/G top/live · s stop · P pause · u resume · t tree · +/- rate · [ ] runs · Tab panes · ? help · q quit',
     approvals: 'j/k select · Enter/a open card to approve · d deny · Tab panes · ? help · q quit',
   };
 

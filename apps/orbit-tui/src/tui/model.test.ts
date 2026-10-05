@@ -154,6 +154,28 @@ describe('TUI key model', () => {
     expect(press(ui, 'u').command).toEqual({ kind: 'resumeRun', runId: 'run_a2' });
   });
 
+  it('timeline: P pauses a running Run (no confirmation); other states say why not', () => {
+    const ui: Ui = { ...INITIAL_UI, focus: 'timeline' };
+    const runningData = data({
+      runs: [run('run_a2', 'bot_a', 'running'), run('run_a1', 'bot_a', 'completed')],
+    });
+    expect(press(ui, 'P', {}, runningData).command).toEqual({
+      kind: 'pauseRun',
+      runId: 'run_a2',
+    });
+    const parked = press(ui, 'P');
+    expect(parked.command).toBeUndefined();
+    expect(parked.ui.toast?.text).toMatch(/Only a running Run can be paused/);
+    const pausedData = data({ runs: [run('run_a2', 'bot_a', 'paused')] });
+    expect(press(ui, 'P', {}, pausedData).ui.toast?.text).toMatch(/u resumes it/);
+    expect(press(ui, 'u', {}, pausedData).command).toEqual({
+      kind: 'resumeRun',
+      runId: 'run_a2',
+    });
+    // Elsewhere, P says where it works.
+    expect(press(INITIAL_UI, 'P', {}, runningData).ui.toast?.text).toMatch(/press 2/);
+  });
+
   it('help overlay opens with ? and swallows keys until closed', () => {
     const help = press(INITIAL_UI, '?').ui;
     expect(help.overlay).toEqual({ kind: 'help', scroll: 0 });

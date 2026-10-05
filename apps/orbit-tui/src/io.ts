@@ -19,6 +19,11 @@ export interface Io {
   startDaemon?: (env: Record<string, string | undefined>) => Promise<void>;
   /** Open a URL in the browser (`orbit app`). Default: the platform launcher. */
   openUrl?: (url: string) => void;
+  /**
+   * Run the owner's interactive shell for `orbit shell` and resolve with its
+   * exit code. Default: spawn it on this terminal. Tests inject a fake.
+   */
+  spawnShell?: (o: { shell: string; cwd: string; env: Record<string, string> }) => Promise<number>;
 }
 
 export function processIo(): Io {

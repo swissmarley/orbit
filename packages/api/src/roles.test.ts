@@ -53,6 +53,7 @@ const EXPECTED: Record<RouteName, PrincipalRole | 'public'> = {
   startRun: 'operator',
   stopRun: 'operator',
   resumeRun: 'operator',
+  pauseRun: 'operator',
   approve: 'operator',
   deny: 'operator',
   runFeedback: 'operator',
@@ -67,6 +68,9 @@ const EXPECTED: Record<RouteName, PrincipalRole | 'public'> = {
   updateBot: 'owner',
   pauseBot: 'owner',
   resumeBot: 'owner',
+  // Take-over is bearer-token only on top of this (the server's owner).
+  startTakeover: 'owner',
+  endTakeover: 'owner',
   createRule: 'owner',
   revokeRule: 'owner',
   setSecret: 'owner',

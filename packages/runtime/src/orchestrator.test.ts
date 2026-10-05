@@ -1,7 +1,15 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type BotSpecInput, OrbitConfig, Redactor, type RunEvent, replayRun } from '@orbit/core';
+import {
+  type BotSpecInput,
+  OrbitConfig,
+  Redactor,
+  type RunEvent,
+  type RunState,
+  event,
+  replayRun,
+} from '@orbit/core';
 import { ApprovalQueue, AuditLog, PolicyEngine, RuleStore } from '@orbit/policy';
 import { BotRepo, Controls, EventStore, type OrbitDb, openDatabase } from '@orbit/store';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -472,7 +480,7 @@ describe('Orchestrator — queueing, compare-and-set and M3 scoping', () => {
     const [approval] = w.approvals.list({ status: 'pending' });
     w.approvals.decide(approval!.id, { approve: true, by: 'owner' });
     o.stop(parked.runId, 'owner');
-    await expect(o.resume(parked.runId)).rejects.toThrow(/only parked or rate-limited/);
+    await expect(o.resume(parked.runId)).rejects.toThrow(/only parked, paused or rate-limited/);
     expect(w.store.getRun(parked.runId)?.status).toBe('cancelled');
   });
 
@@ -600,11 +608,11 @@ describe('Orchestrator — queueing, compare-and-set and M3 scoping', () => {
     expect(started).toBe(false);
   });
 
-  it('shutdown aborts executing Runs as retryable interruptions', async () => {
+  it('shutdown aborts executing Runs as retryable interruptions (onInterrupt: fail)', async () => {
     const w2 = world(':memory:', { delayMs: 50 });
     try {
       const o = w2.orchestrator();
-      const pending = o.run(w2.bot({ fixture: 'many-reads' }));
+      const pending = o.run(w2.bot({ fixture: 'many-reads', onInterrupt: 'fail' }));
       await new Promise((r) => setTimeout(r, 30));
       expect(o.activeRuns()).toHaveLength(1);
       o.shutdown();
@@ -637,5 +645,324 @@ describe('Orchestrator across processes', () => {
       w.db.close();
       rmSync(w.home, { recursive: true, force: true });
     }
+  });
+});
+
+describe('Orchestrator — per-Run pause and interruptions (ADR-016)', () => {
+  let w: World;
+  beforeEach(() => {
+    w = world(':memory:', { delayMs: 30 });
+  });
+  afterEach(() => {
+    w.db.close();
+    rmSync(w.home, { recursive: true, force: true });
+  });
+
+  /** A MockDriver that records the prompt of each segment. */
+  const spying = (prompts: string[], fixture?: string): AgentDriver => ({
+    kind: 'mock',
+    authMethod: 'mock',
+    run: (req) => {
+      prompts.push(req.prompt);
+      return new MockDriver().run(fixture ? { ...req, mockFixture: fixture } : req);
+    },
+  });
+
+  it('pauses at the next tool-call decision: that call is denied, the engine stops, the slot is free', async () => {
+    const o = w.orchestrator();
+    const run = await o.run(w.bot({ fixture: 'many-reads' }), {
+      onEvent: (e) => {
+        if (e.type === 'session.init') queueMicrotask(() => o.pause(e.runId, 'owner'));
+      },
+    });
+    expect(run.status).toBe('paused');
+    expect(run.endedAt).toBeNull();
+    expect(run.pause).toMatchObject({
+      reason: 'owner',
+      by: 'owner',
+      interruptedTurn: false,
+      toolName: 'Read',
+      toolUseId: 'toolu_rd_0',
+    });
+    expect(o.activeRuns()).toEqual([]);
+    const events = w.store.listRunEvents(run.runId);
+    expect(types(events)).toEqual(
+      expect.arrayContaining(['run.pause_requested', 'permission.decision', 'run.paused']),
+    );
+    const decision = events.find((e) => e.type === 'permission.decision');
+    expect(decision?.type === 'permission.decision' && decision.data).toMatchObject({
+      behavior: 'deny',
+      toolUseId: 'toolu_rd_0',
+    });
+    // Nothing of the paused call ran: no successful result for it.
+    expect(
+      events.some(
+        (e) => e.type === 'tool.result' && e.data.toolUseId === 'toolu_rd_0' && !e.data.isError,
+      ),
+    ).toBe(false);
+    expect(types(events).at(-1)).toBe('run.paused');
+    expect(w.audit.list({ action: 'run.pause_requested' })).toHaveLength(1);
+    expect(replayRun(events)).toEqual(w.store.getRun(run.runId));
+  });
+
+  it('resumes through the resume path, telling the Bot who paused it and which call did not run', async () => {
+    const o = w.orchestrator();
+    const paused = await o.run(w.bot({ fixture: 'many-reads' }), {
+      onEvent: (e) => {
+        if (e.type === 'session.init') queueMicrotask(() => o.pause(e.runId, 'owner'));
+      },
+    });
+    const prompts: string[] = [];
+    const done = await w.orchestrator(spying(prompts)).resume(paused.runId);
+    expect(done.status).toBe('completed');
+    expect(prompts[0]).toMatch(/Your owner \(owner\) paused this run before your call to Read/);
+    expect(prompts[0]).toMatch(/did not run/);
+    const resumed = w.store.listRunEvents(paused.runId).find((e) => e.type === 'run.resumed');
+    expect(resumed?.type === 'run.resumed' && resumed.data.reason).toBe('pause');
+  });
+
+  it('a request that meets no tool call lapses: the Run finishes and the timeline says so', async () => {
+    const o = w.orchestrator();
+    const run = await o.run(w.bot({ fixture: 'pong' }), {
+      onEvent: (e) => {
+        if (e.type === 'session.init') queueMicrotask(() => o.pause(e.runId, 'owner'));
+      },
+    });
+    expect(run.status).toBe('completed');
+    expect(run.pauseRequested).toBeNull();
+    const t = types(w.store.listRunEvents(run.runId));
+    expect(t.slice(-2)).toEqual(['run.pause_lapsed', 'run.completed']);
+  });
+
+  it('now: interrupts the engine at once and ends paused (not cancelled), counting the active time', async () => {
+    const o = w.orchestrator();
+    const run = await o.run(w.bot({ fixture: 'many-reads' }), {
+      onEvent: (e) => {
+        if (e.type === 'tool.result')
+          queueMicrotask(() => o.pause(e.runId, 'owner', { now: true }));
+      },
+    });
+    expect(run.status).toBe('paused');
+    expect(run.killedBy).toBeNull();
+    expect(run.pause).toMatchObject({ reason: 'owner', interruptedTurn: true, toolName: null });
+    const paused = w.store.listRunEvents(run.runId).find((e) => e.type === 'run.paused');
+    expect(paused?.type === 'run.paused' && paused.data.activeMs).toBeGreaterThan(0);
+    expect(run.totals.activeMs).toBeGreaterThan(0);
+    const prompts: string[] = [];
+    await w.orchestrator(spying(prompts, 'pong')).resume(run.runId);
+    expect(prompts[0]).toMatch(/interrupting your last turn/);
+    expect(prompts[0]).toMatch(/may or may not have happened/);
+  });
+
+  it('a second request is idempotent; now upgrades an open one', async () => {
+    const o = w.orchestrator(new MockDriver({ delayMs: 60 }));
+    let first: RunState | undefined;
+    let again: RunState | undefined;
+    const run = await o.run(w.bot({ fixture: 'pong' }), {
+      onEvent: (e) => {
+        if (e.type === 'session.init')
+          queueMicrotask(() => {
+            first = o.pause(e.runId, 'owner');
+            again = o.pause(e.runId, 'owner');
+            o.pause(e.runId, 'owner', { now: true });
+          });
+      },
+    });
+    expect(first?.pauseRequested).toMatchObject({ now: false });
+    expect(again?.lastSeq).toBe(first?.lastSeq);
+    expect(run.status).toBe('paused');
+    const requests = w.store
+      .listRunEvents(run.runId)
+      .flatMap((e) => (e.type === 'run.pause_requested' ? [e.data.now] : []));
+    expect(requests).toEqual([false, true]);
+  });
+
+  it('refuses to pause a queued, parked, paused or ended Run, with a hint', async () => {
+    const o = w.orchestrator(new MockDriver());
+    const queued = o.enqueue(w.bot({ fixture: 'pong' }));
+    expect(() => o.pause(queued.runId, 'owner')).toThrow(/queued, not running/);
+    try {
+      o.pause(queued.runId, 'owner');
+    } catch (err) {
+      expect((err as { hint?: string }).hint).toMatch(/orbit stop .*orbit bot pause/);
+    }
+    const parked = await o.run(w.bot({ fixture: 'send-email' }));
+    expect(parked.status).toBe('waiting_approval');
+    expect(() => o.pause(parked.runId, 'owner')).toThrow(/only a running Run can be paused/);
+    const done = await o.run(w.bot({ fixture: 'pong' }));
+    expect(() => o.pause(done.runId, 'owner')).toThrow(/completed/);
+  });
+
+  it('stop closes a paused Run; nothing resumes it by itself', async () => {
+    const o = w.orchestrator();
+    const run = await o.run(w.bot({ fixture: 'many-reads' }), {
+      onEvent: (e) => {
+        if (e.type === 'session.init') queueMicrotask(() => o.pause(e.runId, 'owner'));
+      },
+    });
+    expect(() => o.pause(run.runId, 'owner')).toThrow(/already paused/);
+    o.stop(run.runId, 'owner');
+    expect(w.store.getRun(run.runId)).toMatchObject({ status: 'cancelled', killedBy: 'run' });
+  });
+
+  it('a pause keeps pending approvals pending; resuming waits for them', async () => {
+    const bot = w.bot({ fixture: 'send-email', approvals: { parkWindowSeconds: 5 } });
+    const o = w.orchestrator();
+    const run = await o.run(bot, {
+      onEvent: (e) => {
+        if (e.type === 'approval.requested')
+          queueMicrotask(() => o.pause(e.runId, 'owner', { now: true }));
+      },
+    });
+    expect(run.status).toBe('paused');
+    expect(run.pendingApprovals).toHaveLength(1);
+    await expect(o.resume(run.runId)).rejects.toThrow(/still waits on/);
+  });
+
+  it('wall clock: paused time is not active time (like a park); only engine time counts', async () => {
+    const o = w.orchestrator();
+    const bot = w.bot({ fixture: 'many-reads', budgets: { maxWallClockMinutes: 0.01 } });
+    const run = await o.run(bot, {
+      onEvent: (e) => {
+        if (e.type === 'session.init') queueMicrotask(() => o.pause(e.runId, 'owner'));
+      },
+    });
+    expect(run.status).toBe('paused');
+    // Longer than the whole budget (600 ms) passes while paused.
+    await new Promise((r) => setTimeout(r, 700));
+    const done = await w.orchestrator(new MockDriver()).resume(run.runId);
+    expect(done.status).toBe('completed');
+    expect(done.budgetExceeded).toBeNull();
+  });
+
+  it('wall clock: time a `now` pause cut off counts against the budget on resume', async () => {
+    const o = w.orchestrator(new MockDriver({ delayMs: 100 }));
+    const bot = w.bot({ fixture: 'many-reads', budgets: { maxWallClockMinutes: 0.01 } });
+    const run = await o.run(bot, {
+      onEvent: (e) => {
+        if (e.type === 'tool.result')
+          queueMicrotask(() => o.pause(e.runId, 'owner', { now: true }));
+      },
+    });
+    expect(run.status).toBe('paused');
+    expect(run.totals.activeMs).toBeGreaterThanOrEqual(150);
+    // ~490 ms of engine time fits the 600 ms budget only if the cut-off time were forgotten.
+    const resumed = await w
+      .orchestrator(new MockDriver({ delayMs: 70 }))
+      .resume(run.runId, { mockFixture: 'pong' });
+    expect(resumed.status).toBe('failed');
+    expect(resumed.budgetExceeded).toBe('wallClock');
+  });
+
+  describe('interruptions (orbitd stopped under a Run)', () => {
+    it('shutdown pauses a Run that is safe to retry (reads only, session known)', async () => {
+      const o = w.orchestrator();
+      const pending = o.run(w.bot({ fixture: 'many-reads' }));
+      await new Promise((r) => setTimeout(r, 80));
+      o.shutdown();
+      const run = await pending;
+      expect(run.status).toBe('paused');
+      expect(run.pause).toMatchObject({
+        reason: 'interrupted',
+        by: 'system',
+        autoResume: true,
+        interruptedTurn: true,
+      });
+      expect(run.interruptions).toBe(1);
+      expect(w.audit.list({ action: 'run.interrupted' })).toHaveLength(1);
+      const prompts: string[] = [];
+      const done = await w.orchestrator(spying(prompts, 'pong')).resume(run.runId);
+      expect(done.status).toBe('completed');
+      expect(prompts[0]).toMatch(/stopped while you were working/);
+      expect(prompts[0]).toMatch(/verify its effect/);
+      const resumed = w.store.listRunEvents(run.runId).find((e) => e.type === 'run.resumed');
+      expect(resumed?.type === 'run.resumed' && resumed.data.reason).toBe('interrupted');
+    });
+
+    it('onInterrupt: fail keeps the old outcome (run.failed: interrupted, retryable)', async () => {
+      const o = w.orchestrator();
+      const pending = o.run(w.bot({ fixture: 'many-reads', onInterrupt: 'fail' }));
+      await new Promise((r) => setTimeout(r, 80));
+      o.shutdown();
+      const run = await pending;
+      expect(run.status).toBe('failed');
+      expect(run.error).toMatchObject({ code: 'interrupted', retryable: true });
+    });
+
+    it('an allowed EXTERNAL call without a result is unsafe: paused for the owner, naming the call', async () => {
+      const bot = w.bot({ fixture: 'send-email' });
+      w.rules.create(
+        {
+          botId: bot.id,
+          toolPattern: 'mcp__gmail__send_email',
+          inputMatch: null,
+          effect: 'allow',
+          reason: null,
+          createdBy: 'owner',
+          expiresAt: null,
+        },
+        'EXTERNAL',
+      );
+      const o = w.orchestrator(new MockDriver({ delayMs: 60 }));
+      const run = await o.run(bot, {
+        onEvent: (e) => {
+          if (e.type === 'permission.decision' && e.data.behavior === 'allow') o.shutdown();
+        },
+      });
+      expect(run.status).toBe('paused');
+      expect(run.pause).toMatchObject({
+        reason: 'interrupted',
+        autoResume: false,
+        toolName: 'mcp__gmail__send_email',
+        toolUseId: 'toolu_send_1',
+      });
+      expect(run.pause?.detail).toMatch(/may or may not have happened/);
+      const prompts: string[] = [];
+      await w.orchestrator(spying(prompts, 'pong')).resume(run.runId);
+      expect(prompts[0]).toMatch(/mcp__gmail__send_email \(toolu_send_1\) was allowed/);
+    });
+
+    it('unknown session or too many retries: paused for the owner', () => {
+      const o = w.orchestrator();
+      const bot = w.bot({ fixture: 'pong' });
+      const run = o.enqueue(bot);
+      const started = event('run.started', {
+        driver: 'mock',
+        authMethod: 'mock',
+        model: null,
+        cwd: w.home,
+        resumeSessionId: null,
+      });
+      w.store.append(run.runId, bot.id, [started]);
+      const [noSession] = o.interruption(run.runId, { allowResume: true });
+      expect(noSession?.type === 'run.paused' && noSession.data.autoResume).toBe(false);
+      expect(noSession?.type === 'run.paused' && noSession.data.detail).toMatch(
+        /engine session is unknown/,
+      );
+      // Two earlier interruptions: the third waits for the owner.
+      const init = event('session.init', {
+        sessionId: 's1',
+        model: null,
+        tools: [],
+        engineVersion: null,
+        permissionMode: null,
+        apiKeySource: null,
+      });
+      for (let i = 0; i < 2; i++) {
+        w.store.append(run.runId, bot.id, [
+          init,
+          ...o.interruption(run.runId, { allowResume: true }),
+          event('run.resumed', { reason: 'interrupted', sessionId: 's1' }),
+          started,
+        ]);
+      }
+      expect(w.store.getRun(run.runId)?.interruptions).toBe(2);
+      const [third] = o.interruption(run.runId, { allowResume: true });
+      expect(third?.type === 'run.paused' && third.data.autoResume).toBe(false);
+      expect(third?.type === 'run.paused' && third.data.detail).toMatch(/retries at most 2 times/);
+      // A kill switch (allowResume false) keeps today's outcome.
+      const [killed] = o.interruption(run.runId, { allowResume: false });
+      expect(killed?.type).toBe('run.failed');
+    });
   });
 });

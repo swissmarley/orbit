@@ -3,7 +3,7 @@
  * run projections and Bots with versioned configuration (ADR-007).
  */
 export { BotRepo } from './bot-repo';
-export { Controls } from './controls';
+export { Controls, type Takeover } from './controls';
 export * as schema from './schema';
 export { openDatabase, type OrbitDb } from './db';
 export { EventStore, type AppendGuard, type EventListener } from './event-store';

@@ -44,7 +44,7 @@ export async function daemonStop(ctx: Context, o: { json?: boolean }): Promise<n
   if (o.json) ctx.io.out(JSON.stringify({ stopped: true }));
   else
     ctx.io.out(
-      `${painter(ctx.io)('yellow', '■')} orbitd stopped (executing runs end as interrupted).`,
+      `${painter(ctx.io)('yellow', '■')} orbitd stopped (executing runs were interrupted: safe ones resume at the next start, the others wait for you).`,
     );
   return 0;
 }

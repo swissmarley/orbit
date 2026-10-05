@@ -10,6 +10,20 @@ export const ChildRun = z.object({
 });
 export type ChildRun = z.infer<typeof ChildRun>;
 
+export const RunPause = z.object({
+  reason: z.enum(['owner', 'interrupted']),
+  by: z.string(),
+  at: z.string(),
+  /** The last turn was cut off: a tool call without a result may or may not have happened. */
+  interruptedTurn: z.boolean(),
+  toolUseId: z.string().nullable(),
+  toolName: z.string().nullable(),
+  /** An interrupted Run Orbit resumes by itself (it was safe to). */
+  autoResume: z.boolean(),
+  detail: z.string().nullable(),
+});
+export type RunPause = z.infer<typeof RunPause>;
+
 /**
  * Read model of a single Run, derived purely from its events. The event
  * store persists this projection for fast queries, but it can always be
@@ -83,6 +97,12 @@ export const RunState = z.object({
   rating: z.enum(['up', 'down']).nullable(),
   /** Memories this Run wrote (notes, summary). */
   memoryWrites: z.int(),
+  /** The owner asked to pause this running Run (ADR-016); null when no request is open. */
+  pauseRequested: z.object({ by: z.string(), now: z.boolean(), at: z.string() }).nullable(),
+  /** Why a paused Run is paused (its latest run.paused); null unless the Run is paused. */
+  pause: RunPause.nullable(),
+  /** How often orbitd stopped while this Run executed (automatic retries are capped). */
+  interruptions: z.int(),
 });
 export type RunState = z.infer<typeof RunState>;
 
@@ -134,6 +154,9 @@ function blankState(runId: string, botId: string, createdAt: string): RunState {
     delegated: { tokens: 0, costUsd: 0, toolCalls: 0 },
     rating: null,
     memoryWrites: 0,
+    pauseRequested: null,
+    pause: null,
+    interruptions: 0,
   };
 }
 
@@ -268,6 +291,7 @@ export function foldRun(prev: RunState | undefined, e: RunEvent): RunState {
       s.killedBy = e.data.scope;
       break;
     case 'run.parked': {
+      s.pauseRequested = null;
       // Waiting on the human (or on delegated Runs): not ended, not failed.
       const finished = new Set(
         s.children.filter((c) => c.status !== 'running').map((c) => c.runId),
@@ -286,16 +310,46 @@ export function foldRun(prev: RunState | undefined, e: RunEvent): RunState {
     case 'run.resume_scheduled':
       s.resumeAt = e.data.at;
       break;
+    case 'run.pause_requested':
+      // Only a running Run takes a pause request (and `now` upgrades an open one).
+      if (s.status === 'running') s.pauseRequested = { by: e.data.by, now: e.data.now, at: e.ts };
+      break;
+    case 'run.pause_lapsed':
+      s.pauseRequested = null;
+      break;
+    case 'run.paused':
+      // Like a park: not ended, not failed; it continues when resumed.
+      s.status = 'paused';
+      s.pauseRequested = null;
+      s.pause = {
+        reason: e.data.reason,
+        by: e.data.by,
+        at: e.ts,
+        interruptedTurn: e.data.interruptedTurn,
+        toolUseId: e.data.toolUseId,
+        toolName: e.data.toolName,
+        autoResume: e.data.autoResume,
+        detail: e.data.detail,
+      };
+      if (e.data.reason === 'interrupted') s.interruptions += 1;
+      s.totals.activeMs += e.data.activeMs;
+      s.liveUsage = null;
+      s.sessionId = e.data.sessionId ?? s.sessionId;
+      break;
     case 'run.resumed':
       s.status = 'running';
       s.resumeAt = null;
       s.sessionId = e.data.sessionId ?? s.sessionId;
       s.usageLimit = null;
       s.needsAction = null;
+      s.pause = null;
+      s.pauseRequested = null;
       break;
     case 'run.completed':
       s.status = 'completed';
       s.resumeAt = null;
+      s.pause = null;
+      s.pauseRequested = null;
       s.resultText = e.data.result;
       s.sessionId = e.data.sessionId ?? s.sessionId;
       s.endedAt = e.ts;
@@ -303,6 +357,8 @@ export function foldRun(prev: RunState | undefined, e: RunEvent): RunState {
     case 'run.failed':
       s.status = 'failed';
       s.resumeAt = null;
+      s.pause = null;
+      s.pauseRequested = null;
       s.error = { code: e.data.code, message: e.data.message, retryable: e.data.retryable };
       s.sessionId = e.data.sessionId ?? s.sessionId;
       s.endedAt = e.ts;
@@ -310,12 +366,15 @@ export function foldRun(prev: RunState | undefined, e: RunEvent): RunState {
     case 'run.cancelled':
       s.status = 'cancelled';
       s.resumeAt = null;
+      s.pause = null;
+      s.pauseRequested = null;
       s.sessionId = e.data.sessionId ?? s.sessionId;
       s.endedAt = e.ts;
       break;
     case 'run.rate_limited':
       // A usage limit is a pause, not a failure: the Run resumes after reset.
       s.status = 'rate_limited';
+      s.pauseRequested = null;
       s.usageLimit = {
         resetsAt: e.data.resetsAt,
         limitType: e.data.limitType,

@@ -224,6 +224,10 @@ export class OrbitClient {
     versions: (bot: string) => this.call('botVersions', { params: { bot } }),
     pause: (bot: string) => this.call('pauseBot', { params: { bot } }),
     resume: (bot: string) => this.call('resumeBot', { params: { bot } }),
+    /** Hold the Bot and get its workspace for the owner's shell (`orbit shell`; token only). */
+    takeover: (bot: string, pid: number) =>
+      this.call('startTakeover', { params: { bot }, body: { pid } }),
+    endTakeover: (bot: string) => this.call('endTakeover', { params: { bot } }),
   };
 
   readonly runs = {
@@ -237,6 +241,9 @@ export class OrbitClient {
         query: afterSeq === undefined ? {} : { afterSeq },
       }),
     stop: (run: string) => this.call('stopRun', { params: { run } }),
+    /** Pause at the Run's next tool call, or `now` (stops the engine mid-turn). */
+    pause: (run: string, body: RouteBody<'pauseRun'> = {}) =>
+      this.call('pauseRun', { params: { run }, body }),
     resume: (run: string, body: RouteBody<'resumeRun'> = {}) =>
       this.call('resumeRun', { params: { run }, body }),
     /** The delegation tree the Run belongs to (top-level Run first). */

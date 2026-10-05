@@ -9,6 +9,8 @@ import {
   formatRelative,
   formatTokens,
   formatWhen,
+  pauseNextStep,
+  pauseReason,
 } from './vocabulary';
 
 const NOW = Date.parse('2026-10-05T12:00:00.000Z');
@@ -52,5 +54,32 @@ describe('times', () => {
     expect(formatTokens(950)).toBe('950');
     expect(formatTokens(12_300)).toBe('12.3k');
     expect(formatTokens(1_200_000)).toBe('1.2M');
+  });
+});
+
+describe('pause reasons (ADR-016)', () => {
+  const base = {
+    by: 'owner',
+    at: '2026-10-05T12:00:00.000Z',
+    interruptedTurn: false,
+    toolUseId: null,
+    toolName: null,
+    autoResume: false,
+    detail: null,
+  };
+  it('say who paused and why, in one line', () => {
+    expect(pauseReason({ ...base, reason: 'owner', toolName: 'Bash' })).toBe(
+      'Paused by owner before Bash ran.',
+    );
+    expect(pauseReason({ ...base, reason: 'owner', interruptedTurn: true })).toMatch(
+      /interrupted the last turn/,
+    );
+    expect(pauseReason({ ...base, reason: 'interrupted', autoResume: true })).toMatch(
+      /resumes by itself/,
+    );
+    expect(
+      pauseReason({ ...base, reason: 'interrupted', detail: 'send_email (t1) has no result' }),
+    ).toBe('Interrupted when orbitd stopped and needs you: send_email (t1) has no result.');
+    expect(pauseNextStep({ ...base, reason: 'interrupted' })).toMatch(/verify first/);
   });
 });

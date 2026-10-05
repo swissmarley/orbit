@@ -23,6 +23,9 @@ export function staleKeysFor(e: RunEvent): (readonly unknown[])[] {
     e.type === 'run.queued' ||
     e.type === 'run.started' ||
     e.type === 'run.parked' ||
+    e.type === 'run.paused' ||
+    e.type === 'run.pause_requested' ||
+    e.type === 'run.pause_lapsed' ||
     e.type === 'run.resumed' ||
     e.type === 'run.completed' ||
     e.type === 'run.failed' ||

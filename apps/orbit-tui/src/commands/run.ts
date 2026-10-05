@@ -5,6 +5,7 @@ import {
   type RunState,
   formatLocalTime,
   formatWhen,
+  pauseNextStep,
 } from '@orbit/core';
 import type { OrbitClient } from '@orbit/sdk-client';
 import type { Context } from '../context';
@@ -21,6 +22,8 @@ export function exitCodeForRun(run: RunState): number {
       return ExitCode.waitingApproval;
     case 'rate_limited':
       return ExitCode.rateLimited;
+    case 'paused':
+      return ExitCode.paused;
     case 'cancelled':
       return ExitCode.cancelled;
     default:
@@ -34,6 +37,7 @@ const SEGMENT_END = new Set<RunEvent['type']>([
   'run.failed',
   'run.cancelled',
   'run.parked',
+  'run.paused',
   'run.rate_limited',
 ]);
 
@@ -86,6 +90,11 @@ export async function follow(
     }
     if (run.status === 'waiting_approval') {
       ctx.io.out(`  Review with ${p('bold', 'orbit approvals')}; approving resumes the run.`);
+    }
+    if (run.status === 'paused' && run.pause) {
+      ctx.io.out(
+        `  ${pauseNextStep(run.pause)}${run.pause.autoResume ? '' : ` ${p('bold', `orbit resume ${runId}`)} · ${p('bold', `orbit stop ${runId}`)}`}`,
+      );
     }
     if (run.status === 'rate_limited') {
       ctx.io.out(

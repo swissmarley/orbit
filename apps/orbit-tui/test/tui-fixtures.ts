@@ -280,6 +280,7 @@ export function fakeClient(
       events: vi.fn((runId: string) => Promise.resolve(timeline.filter((e) => e.runId === runId))),
       start: vi.fn((botId: string) => Promise.resolve(run('run_new', botId, 'queued'))),
       stop: vi.fn((runId: string) => Promise.resolve(run(runId, 'bot_a', 'cancelled'))),
+      pause: vi.fn((runId: string) => Promise.resolve(run(runId, 'bot_a', 'running'))),
       resume: vi.fn((runId: string) => Promise.resolve(run(runId, 'bot_a', 'queued'))),
       tree: vi.fn((runId: string) => {
         const parent = {

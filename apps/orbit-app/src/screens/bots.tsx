@@ -4,6 +4,7 @@ import { Link } from '@tanstack/react-router';
 import { Bot as BotIcon, LayoutGrid, List, Pause, Play, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { confirmAction } from '../components/confirm';
+import { TakeOverButton } from '../components/takeover';
 import { RunSparkline } from '../components/sparkline';
 import { EmptyState, ErrorState, PageHeader } from '../components/states';
 import { PausedBadge, StatusBadge, Time } from '../components/status';
@@ -63,6 +64,7 @@ export function BotActions({ bot, compact = false }: { bot: Bot; compact?: boole
       >
         {paused ? <Play aria-hidden /> : <Pause aria-hidden />} {paused ? 'Resume' : 'Pause'}
       </Button>
+      {compact ? null : <TakeOverButton bot={bot} />}
     </div>
   );
 }

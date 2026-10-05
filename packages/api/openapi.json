@@ -657,7 +657,7 @@
     "/v1/daemon/stop": {
       "post": {
         "operationId": "stopDaemon",
-        "summary": "Gracefully stop orbitd (executing Runs end as interrupted)",
+        "summary": "Gracefully stop orbitd (executing Runs are interrupted; safe ones resume at the next start)",
         "tags": [
           "daemon"
         ],
@@ -1306,6 +1306,14 @@
                             "default": true,
                             "type": "boolean"
                           },
+                          "onInterrupt": {
+                            "default": "resume",
+                            "type": "string",
+                            "enum": [
+                              "resume",
+                              "fail"
+                            ]
+                          },
                           "triggers": {
                             "default": [],
                             "maxItems": 20,
@@ -1752,6 +1760,7 @@
                           "sandbox",
                           "approvals",
                           "autoResumeAfterUsageLimit",
+                          "onInterrupt",
                           "triggers",
                           "priority",
                           "readRoots",
@@ -2078,6 +2087,14 @@
                         "autoResumeAfterUsageLimit": {
                           "default": true,
                           "type": "boolean"
+                        },
+                        "onInterrupt": {
+                          "default": "resume",
+                          "type": "string",
+                          "enum": [
+                            "resume",
+                            "fail"
+                          ]
                         },
                         "triggers": {
                           "default": [],
@@ -2525,6 +2542,7 @@
                         "sandbox",
                         "approvals",
                         "autoResumeAfterUsageLimit",
+                        "onInterrupt",
                         "triggers",
                         "priority",
                         "readRoots",
@@ -2807,6 +2825,14 @@
                   "autoResumeAfterUsageLimit": {
                     "default": true,
                     "type": "boolean"
+                  },
+                  "onInterrupt": {
+                    "default": "resume",
+                    "type": "string",
+                    "enum": [
+                      "resume",
+                      "fail"
+                    ]
                   },
                   "triggers": {
                     "default": [],
@@ -3471,6 +3497,14 @@
                           "default": true,
                           "type": "boolean"
                         },
+                        "onInterrupt": {
+                          "default": "resume",
+                          "type": "string",
+                          "enum": [
+                            "resume",
+                            "fail"
+                          ]
+                        },
                         "triggers": {
                           "default": [],
                           "maxItems": 20,
@@ -3917,6 +3951,7 @@
                         "sandbox",
                         "approvals",
                         "autoResumeAfterUsageLimit",
+                        "onInterrupt",
                         "triggers",
                         "priority",
                         "readRoots",
@@ -4252,6 +4287,14 @@
                           "default": true,
                           "type": "boolean"
                         },
+                        "onInterrupt": {
+                          "default": "resume",
+                          "type": "string",
+                          "enum": [
+                            "resume",
+                            "fail"
+                          ]
+                        },
                         "triggers": {
                           "default": [],
                           "maxItems": 20,
@@ -4698,6 +4741,7 @@
                         "sandbox",
                         "approvals",
                         "autoResumeAfterUsageLimit",
+                        "onInterrupt",
                         "triggers",
                         "priority",
                         "readRoots",
@@ -4980,6 +5024,14 @@
                   "autoResumeAfterUsageLimit": {
                     "default": true,
                     "type": "boolean"
+                  },
+                  "onInterrupt": {
+                    "default": "resume",
+                    "type": "string",
+                    "enum": [
+                      "resume",
+                      "fail"
+                    ]
                   },
                   "triggers": {
                     "default": [],
@@ -5643,6 +5695,14 @@
                             "default": true,
                             "type": "boolean"
                           },
+                          "onInterrupt": {
+                            "default": "resume",
+                            "type": "string",
+                            "enum": [
+                              "resume",
+                              "fail"
+                            ]
+                          },
                           "triggers": {
                             "default": [],
                             "maxItems": 20,
@@ -6089,6 +6149,7 @@
                           "sandbox",
                           "approvals",
                           "autoResumeAfterUsageLimit",
+                          "onInterrupt",
                           "triggers",
                           "priority",
                           "readRoots",
@@ -6403,6 +6464,14 @@
                         "autoResumeAfterUsageLimit": {
                           "default": true,
                           "type": "boolean"
+                        },
+                        "onInterrupt": {
+                          "default": "resume",
+                          "type": "string",
+                          "enum": [
+                            "resume",
+                            "fail"
+                          ]
                         },
                         "triggers": {
                           "default": [],
@@ -6850,6 +6919,7 @@
                         "sandbox",
                         "approvals",
                         "autoResumeAfterUsageLimit",
+                        "onInterrupt",
                         "triggers",
                         "priority",
                         "readRoots",
@@ -7187,6 +7257,14 @@
                           "default": true,
                           "type": "boolean"
                         },
+                        "onInterrupt": {
+                          "default": "resume",
+                          "type": "string",
+                          "enum": [
+                            "resume",
+                            "fail"
+                          ]
+                        },
                         "triggers": {
                           "default": [],
                           "maxItems": 20,
@@ -7633,6 +7711,7 @@
                         "sandbox",
                         "approvals",
                         "autoResumeAfterUsageLimit",
+                        "onInterrupt",
                         "triggers",
                         "priority",
                         "readRoots",
@@ -8290,6 +8369,98 @@
                       "type": "integer",
                       "minimum": -9007199254740991,
                       "maximum": 9007199254740991
+                    },
+                    "pauseRequested": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "by": {
+                              "type": "string"
+                            },
+                            "now": {
+                              "type": "boolean"
+                            },
+                            "at": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "by",
+                            "now",
+                            "at"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "pause": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "reason": {
+                              "type": "string",
+                              "enum": [
+                                "owner",
+                                "interrupted"
+                              ]
+                            },
+                            "by": {
+                              "type": "string"
+                            },
+                            "at": {
+                              "type": "string"
+                            },
+                            "interruptedTurn": {
+                              "type": "boolean"
+                            },
+                            "toolUseId": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "toolName": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "autoResume": {
+                              "type": "boolean"
+                            },
+                            "detail": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "reason",
+                            "by",
+                            "at",
+                            "interruptedTurn",
+                            "toolUseId",
+                            "toolName",
+                            "autoResume",
+                            "detail"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "interruptions": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
                     }
                   },
                   "required": [
@@ -8329,7 +8500,10 @@
                     "pendingDelegations",
                     "delegated",
                     "rating",
-                    "memoryWrites"
+                    "memoryWrites",
+                    "pauseRequested",
+                    "pause",
+                    "interruptions"
                   ],
                   "additionalProperties": false
                 }
@@ -8992,6 +9166,98 @@
                         "type": "integer",
                         "minimum": -9007199254740991,
                         "maximum": 9007199254740991
+                      },
+                      "pauseRequested": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "by": {
+                                "type": "string"
+                              },
+                              "now": {
+                                "type": "boolean"
+                              },
+                              "at": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "by",
+                              "now",
+                              "at"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "pause": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "reason": {
+                                "type": "string",
+                                "enum": [
+                                  "owner",
+                                  "interrupted"
+                                ]
+                              },
+                              "by": {
+                                "type": "string"
+                              },
+                              "at": {
+                                "type": "string"
+                              },
+                              "interruptedTurn": {
+                                "type": "boolean"
+                              },
+                              "toolUseId": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "toolName": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "autoResume": {
+                                "type": "boolean"
+                              },
+                              "detail": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "reason",
+                              "by",
+                              "at",
+                              "interruptedTurn",
+                              "toolUseId",
+                              "toolName",
+                              "autoResume",
+                              "detail"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "interruptions": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
                       }
                     },
                     "required": [
@@ -9031,7 +9297,10 @@
                       "pendingDelegations",
                       "delegated",
                       "rating",
-                      "memoryWrites"
+                      "memoryWrites",
+                      "pauseRequested",
+                      "pause",
+                      "interruptions"
                     ],
                     "additionalProperties": false
                   }
@@ -9649,6 +9918,98 @@
                       "type": "integer",
                       "minimum": -9007199254740991,
                       "maximum": 9007199254740991
+                    },
+                    "pauseRequested": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "by": {
+                              "type": "string"
+                            },
+                            "now": {
+                              "type": "boolean"
+                            },
+                            "at": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "by",
+                            "now",
+                            "at"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "pause": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "reason": {
+                              "type": "string",
+                              "enum": [
+                                "owner",
+                                "interrupted"
+                              ]
+                            },
+                            "by": {
+                              "type": "string"
+                            },
+                            "at": {
+                              "type": "string"
+                            },
+                            "interruptedTurn": {
+                              "type": "boolean"
+                            },
+                            "toolUseId": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "toolName": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "autoResume": {
+                              "type": "boolean"
+                            },
+                            "detail": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "reason",
+                            "by",
+                            "at",
+                            "interruptedTurn",
+                            "toolUseId",
+                            "toolName",
+                            "autoResume",
+                            "detail"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "interruptions": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
                     }
                   },
                   "required": [
@@ -9688,7 +10049,10 @@
                     "pendingDelegations",
                     "delegated",
                     "rating",
-                    "memoryWrites"
+                    "memoryWrites",
+                    "pauseRequested",
+                    "pause",
+                    "interruptions"
                   ],
                   "additionalProperties": false
                 }
@@ -11084,7 +11448,9 @@
                                   "approval",
                                   "usage_limit",
                                   "manual",
-                                  "delegation"
+                                  "delegation",
+                                  "pause",
+                                  "interrupted"
                                 ]
                               },
                               "sessionId": {
@@ -11097,6 +11463,221 @@
                             "required": [
                               "reason",
                               "sessionId"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "runId",
+                          "botId",
+                          "seq",
+                          "ts",
+                          "type",
+                          "data"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "runId": {
+                            "type": "string"
+                          },
+                          "botId": {
+                            "type": "string"
+                          },
+                          "seq": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "ts": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          },
+                          "type": {
+                            "type": "string",
+                            "const": "run.pause_requested"
+                          },
+                          "data": {
+                            "type": "object",
+                            "properties": {
+                              "by": {
+                                "type": "string"
+                              },
+                              "now": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "by",
+                              "now"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "runId",
+                          "botId",
+                          "seq",
+                          "ts",
+                          "type",
+                          "data"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "runId": {
+                            "type": "string"
+                          },
+                          "botId": {
+                            "type": "string"
+                          },
+                          "seq": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "ts": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          },
+                          "type": {
+                            "type": "string",
+                            "const": "run.pause_lapsed"
+                          },
+                          "data": {
+                            "type": "object",
+                            "properties": {
+                              "by": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "by"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "runId",
+                          "botId",
+                          "seq",
+                          "ts",
+                          "type",
+                          "data"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "runId": {
+                            "type": "string"
+                          },
+                          "botId": {
+                            "type": "string"
+                          },
+                          "seq": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "ts": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          },
+                          "type": {
+                            "type": "string",
+                            "const": "run.paused"
+                          },
+                          "data": {
+                            "type": "object",
+                            "properties": {
+                              "reason": {
+                                "type": "string",
+                                "enum": [
+                                  "owner",
+                                  "interrupted"
+                                ]
+                              },
+                              "by": {
+                                "type": "string"
+                              },
+                              "sessionId": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "interruptedTurn": {
+                                "type": "boolean"
+                              },
+                              "toolUseId": {
+                                "default": null,
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "toolName": {
+                                "default": null,
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "autoResume": {
+                                "default": false,
+                                "type": "boolean"
+                              },
+                              "detail": {
+                                "default": null,
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "activeMs": {
+                                "default": 0,
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              }
+                            },
+                            "required": [
+                              "reason",
+                              "by",
+                              "sessionId",
+                              "interruptedTurn",
+                              "toolUseId",
+                              "toolName",
+                              "autoResume",
+                              "detail",
+                              "activeMs"
                             ],
                             "additionalProperties": false
                           }
@@ -13279,6 +13860,98 @@
                       "type": "integer",
                       "minimum": -9007199254740991,
                       "maximum": 9007199254740991
+                    },
+                    "pauseRequested": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "by": {
+                              "type": "string"
+                            },
+                            "now": {
+                              "type": "boolean"
+                            },
+                            "at": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "by",
+                            "now",
+                            "at"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "pause": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "reason": {
+                              "type": "string",
+                              "enum": [
+                                "owner",
+                                "interrupted"
+                              ]
+                            },
+                            "by": {
+                              "type": "string"
+                            },
+                            "at": {
+                              "type": "string"
+                            },
+                            "interruptedTurn": {
+                              "type": "boolean"
+                            },
+                            "toolUseId": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "toolName": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "autoResume": {
+                              "type": "boolean"
+                            },
+                            "detail": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "reason",
+                            "by",
+                            "at",
+                            "interruptedTurn",
+                            "toolUseId",
+                            "toolName",
+                            "autoResume",
+                            "detail"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "interruptions": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
                     }
                   },
                   "required": [
@@ -13318,7 +13991,10 @@
                     "pendingDelegations",
                     "delegated",
                     "rating",
-                    "memoryWrites"
+                    "memoryWrites",
+                    "pauseRequested",
+                    "pause",
+                    "interruptions"
                   ],
                   "additionalProperties": false
                 }
@@ -13368,10 +14044,1708 @@
         "x-orbit-role": "operator"
       }
     },
+    "/v1/runs/{run}/pause": {
+      "post": {
+        "operationId": "pauseRun",
+        "summary": "Pause a running Run at its next tool call (or now); resume it later",
+        "tags": [
+          "controls"
+        ],
+        "parameters": [
+          {
+            "name": "run",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "runId": {
+                      "type": "string"
+                    },
+                    "botId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "queued",
+                        "running",
+                        "waiting_approval",
+                        "delegating",
+                        "rate_limited",
+                        "paused",
+                        "completed",
+                        "failed",
+                        "cancelled"
+                      ]
+                    },
+                    "trigger": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "manual",
+                                "cron",
+                                "interval",
+                                "webhook",
+                                "slack",
+                                "file",
+                                "git",
+                                "delegation",
+                                "resume"
+                              ]
+                            },
+                            "source": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "source"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "prompt": {
+                      "type": "string"
+                    },
+                    "priority": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "driver": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "sdk",
+                            "cli",
+                            "mock"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "authMethod": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "api_key",
+                            "api_key_helper",
+                            "bedrock",
+                            "vertex",
+                            "subscription",
+                            "claude_cli_other",
+                            "mock",
+                            "none"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "model": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "cwd": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "sessionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "startedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "endedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "lastSeq": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "lastEventId": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "resultText": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "error": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "code": {
+                              "type": "string"
+                            },
+                            "message": {
+                              "type": "string"
+                            },
+                            "retryable": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "code",
+                            "message",
+                            "retryable"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "usage": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "inputTokens": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "outputTokens": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "cacheReadTokens": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "cacheCreationTokens": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "costUsd": {
+                              "anyOf": [
+                                {
+                                  "type": "number",
+                                  "minimum": 0
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "numTurns": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "durationMs": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "models": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "inputTokens",
+                            "outputTokens",
+                            "cacheReadTokens",
+                            "cacheCreationTokens",
+                            "costUsd",
+                            "numTurns",
+                            "durationMs",
+                            "models"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "usageLimit": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "resetsAt": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "limitType": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "message": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "resetsAt",
+                            "limitType",
+                            "message"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "resumeAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "counts": {
+                      "type": "object",
+                      "properties": {
+                        "toolCalls": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "denied": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "subagents": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "messages": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "toolCalls",
+                        "denied",
+                        "subagents",
+                        "messages"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "needsAction": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "pendingApprovals": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "taintSources": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "liveUsage": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "inputTokens": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "outputTokens": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "turns": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "inputTokens",
+                            "outputTokens",
+                            "turns"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "budgetExceeded": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "killedBy": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "totals": {
+                      "type": "object",
+                      "properties": {
+                        "tokens": {
+                          "type": "number"
+                        },
+                        "turns": {
+                          "type": "number"
+                        },
+                        "costUsd": {
+                          "type": "number"
+                        },
+                        "activeMs": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "tokens",
+                        "turns",
+                        "costUsd",
+                        "activeMs"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "parentRunId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "depth": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "budgetCap": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "toolCalls": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "tokens": {
+                              "anyOf": [
+                                {
+                                  "type": "number",
+                                  "minimum": 0
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "costUsd": {
+                              "anyOf": [
+                                {
+                                  "type": "number",
+                                  "minimum": 0
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "wallClockMinutes": {
+                              "type": "number",
+                              "minimum": 0
+                            }
+                          },
+                          "required": [
+                            "toolCalls",
+                            "tokens",
+                            "costUsd",
+                            "wallClockMinutes"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "children": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "runId": {
+                            "type": "string"
+                          },
+                          "botId": {
+                            "type": "string"
+                          },
+                          "botName": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "running",
+                              "completed",
+                              "failed",
+                              "cancelled"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "runId",
+                          "botId",
+                          "botName",
+                          "status"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "pendingDelegations": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "delegated": {
+                      "type": "object",
+                      "properties": {
+                        "tokens": {
+                          "type": "number"
+                        },
+                        "costUsd": {
+                          "type": "number"
+                        },
+                        "toolCalls": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "tokens",
+                        "costUsd",
+                        "toolCalls"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "rating": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "up",
+                            "down"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "memoryWrites": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "pauseRequested": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "by": {
+                              "type": "string"
+                            },
+                            "now": {
+                              "type": "boolean"
+                            },
+                            "at": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "by",
+                            "now",
+                            "at"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "pause": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "reason": {
+                              "type": "string",
+                              "enum": [
+                                "owner",
+                                "interrupted"
+                              ]
+                            },
+                            "by": {
+                              "type": "string"
+                            },
+                            "at": {
+                              "type": "string"
+                            },
+                            "interruptedTurn": {
+                              "type": "boolean"
+                            },
+                            "toolUseId": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "toolName": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "autoResume": {
+                              "type": "boolean"
+                            },
+                            "detail": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "reason",
+                            "by",
+                            "at",
+                            "interruptedTurn",
+                            "toolUseId",
+                            "toolName",
+                            "autoResume",
+                            "detail"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "interruptions": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "runId",
+                    "botId",
+                    "status",
+                    "trigger",
+                    "prompt",
+                    "priority",
+                    "driver",
+                    "authMethod",
+                    "model",
+                    "cwd",
+                    "sessionId",
+                    "createdAt",
+                    "startedAt",
+                    "endedAt",
+                    "lastSeq",
+                    "lastEventId",
+                    "resultText",
+                    "error",
+                    "usage",
+                    "usageLimit",
+                    "resumeAt",
+                    "counts",
+                    "needsAction",
+                    "pendingApprovals",
+                    "taintSources",
+                    "liveUsage",
+                    "budgetExceeded",
+                    "killedBy",
+                    "totals",
+                    "parentRunId",
+                    "depth",
+                    "budgetCap",
+                    "children",
+                    "pendingDelegations",
+                    "delegated",
+                    "rating",
+                    "memoryWrites",
+                    "pauseRequested",
+                    "pause",
+                    "interruptions"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "hint": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "hint"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "x-orbit-role": "operator",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "now": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/bots/{bot}/takeover": {
+      "post": {
+        "operationId": "startTakeover",
+        "summary": "Hold a Bot and hand its workspace to the owner's shell (bearer token only)",
+        "tags": [
+          "controls"
+        ],
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "botId": {
+                      "type": "string"
+                    },
+                    "botName": {
+                      "type": "string"
+                    },
+                    "workspace": {
+                      "type": "string"
+                    },
+                    "pid": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "startedAt": {
+                      "type": "string"
+                    },
+                    "wasPaused": {
+                      "type": "boolean"
+                    },
+                    "replacedStale": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "waiting": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "botId",
+                    "botName",
+                    "workspace",
+                    "pid",
+                    "startedAt",
+                    "wasPaused",
+                    "replacedStale",
+                    "waiting"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "hint": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "hint"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "x-orbit-role": "owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "pid": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "pid"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "endTakeover",
+        "summary": "End a take-over; the Bot runs again unless it was paused before (bearer token only)",
+        "tags": [
+          "controls"
+        ],
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "spec": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 80
+                        },
+                        "goal": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4000
+                        },
+                        "instructions": {
+                          "default": "",
+                          "type": "string",
+                          "maxLength": 20000
+                        },
+                        "model": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "tools": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "maxTurns": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 500
+                        },
+                        "mock": {
+                          "type": "object",
+                          "properties": {
+                            "fixture": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "fixture"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "budgets": {
+                          "type": "object",
+                          "properties": {
+                            "maxToolCallsPerRun": {
+                              "default": 200,
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "maxWallClockMinutes": {
+                              "default": 60,
+                              "type": "number",
+                              "exclusiveMinimum": 0,
+                              "maximum": 1440
+                            },
+                            "maxTokensPerRun": {
+                              "default": null,
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "maxCostUsdPerRun": {
+                              "default": null,
+                              "anyOf": [
+                                {
+                                  "type": "number",
+                                  "exclusiveMinimum": 0
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "maxCostUsdPerDay": {
+                              "default": null,
+                              "anyOf": [
+                                {
+                                  "type": "number",
+                                  "exclusiveMinimum": 0
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "maxRunsPerDay": {
+                              "default": 50,
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "maxToolCallsPerRun",
+                            "maxWallClockMinutes",
+                            "maxTokensPerRun",
+                            "maxCostUsdPerRun",
+                            "maxCostUsdPerDay",
+                            "maxRunsPerDay"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "sandbox": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "default": "directory",
+                              "type": "string",
+                              "enum": [
+                                "directory",
+                                "worktree",
+                                "docker"
+                              ]
+                            },
+                            "repo": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "network": {
+                              "default": "none",
+                              "type": "string",
+                              "enum": [
+                                "none",
+                                "allowlist"
+                              ]
+                            },
+                            "allowedDomains": {
+                              "default": [],
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "image": {
+                              "default": "orbit-sandbox:latest",
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "cpus": {
+                              "default": 2,
+                              "type": "number",
+                              "exclusiveMinimum": 0,
+                              "maximum": 64
+                            },
+                            "memoryMb": {
+                              "default": 2048,
+                              "type": "integer",
+                              "minimum": 128,
+                              "maximum": 65536
+                            },
+                            "pidsLimit": {
+                              "default": 512,
+                              "type": "integer",
+                              "minimum": 16,
+                              "maximum": 32768
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "network",
+                            "allowedDomains",
+                            "image",
+                            "cpus",
+                            "memoryMb",
+                            "pidsLimit"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "approvals": {
+                          "type": "object",
+                          "properties": {
+                            "parkWindowSeconds": {
+                              "default": 30,
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 600
+                            },
+                            "autoResume": {
+                              "default": true,
+                              "type": "boolean"
+                            },
+                            "expireAfterHours": {
+                              "default": 72,
+                              "type": "number",
+                              "exclusiveMinimum": 0,
+                              "maximum": 720
+                            }
+                          },
+                          "required": [
+                            "parkWindowSeconds",
+                            "autoResume",
+                            "expireAfterHours"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "autoResumeAfterUsageLimit": {
+                          "default": true,
+                          "type": "boolean"
+                        },
+                        "onInterrupt": {
+                          "default": "resume",
+                          "type": "string",
+                          "enum": [
+                            "resume",
+                            "fail"
+                          ]
+                        },
+                        "triggers": {
+                          "default": [],
+                          "maxItems": 20,
+                          "type": "array",
+                          "items": {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "cron"
+                                  },
+                                  "cron": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 120
+                                  },
+                                  "timezone": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 80
+                                  },
+                                  "prompt": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 4000
+                                  },
+                                  "enabled": {
+                                    "default": true,
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "cron",
+                                  "enabled"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "interval"
+                                  },
+                                  "everyMinutes": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 44640
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 80
+                                  },
+                                  "prompt": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 4000
+                                  },
+                                  "enabled": {
+                                    "default": true,
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "everyMinutes",
+                                  "enabled"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "webhook"
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"
+                                  },
+                                  "prompt": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 4000
+                                  },
+                                  "enabled": {
+                                    "default": true,
+                                    "type": "boolean"
+                                  },
+                                  "style": {
+                                    "default": "orbit",
+                                    "type": "string",
+                                    "enum": [
+                                      "orbit",
+                                      "github"
+                                    ]
+                                  },
+                                  "events": {
+                                    "default": [],
+                                    "maxItems": 20,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 60
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "name",
+                                  "enabled",
+                                  "style",
+                                  "events"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "slack"
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 80
+                                  },
+                                  "prompt": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 4000
+                                  },
+                                  "enabled": {
+                                    "default": true,
+                                    "type": "boolean"
+                                  },
+                                  "channels": {
+                                    "minItems": 1,
+                                    "maxItems": 20,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "pattern": "^[CGD][A-Z0-9]{2,20}$"
+                                    }
+                                  },
+                                  "on": {
+                                    "default": "mention",
+                                    "type": "string",
+                                    "enum": [
+                                      "mention",
+                                      "message"
+                                    ]
+                                  },
+                                  "users": {
+                                    "default": [],
+                                    "maxItems": 50,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "pattern": "^[UW][A-Z0-9]{2,20}$"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "enabled",
+                                  "channels",
+                                  "on",
+                                  "users"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "file"
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 80
+                                  },
+                                  "prompt": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 4000
+                                  },
+                                  "enabled": {
+                                    "default": true,
+                                    "type": "boolean"
+                                  },
+                                  "paths": {
+                                    "minItems": 1,
+                                    "maxItems": 10,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 1000
+                                    }
+                                  },
+                                  "events": {
+                                    "default": [
+                                      "add",
+                                      "change",
+                                      "unlink"
+                                    ],
+                                    "minItems": 1,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "enum": [
+                                        "add",
+                                        "change",
+                                        "unlink"
+                                      ]
+                                    }
+                                  },
+                                  "ignore": {
+                                    "default": [],
+                                    "maxItems": 20,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    }
+                                  },
+                                  "debounceSeconds": {
+                                    "default": 5,
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 3600
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "enabled",
+                                  "paths",
+                                  "events",
+                                  "ignore",
+                                  "debounceSeconds"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "git"
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 80
+                                  },
+                                  "prompt": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 4000
+                                  },
+                                  "enabled": {
+                                    "default": true,
+                                    "type": "boolean"
+                                  },
+                                  "repo": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 1000
+                                  },
+                                  "branch": {
+                                    "default": "main",
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9._/-]{1,200}$"
+                                  },
+                                  "debounceSeconds": {
+                                    "default": 5,
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 3600
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "enabled",
+                                  "repo",
+                                  "branch",
+                                  "debounceSeconds"
+                                ],
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        },
+                        "priority": {
+                          "default": 0,
+                          "type": "integer",
+                          "minimum": -10,
+                          "maximum": 10
+                        },
+                        "readRoots": {
+                          "default": [],
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "subagents": {
+                          "default": {},
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+                          },
+                          "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                              "description": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 1000
+                              },
+                              "prompt": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 20000
+                              },
+                              "tools": {
+                                "maxItems": 50,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "model": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 100
+                              },
+                              "maxTurns": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 200
+                              }
+                            },
+                            "required": [
+                              "description",
+                              "prompt"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "delegation": {
+                          "type": "object",
+                          "properties": {
+                            "allowedBots": {
+                              "default": [],
+                              "maxItems": 20,
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "maxChildrenPerRun": {
+                              "default": 3,
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 10
+                            }
+                          },
+                          "required": [
+                            "allowedBots",
+                            "maxChildrenPerRun"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "memory": {
+                          "type": "object",
+                          "properties": {
+                            "summarize": {
+                              "default": "result",
+                              "type": "string",
+                              "enum": [
+                                "off",
+                                "result",
+                                "triage"
+                              ]
+                            },
+                            "inject": {
+                              "default": true,
+                              "type": "boolean"
+                            },
+                            "maxContextChars": {
+                              "default": 4000,
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 20000
+                            },
+                            "tools": {
+                              "default": true,
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "summarize",
+                            "inject",
+                            "maxContextChars",
+                            "tools"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "plugins": {
+                          "default": [],
+                          "maxItems": 20,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9-]{1,31}$"
+                          }
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "goal",
+                        "instructions",
+                        "budgets",
+                        "sandbox",
+                        "approvals",
+                        "autoResumeAfterUsageLimit",
+                        "onInterrupt",
+                        "triggers",
+                        "priority",
+                        "readRoots",
+                        "subagents",
+                        "delegation",
+                        "memory",
+                        "plugins"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "pausedAt": {
+                      "default": null,
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "version",
+                    "spec",
+                    "pausedAt",
+                    "createdAt",
+                    "updatedAt"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "hint": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "hint"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "x-orbit-role": "owner"
+      }
+    },
     "/v1/runs/{run}/resume": {
       "post": {
         "operationId": "resumeRun",
-        "summary": "Queue a resume of a parked (all decided) or rate-limited Run",
+        "summary": "Queue a resume of a parked (all decided), paused or rate-limited Run",
         "tags": [
           "runs"
         ],
@@ -13935,6 +16309,98 @@
                       "type": "integer",
                       "minimum": -9007199254740991,
                       "maximum": 9007199254740991
+                    },
+                    "pauseRequested": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "by": {
+                              "type": "string"
+                            },
+                            "now": {
+                              "type": "boolean"
+                            },
+                            "at": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "by",
+                            "now",
+                            "at"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "pause": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "reason": {
+                              "type": "string",
+                              "enum": [
+                                "owner",
+                                "interrupted"
+                              ]
+                            },
+                            "by": {
+                              "type": "string"
+                            },
+                            "at": {
+                              "type": "string"
+                            },
+                            "interruptedTurn": {
+                              "type": "boolean"
+                            },
+                            "toolUseId": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "toolName": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "autoResume": {
+                              "type": "boolean"
+                            },
+                            "detail": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "reason",
+                            "by",
+                            "at",
+                            "interruptedTurn",
+                            "toolUseId",
+                            "toolName",
+                            "autoResume",
+                            "detail"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "interruptions": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
                     }
                   },
                   "required": [
@@ -13974,7 +16440,10 @@
                     "pendingDelegations",
                     "delegated",
                     "rating",
-                    "memoryWrites"
+                    "memoryWrites",
+                    "pauseRequested",
+                    "pause",
+                    "interruptions"
                   ],
                   "additionalProperties": false
                 }
@@ -15442,6 +17911,98 @@
                               "type": "integer",
                               "minimum": -9007199254740991,
                               "maximum": 9007199254740991
+                            },
+                            "pauseRequested": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "by": {
+                                      "type": "string"
+                                    },
+                                    "now": {
+                                      "type": "boolean"
+                                    },
+                                    "at": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "by",
+                                    "now",
+                                    "at"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "pause": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "reason": {
+                                      "type": "string",
+                                      "enum": [
+                                        "owner",
+                                        "interrupted"
+                                      ]
+                                    },
+                                    "by": {
+                                      "type": "string"
+                                    },
+                                    "at": {
+                                      "type": "string"
+                                    },
+                                    "interruptedTurn": {
+                                      "type": "boolean"
+                                    },
+                                    "toolUseId": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
+                                    "toolName": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
+                                    "autoResume": {
+                                      "type": "boolean"
+                                    },
+                                    "detail": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "reason",
+                                    "by",
+                                    "at",
+                                    "interruptedTurn",
+                                    "toolUseId",
+                                    "toolName",
+                                    "autoResume",
+                                    "detail"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "interruptions": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
                             }
                           },
                           "required": [
@@ -15481,7 +18042,10 @@
                             "pendingDelegations",
                             "delegated",
                             "rating",
-                            "memoryWrites"
+                            "memoryWrites",
+                            "pauseRequested",
+                            "pause",
+                            "interruptions"
                           ],
                           "additionalProperties": false
                         },
@@ -16406,6 +18970,98 @@
                               "type": "integer",
                               "minimum": -9007199254740991,
                               "maximum": 9007199254740991
+                            },
+                            "pauseRequested": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "by": {
+                                      "type": "string"
+                                    },
+                                    "now": {
+                                      "type": "boolean"
+                                    },
+                                    "at": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "by",
+                                    "now",
+                                    "at"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "pause": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "reason": {
+                                      "type": "string",
+                                      "enum": [
+                                        "owner",
+                                        "interrupted"
+                                      ]
+                                    },
+                                    "by": {
+                                      "type": "string"
+                                    },
+                                    "at": {
+                                      "type": "string"
+                                    },
+                                    "interruptedTurn": {
+                                      "type": "boolean"
+                                    },
+                                    "toolUseId": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
+                                    "toolName": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
+                                    "autoResume": {
+                                      "type": "boolean"
+                                    },
+                                    "detail": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "reason",
+                                    "by",
+                                    "at",
+                                    "interruptedTurn",
+                                    "toolUseId",
+                                    "toolName",
+                                    "autoResume",
+                                    "detail"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "interruptions": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
                             }
                           },
                           "required": [
@@ -16445,7 +19101,10 @@
                             "pendingDelegations",
                             "delegated",
                             "rating",
-                            "memoryWrites"
+                            "memoryWrites",
+                            "pauseRequested",
+                            "pause",
+                            "interruptions"
                           ],
                           "additionalProperties": false
                         },
@@ -19918,6 +22577,98 @@
                             "type": "integer",
                             "minimum": -9007199254740991,
                             "maximum": 9007199254740991
+                          },
+                          "pauseRequested": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "by": {
+                                    "type": "string"
+                                  },
+                                  "now": {
+                                    "type": "boolean"
+                                  },
+                                  "at": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "by",
+                                  "now",
+                                  "at"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "pause": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "reason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "owner",
+                                      "interrupted"
+                                    ]
+                                  },
+                                  "by": {
+                                    "type": "string"
+                                  },
+                                  "at": {
+                                    "type": "string"
+                                  },
+                                  "interruptedTurn": {
+                                    "type": "boolean"
+                                  },
+                                  "toolUseId": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "toolName": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "autoResume": {
+                                    "type": "boolean"
+                                  },
+                                  "detail": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "reason",
+                                  "by",
+                                  "at",
+                                  "interruptedTurn",
+                                  "toolUseId",
+                                  "toolName",
+                                  "autoResume",
+                                  "detail"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "interruptions": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
                           }
                         },
                         "required": [
@@ -19957,7 +22708,10 @@
                           "pendingDelegations",
                           "delegated",
                           "rating",
-                          "memoryWrites"
+                          "memoryWrites",
+                          "pauseRequested",
+                          "pause",
+                          "interruptions"
                         ],
                         "additionalProperties": false
                       }

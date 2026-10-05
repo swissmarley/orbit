@@ -171,8 +171,37 @@ export const RunEventBody = z.discriminatedUnion('type', [
     delegations: z.array(z.string()).default([]),
   }),
   ev('run.resumed', {
-    reason: z.enum(['approval', 'usage_limit', 'manual', 'delegation']),
+    reason: z.enum(['approval', 'usage_limit', 'manual', 'delegation', 'pause', 'interrupted']),
     sessionId: nullableString,
+  }),
+  /**
+   * The owner asked to pause a running Run (ADR-016): at its next tool-call
+   * decision, or `now` (the engine is stopped mid-turn).
+   */
+  ev('run.pause_requested', { by: z.string(), now: z.boolean() }),
+  /** The segment ended without another tool call: the pause request did not apply. */
+  ev('run.pause_lapsed', { by: z.string() }),
+  /**
+   * The segment ended paused (ADR-016): not ended, not failed, and nothing
+   * resumes it by itself, except an interrupted Run Orbit judged safe to
+   * retry (`autoResume`). Like run.parked, it releases the concurrency slot.
+   */
+  ev('run.paused', {
+    /** owner: `orbit pause`; interrupted: orbitd stopped while the Run executed. */
+    reason: z.enum(['owner', 'interrupted']),
+    by: z.string(),
+    sessionId: nullableString,
+    /** The engine was stopped mid-turn: a tool call without a result may or may not have happened. */
+    interruptedTurn: z.boolean(),
+    /** owner: the call denied to pause the Run; interrupted: the EXTERNAL call whose outcome is unknown. */
+    toolUseId: nullableString.default(null),
+    toolName: nullableString.default(null),
+    /** Interrupted Runs only: Orbit resumes it through the queue (it was safe to). */
+    autoResume: z.boolean().default(false),
+    /** Orbit's own words on why an interrupted Run waits for the owner; null otherwise. */
+    detail: nullableString.default(null),
+    /** Active time of a segment the engine could not report (stopped mid-turn). */
+    activeMs: z.int().nonnegative().default(0),
   }),
   /** The Run will resume by itself at `at` (e.g. when a usage limit resets). */
   ev('run.resume_scheduled', {
@@ -287,13 +316,14 @@ export type RunEventBody = z.infer<typeof RunEventBody>;
 export type RunEventType = RunEventBody['type'];
 export type RunEventOf<T extends RunEventType> = Extract<RunEventBody, { type: T }>;
 
-/** Events that end a driver segment (the orchestrator may turn one into run.parked). */
+/** Events that end a driver segment (the orchestrator may turn one into run.parked or run.paused). */
 export const TERMINAL_EVENT_TYPES = [
   'run.completed',
   'run.failed',
   'run.cancelled',
   'run.rate_limited',
   'run.parked',
+  'run.paused',
 ] as const satisfies readonly RunEventType[];
 export type TerminalEventType = (typeof TERMINAL_EVENT_TYPES)[number];
 

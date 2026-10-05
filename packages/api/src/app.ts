@@ -542,6 +542,14 @@ export function createApp(opts: AppOptions): Hono {
     return p;
   };
 
+  const requireToken = (c: Context, what: string) => {
+    if (requireVia(c) !== 'token') {
+      throw new OrbitError('forbidden', `Only the CLI (the bearer token) can ${what}`, {
+        hint: 'Run `orbit shell <bot>` in a terminal on this machine.',
+      });
+    }
+  };
+
   const handlers: Partial<Record<RouteName, Handler>> = {
     health: () => ({
       ok: true,
@@ -618,6 +626,21 @@ export function createApp(opts: AppOptions): Hono {
       return service.store.listRunEvents(param(params, 'run'), { afterSeq: q.afterSeq ?? 0 });
     },
     stopRun: ({ params }) => service.stopRun(param(params, 'run')),
+    pauseRun: ({ params, body }) =>
+      service.pauseRun(param(params, 'run'), body as z.output<typeof routes.pauseRun.body>),
+    // A shell in the workspace bypasses Orbit's policy by design (ADR-016):
+    // only the local owner's bearer token (the CLI), never the App's cookie.
+    startTakeover: ({ params, body }, c) => {
+      requireToken(c, 'take over a workspace');
+      return service.startTakeover(
+        param(params, 'bot'),
+        (body as z.output<typeof routes.startTakeover.body>).pid,
+      );
+    },
+    endTakeover: ({ params }, c) => {
+      requireToken(c, 'end a take-over');
+      return service.endTakeover(param(params, 'bot'));
+    },
     resumeRun: ({ params, body }) =>
       service.resumeRun(param(params, 'run'), body as z.output<typeof routes.resumeRun.body>),
     listApprovals: ({ query }) => {

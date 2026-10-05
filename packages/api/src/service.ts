@@ -96,12 +96,13 @@ import {
   systemProbes,
   validateTriggers,
 } from '@orbit/runtime';
-import { defaultRunner, detectSandboxSupport } from '@orbit/sandbox';
+import { SandboxManager, defaultRunner, detectSandboxSupport } from '@orbit/sandbox';
 import {
   BotRepo,
   Controls,
   EventStore,
   type OrbitDb,
+  type Takeover,
   TriggerStateRepo,
   migrationAppliedAt,
 } from '@orbit/store';
@@ -114,6 +115,7 @@ import type {
   DoctorReport,
   QueueSnapshot,
   SessionPrincipal,
+  Takeover as TakeoverInfo,
 } from './contract';
 
 /**
@@ -129,11 +131,23 @@ const IN_FLIGHT: readonly RunState['status'][] = [
   'waiting_approval',
   'delegating',
   'rate_limited',
+  'paused',
 ];
 
 const ENDED: readonly RunState['status'][] = ['completed', 'failed', 'cancelled'];
 
 export type Logger = (level: 'info' | 'warn' | 'error', message: string) => void;
+
+/** Whether a local process still exists (a take-over's `orbit shell`). */
+export function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM: it exists, it is just not ours to signal.
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
 
 export interface ServiceOptions {
   config: OrbitConfig;
@@ -164,6 +178,8 @@ export interface ServiceOptions {
   now?: () => Date;
   /** How orbitd listens (shown by doctor): in-process TLS, container bind. */
   listen?: { tls: boolean; container: boolean };
+  /** Tests: whether a take-over's CLI process is still there. */
+  processAlive?: (pid: number) => boolean;
 }
 
 /**
@@ -393,19 +409,24 @@ export class OrbitService {
         queueMicrotask(() => this.maybeAutoResume(e.runId));
       }
     });
-    // Runs that were executing when the previous daemon died cannot continue.
+    // Runs that were executing when the previous daemon died (ADR-016): paused,
+    // to be retried below when that is safe, or for the owner; failed as
+    // `interrupted` when their Bot says so or a kill switch forbids continuing.
     for (const run of this.store.listRuns({ status: ['running'], limit: 1000 })) {
-      this.approvals.cancelForRun(run.runId, 'system', 'expired');
-      this.store.append(run.runId, run.botId, [
-        event('run.failed', {
-          code: 'interrupted',
-          message: 'orbitd stopped while this run was executing; start it again',
-          retryable: true,
-          sessionId: run.sessionId,
-        }),
-      ]);
+      this.store.append(
+        run.runId,
+        run.botId,
+        this.orchestrator.interruption(run.runId, { allowResume: this.mayContinue(run) }),
+      );
       // Its delegations have nobody to answer to any more (review M6 M1).
       this.orchestrator.stopDescendants(run.runId, 'system');
+    }
+    // Interrupted Runs judged safe (now, or by a graceful stop) resume through
+    // the queue; under a kill switch or a paused Bot nothing continues.
+    for (const run of this.store.listRuns({ status: ['paused'], limit: 1000 })) {
+      if (run.pause?.reason !== 'interrupted' || !run.pause.autoResume) continue;
+      if (this.mayContinue(run)) this.pushResume(run);
+      else this.orchestrator.stop(run.runId, 'system');
     }
     for (const run of this.store.listRuns({ status: ['queued'], limit: 1000 }).reverse()) {
       this.queue.push({
@@ -458,7 +479,7 @@ export class OrbitService {
     this.triggers.sync();
   }
 
-  /** Graceful stop: no new dispatches, executing Runs end as interrupted. */
+  /** Graceful stop: no new dispatches, executing Runs close as interruptions (ADR-016). */
   async stop(): Promise<void> {
     clearInterval(this.ticker);
     this.unsubscribe?.();
@@ -523,8 +544,16 @@ export class OrbitService {
   private hold(job: QueueJob): string | null {
     const kill = this.controls.globalKill();
     if (kill) return `global kill switch engaged by ${kill}`;
-    if (this.bots.find(job.botId)?.pausedAt) return 'Bot is paused';
+    if (this.bots.find(job.botId)?.pausedAt) {
+      const t = this.controls.takeover(job.botId);
+      return t ? `Bot is taken over (orbit shell, pid ${t.pid})` : 'Bot is paused';
+    }
     return this.rateLimits.hold();
+  }
+
+  /** Nothing forbids continuing a Run of this Bot: no kill switch, Bot not paused. */
+  private mayContinue(run: RunState): boolean {
+    return this.controls.globalKill() === null && !this.bots.find(run.botId)?.pausedAt;
   }
 
   private async execute(job: QueueJob): Promise<void> {
@@ -686,17 +715,20 @@ export class OrbitService {
 
   pauseBot(ref: string): Bot {
     const bot = this.orchestrator.pauseBot(ref, this.actor());
+    // Paused on purpose during a take-over: it stays paused when the take-over ends.
+    const t = this.controls.takeover(bot.id);
+    if (t && !t.wasPaused) this.controls.setTakeover({ ...t, wasPaused: true });
     // Nothing of a paused Bot may continue once it is resumed: queued, parked
     // and rate-limited Runs are closed too (review L2).
     this.closeWaiting(bot.id);
     return bot;
   }
 
-  /** Cancel queued, parked and rate-limited Runs (of one Bot, or all). */
+  /** Cancel queued, parked, paused and rate-limited Runs (of one Bot, or all). */
   private closeWaiting(botId?: string): void {
     const waiting = this.store.listRuns({
       ...(botId ? { botId } : {}),
-      status: ['queued', 'waiting_approval', 'delegating', 'rate_limited'],
+      status: ['queued', 'waiting_approval', 'delegating', 'rate_limited', 'paused'],
       limit: 10_000,
     });
     for (const run of waiting) {
@@ -711,9 +743,145 @@ export class OrbitService {
   }
 
   resumeBot(ref: string): Bot {
+    // Resuming a Bot is the owner's explicit choice: it also ends a take-over
+    // (the way out of one whose CLI died and whose pid was reused).
+    const held = this.bots.get(ref);
+    const t = this.controls.takeover(held.id);
+    if (t) this.finishTakeover(held, t, { stale: !this.alive(t.pid), via: 'bot_resume' });
     const bot = this.orchestrator.resumeBot(ref, this.actor());
     this.queue.pump();
     return bot;
+  }
+
+  // ── take-over (`orbit shell`, ADR-016) ────────────────────────────────────
+
+  private alive(pid: number): boolean {
+    return (this.opts.processAlive ?? processAlive)(pid);
+  }
+
+  /**
+   * Hand a Bot's workspace to the owner's shell: no Run of the Bot may be
+   * executing or waiting mid-tool-call on an approval, the Bot is held (the
+   * Bot-pause hold) while it lasts, and both ends are audited. A take-over
+   * whose CLI process is gone is stale and ends when a new one starts.
+   */
+  async startTakeover(botRef: string, pid: number): Promise<z.infer<typeof TakeoverInfo>> {
+    const bot = this.bots.get(botRef);
+    const name = slugify(bot.spec.name);
+    if (bot.spec.sandbox.kind === 'docker') {
+      throw new OrbitError(
+        'invalid_input',
+        `${bot.spec.name} works in a Docker container; orbit shell opens host workspaces only`,
+        {
+          hint: `Open a shell in its container: docker exec -it ${SandboxManager.containerName(bot)} sh`,
+        },
+      );
+    }
+    const existing = this.controls.takeover(bot.id);
+    if (existing && this.alive(existing.pid)) {
+      throw new OrbitError(
+        'conflict',
+        `${bot.spec.name} is already taken over (orbit shell, pid ${existing.pid}, since ${existing.startedAt})`,
+        { hint: `Exit that shell first, or end it with \`orbit bot resume ${name}\`.` },
+      );
+    }
+    const runs = this.store.listRuns({
+      botId: bot.id,
+      status: ['queued', 'running', 'waiting_approval', 'delegating', 'rate_limited', 'paused'],
+      limit: 1000,
+    });
+    const busy = runs.find(
+      (r) => r.status === 'running' || (r.status === 'queued' && this.queue.isActive(r.runId)),
+    );
+    if (busy) {
+      throw new OrbitError(
+        'conflict',
+        `Run ${busy.runId} of ${bot.spec.name} is running; it would work in the same files as you`,
+        {
+          hint: `Pause it at its next tool call with \`orbit pause ${busy.runId}\` (or stop it with \`orbit stop ${busy.runId}\`), then run orbit shell again.`,
+        },
+      );
+    }
+    const parked = runs.find((r) => r.status === 'waiting_approval');
+    if (parked) {
+      throw new OrbitError(
+        'conflict',
+        `Run ${parked.runId} of ${bot.spec.name} is parked on an approval mid-tool-call; the call would run against the files you change`,
+        {
+          hint: `Decide it (\`orbit approvals\`) or stop it with \`orbit stop ${parked.runId}\`, then run orbit shell again.`,
+        },
+      );
+    }
+    if (existing) {
+      // Stale: its CLI is gone. The hold continues under the new take-over.
+      this.audit.append({
+        actor: this.actor(),
+        action: 'takeover.ended',
+        subject: bot.id,
+        data: { pid: existing.pid, stale: true, via: 'orbit_shell', released: false },
+      });
+    }
+    const wasPaused = existing ? existing.wasPaused : bot.pausedAt !== null;
+    // The Bot-pause hold: no Run of the Bot starts or resumes while it lasts.
+    if (!bot.pausedAt) this.bots.setPaused(bot.id, true);
+    let workspace: string;
+    try {
+      workspace = await this.orchestrator.workspacePath(bot);
+    } catch (err) {
+      if (!wasPaused) this.bots.setPaused(bot.id, false);
+      if (existing) this.controls.clearTakeover(bot.id);
+      this.queue.pump();
+      throw err;
+    }
+    const t: Takeover = {
+      botId: bot.id,
+      pid,
+      startedAt: this.now().toISOString(),
+      wasPaused,
+      by: this.actor(),
+    };
+    this.controls.setTakeover(t);
+    this.audit.append({
+      actor: this.actor(),
+      action: 'takeover.started',
+      subject: bot.id,
+      data: { pid, workspace, wasPaused, replacedStale: existing?.pid ?? null },
+    });
+    return {
+      botId: bot.id,
+      botName: bot.spec.name,
+      workspace,
+      pid,
+      startedAt: t.startedAt,
+      wasPaused,
+      replacedStale: existing?.pid ?? null,
+      waiting: runs.map((r) => r.runId),
+    };
+  }
+
+  /** End the open take-over of a Bot (the CLI's shell exited). */
+  endTakeover(botRef: string): Bot {
+    const bot = this.bots.get(botRef);
+    const t = this.controls.takeover(bot.id);
+    if (!t) throw new OrbitError('not_found', `No take-over of ${bot.spec.name} is open`);
+    this.finishTakeover(bot, t, { stale: false, via: 'orbit_shell' });
+    return this.bots.get(bot.id);
+  }
+
+  private finishTakeover(
+    bot: Bot,
+    t: Takeover,
+    how: { stale: boolean; via: 'orbit_shell' | 'bot_resume' },
+  ): void {
+    this.controls.clearTakeover(bot.id);
+    if (!t.wasPaused) this.bots.setPaused(bot.id, false);
+    this.audit.append({
+      actor: this.actor(),
+      action: 'takeover.ended',
+      subject: bot.id,
+      data: { pid: t.pid, stale: how.stale, via: how.via, released: !t.wasPaused },
+    });
+    this.queue.pump();
   }
 
   // ── runs ──────────────────────────────────────────────────────────────────
@@ -727,6 +895,16 @@ export class OrbitService {
     },
   ): Promise<RunState> {
     const bot = this.bots.get(ref);
+    const t = this.controls.takeover(bot.id);
+    if (t) {
+      throw new OrbitError(
+        'blocked',
+        `${bot.spec.name} is taken over (orbit shell, pid ${t.pid}): no Run starts until that shell exits`,
+        {
+          hint: `Exit the shell, or end the take-over with \`orbit bot resume ${slugify(bot.spec.name)}\`.`,
+        },
+      );
+    }
     // Fail fast with the onboarding / compliance message instead of queueing a doomed Run.
     await this.ensureEngine();
     const mockFixture = this.fixture(body.fixture);
@@ -952,10 +1130,14 @@ export class OrbitService {
         `Run ${runId} waits for the Bots it delegated to; it resumes when they answer`,
       );
     }
-    if (run.status !== 'waiting_approval' && run.status !== 'rate_limited') {
+    if (
+      run.status !== 'waiting_approval' &&
+      run.status !== 'rate_limited' &&
+      run.status !== 'paused'
+    ) {
       throw new OrbitError(
         run.status === 'running' || run.status === 'queued' ? 'conflict' : 'invalid_input',
-        `Run ${runId} is ${run.status}; only parked or rate-limited runs can resume`,
+        `Run ${runId} is ${run.status}; only parked, paused or rate-limited runs can resume`,
       );
     }
     if (run.pendingApprovals.length > 0) {
@@ -1470,6 +1652,12 @@ export class OrbitService {
     } catch (err) {
       if (!(err instanceof OrbitError && err.code === 'conflict')) throw err;
     }
+  }
+
+  /** Pause a running Run at its next tool call, or now (ADR-016). */
+  pauseRun(runId: string, body: { now?: boolean | undefined }): RunState {
+    this.requireRun(runId);
+    return this.orchestrator.pause(runId, this.actor(), { now: body.now === true });
   }
 
   stopRun(runId: string): RunState {
