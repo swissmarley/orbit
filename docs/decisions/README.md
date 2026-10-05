@@ -23,3 +23,4 @@ deviate from the mission brief or pick between real alternatives.
 | [015](ADR-015-hosted-mode-tls-oidc-roles.md)   | Hosted mode: TLS, OIDC sign-in and roles                        | Accepted |
 | [016](ADR-016-run-pause-retry-and-takeover.md) | Run pause, interrupted-Run retry and terminal take-over         | Accepted |
 | [017](ADR-017-packaging-and-distribution.md)   | Packaging: one npm package, one container, a thin desktop shell | Accepted |
+| [018](ADR-018-docker-key-proxy-and-egress.md)  | Docker sandbox: host-side key proxy and enforced egress         | Accepted |

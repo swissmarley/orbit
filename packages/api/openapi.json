@@ -544,11 +544,211 @@
                             "platform"
                           ],
                           "additionalProperties": false
+                        },
+                        "dockerSandbox": {
+                          "type": "object",
+                          "properties": {
+                            "ready": {
+                              "type": "boolean"
+                            },
+                            "keyProxy": {
+                              "type": "string",
+                              "enum": [
+                                "ready",
+                                "no_api_key",
+                                "unsupported_provider",
+                                "subscription"
+                              ]
+                            },
+                            "detail": {
+                              "type": "string"
+                            },
+                            "images": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "image": {
+                                    "type": "string"
+                                  },
+                                  "present": {
+                                    "type": "boolean"
+                                  },
+                                  "socat": {
+                                    "type": [
+                                      "boolean",
+                                      "null"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "image",
+                                  "present",
+                                  "socat"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "proxies": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "botId": {
+                                    "type": "string"
+                                  },
+                                  "network": {
+                                    "type": "string",
+                                    "enum": [
+                                      "none",
+                                      "allowlist"
+                                    ]
+                                  },
+                                  "activeRuns": {
+                                    "type": "integer",
+                                    "minimum": -9007199254740991,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "api": {
+                                    "type": "object",
+                                    "properties": {
+                                      "forwarded": {
+                                        "type": "integer",
+                                        "minimum": -9007199254740991,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "refused": {
+                                        "type": "integer",
+                                        "minimum": -9007199254740991,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "failed": {
+                                        "type": "integer",
+                                        "minimum": -9007199254740991,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "recent": {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "at": {
+                                              "type": "string"
+                                            },
+                                            "target": {
+                                              "type": "string"
+                                            },
+                                            "reason": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "at",
+                                            "target",
+                                            "reason"
+                                          ],
+                                          "additionalProperties": false
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "forwarded",
+                                      "refused",
+                                      "failed",
+                                      "recent"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  "egress": {
+                                    "anyOf": [
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "forwarded": {
+                                            "type": "integer",
+                                            "minimum": -9007199254740991,
+                                            "maximum": 9007199254740991
+                                          },
+                                          "refused": {
+                                            "type": "integer",
+                                            "minimum": -9007199254740991,
+                                            "maximum": 9007199254740991
+                                          },
+                                          "failed": {
+                                            "type": "integer",
+                                            "minimum": -9007199254740991,
+                                            "maximum": 9007199254740991
+                                          },
+                                          "recent": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "object",
+                                              "properties": {
+                                                "at": {
+                                                  "type": "string"
+                                                },
+                                                "target": {
+                                                  "type": "string"
+                                                },
+                                                "reason": {
+                                                  "type": "string"
+                                                }
+                                              },
+                                              "required": [
+                                                "at",
+                                                "target",
+                                                "reason"
+                                              ],
+                                              "additionalProperties": false
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "forwarded",
+                                          "refused",
+                                          "failed",
+                                          "recent"
+                                        ],
+                                        "additionalProperties": false
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "invalidAllowlistEntries": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "botId",
+                                  "network",
+                                  "activeRuns",
+                                  "api",
+                                  "egress",
+                                  "invalidAllowlistEntries"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "ready",
+                            "keyProxy",
+                            "detail",
+                            "images",
+                            "proxies"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
                         "docker",
-                        "engineSandbox"
+                        "engineSandbox",
+                        "dockerSandbox"
                       ],
                       "additionalProperties": false
                     },

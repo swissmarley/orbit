@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import type { Tier } from '@orbit/core';
 import { createTwoFilesPatch } from 'diff';
+import { type PathMount, toHostPath } from './baseline';
 
 /** Everything a human needs to decide, exactly as it will execute. */
 export interface ApprovalCard {
@@ -36,8 +37,15 @@ const RISK: Record<Tier, string> = {
 
 const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
 
-function readExisting(path: string, workspace: string): string {
-  const abs = isAbsolute(path) ? path : resolve(workspace, path);
+function readExisting(
+  path: string,
+  workspace: string,
+  mounts: readonly PathMount[] | null,
+): string {
+  // A container Bot names paths as its engine sees them (ADR-018).
+  const host = mounts === null ? path : toHostPath(path, mounts);
+  if (host === null) return '';
+  const abs = isAbsolute(host) ? host : resolve(workspace, host);
   try {
     return existsSync(abs) ? readFileSync(abs, 'utf8') : '';
   } catch {
@@ -56,10 +64,11 @@ export function diffForTool(
   toolName: string,
   input: Record<string, unknown>,
   workspace: string,
+  mounts: readonly PathMount[] | null = null,
 ): string | null {
   const path = str(input.file_path);
   if (!path) return null;
-  const before = readExisting(path, workspace);
+  const before = readExisting(path, workspace, mounts);
   let after: string | null = null;
   if (toolName === 'Write') after = str(input.content);
   if (toolName === 'Edit') {
@@ -102,6 +111,8 @@ export function buildApprovalCard(args: {
   botName: string;
   runId: string;
   workspace: string;
+  /** Container Bots: engine paths → host paths (see toHostPath). */
+  mounts?: readonly PathMount[] | null;
   untrusted: readonly string[];
   /** Delegation chain above this Run ("Inbox Bot › Research Bot"), if any. */
   delegatedBy?: string | null;
@@ -112,7 +123,7 @@ export function buildApprovalCard(args: {
     toolName: args.toolName,
     tier: args.tier,
     payload: args.input,
-    diff: diffForTool(args.toolName, args.input, args.workspace),
+    diff: diffForTool(args.toolName, args.input, args.workspace, args.mounts ?? null),
     botId: args.botId,
     botName: args.botName,
     runId: args.runId,

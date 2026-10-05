@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FULL_SUPPORT, fakeRunner } from '../test/helpers';
-import { SandboxManager } from './manager';
+import { API_KEY_PLACEHOLDER, SandboxManager, containerEngineEnv } from './manager';
 import type { SpawnOptions, Workspace } from './types';
 
 interface SpawnCall {
@@ -45,7 +45,7 @@ const ws: Workspace = {
   isolation: 'container',
   shellContained: true,
   engineSandboxSettings: null,
-  docker: { container: 'orbit-bot-bot', workdir: '/workspace' },
+  docker: { container: 'orbit-bot-bot', workdir: '/workspace', env: containerEngineEnv('none') },
 };
 
 const SECRET = 'sk-ant-api03-SECRETVALUE';
@@ -90,7 +90,7 @@ beforeEach(() => {
 const PID_FILE = /^\/tmp\/orbit-engine-[0-9a-f-]{36}\.pid$/;
 
 describe('SandboxManager.engineSpawner', () => {
-  it('runs docker exec with variable names only; values travel in the client env', () => {
+  it('runs docker exec with variable names only; values travel in the client env, never the key', () => {
     manager().engineSpawner(ws, engineEnv)(options());
     expect(spawnCalls).toHaveLength(1);
     const { file, args, opts } = spawnCalls[0]!;
@@ -103,11 +103,21 @@ describe('SandboxManager.engineSpawner', () => {
       '-e',
       'ANTHROPIC_API_KEY',
       '-e',
+      'ANTHROPIC_BASE_URL',
+      '-e',
       'CLAUDE_AGENT_SDK_VERSION',
+      '-e',
+      'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
       '-e',
       'CLAUDE_CODE_ENTRYPOINT',
       '-e',
+      'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB',
+      '-e',
       'LANG',
+      '-e',
+      'NO_PROXY',
+      '-e',
+      'no_proxy',
       'orbit-bot-bot',
       'sh',
       '-c',
@@ -120,14 +130,73 @@ describe('SandboxManager.engineSpawner', () => {
     ]);
     expect(args.join(' ')).not.toContain(SECRET);
     expect(opts.stdio).toEqual(['pipe', 'pipe', 'pipe']);
+    // The real key stays on the host: the engine gets a placeholder and the key proxy's URL.
     expect(opts.env).toEqual({
       PATH: '/usr/bin',
       HOME: '/home/alice',
-      ANTHROPIC_API_KEY: SECRET,
+      ANTHROPIC_API_KEY: API_KEY_PLACEHOLDER,
+      ANTHROPIC_BASE_URL: 'http://127.0.0.1:47180',
       CLAUDE_AGENT_SDK_VERSION: '0.3.289',
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
       CLAUDE_CODE_ENTRYPOINT: 'sdk-ts',
+      // No credentials in the container to scrub (and scrubbing needs bubblewrap).
+      CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '0',
       LANG: 'C.UTF-8',
+      NO_PROXY: '127.0.0.1,localhost',
+      no_proxy: '127.0.0.1,localhost',
     });
+    expect(JSON.stringify(opts.env)).not.toContain(SECRET);
+  });
+
+  it('never forwards cloud credentials, the host base URL or host proxies; uses the egress proxy', () => {
+    const allowlisted: Workspace = {
+      ...ws,
+      docker: { ...ws.docker!, env: containerEngineEnv('allowlist') },
+    };
+    manager().engineSpawner(allowlisted, {
+      ...engineEnv,
+      ANTHROPIC_BASE_URL: 'https://gateway.internal',
+      AWS_SECRET_ACCESS_KEY: 'aws-secret',
+      AWS_BEARER_TOKEN_BEDROCK: 'bedrock-token',
+      GOOGLE_APPLICATION_CREDENTIALS: '/home/alice/gcp.json',
+      HTTPS_PROXY: 'http://corp-proxy:3128',
+      CLAUDE_CODE_USE_BEDROCK: '1',
+      CLAUDE_CODE_CLIENT_KEY: '/home/alice/client.key',
+    })(
+      options({
+        env: {
+          CLAUDE_CODE_USE_VERTEX: '1',
+          CLAUDE_CODE_ENTRYPOINT: 'sdk-ts',
+          CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1',
+        },
+      }),
+    );
+    const { args, opts } = spawnCalls[0]!;
+    for (const name of [
+      'AWS_SECRET_ACCESS_KEY',
+      'AWS_BEARER_TOKEN_BEDROCK',
+      'GOOGLE_APPLICATION_CREDENTIALS',
+      'CLAUDE_CODE_USE_BEDROCK',
+      'CLAUDE_CODE_USE_VERTEX',
+      'CLAUDE_CODE_CLIENT_KEY',
+    ]) {
+      expect(args).not.toContain(name);
+    }
+    expect(opts.env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:47180');
+    expect(opts.env.HTTPS_PROXY).toBe('http://127.0.0.1:47181');
+    // The container's own settings win over what the SDK puts on options.env.
+    expect(opts.env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB).toBe('0');
+    expect(opts.env.http_proxy).toBe('http://127.0.0.1:47181');
+    const values = Object.values(opts.env).join('\n');
+    for (const secret of [
+      SECRET,
+      'aws-secret',
+      'bedrock-token',
+      'corp-proxy',
+      'gateway.internal',
+    ]) {
+      expect(values).not.toContain(secret);
+    }
   });
 
   it('never forwards OAuth tokens, host paths or DOCKER_* steering variables', () => {

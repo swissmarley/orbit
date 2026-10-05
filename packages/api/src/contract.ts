@@ -194,6 +194,41 @@ const CliStatus = z.object({
   error: z.string().nullable(),
 });
 
+const ProxyCounters = z.object({
+  forwarded: z.int(),
+  refused: z.int(),
+  failed: z.int(),
+  /** Latest refusals: a tunnel's host:port or an API route, never a query string or header. */
+  recent: z.array(z.object({ at: z.string(), target: z.string(), reason: z.string() })),
+});
+
+/** Docker sandboxes (ADR-018): key proxy, images, and per-Bot proxy counters. */
+export const DockerSandboxStatus = z.object({
+  /** Docker Bots can run now: daemon reachable, key proxy usable, images present with socat. */
+  ready: z.boolean(),
+  /**
+   * ready: orbitd has an API key (or apiKeyHelper) for the key proxy;
+   * subscription: the CLI driver never runs containers; unsupported_provider:
+   * Bedrock / Vertex cannot use the key proxy; no_api_key: nothing to inject.
+   */
+  keyProxy: z.enum(['ready', 'no_api_key', 'unsupported_provider', 'subscription']),
+  detail: z.string(),
+  images: z.array(
+    z.object({ image: z.string(), present: z.boolean(), socat: z.boolean().nullable() }),
+  ),
+  proxies: z.array(
+    z.object({
+      botId: z.string(),
+      network: z.enum(['none', 'allowlist']),
+      activeRuns: z.int(),
+      api: ProxyCounters,
+      egress: ProxyCounters.nullable(),
+      invalidAllowlistEntries: z.array(z.string()),
+    }),
+  ),
+});
+export type DockerSandboxStatus = z.infer<typeof DockerSandboxStatus>;
+
 export const DoctorReport = z.object({
   ok: z.boolean(),
   driver: DriverKind.nullable(),
@@ -246,6 +281,7 @@ export const DoctorReport = z.object({
       missing: z.array(z.string()),
       platform: z.string(),
     }),
+    dockerSandbox: DockerSandboxStatus,
   }),
   daemon: z.object({
     pid: z.int(),

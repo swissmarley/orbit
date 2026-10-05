@@ -22,14 +22,35 @@ export interface Workspace {
   shellContained: boolean;
   /** Claude Code `sandbox` settings for the engine (native sandbox), or null. */
   engineSandboxSettings: Record<string, unknown> | null;
-  /** Docker only: how the engine is run inside the container. */
-  docker: { container: string; workdir: string } | null;
+  /**
+   * Docker only: how the engine is run inside the container. `env` is the
+   * container's own engine environment (placeholder key, proxy URLs; no
+   * secrets, ADR-018).
+   */
+  docker: { container: string; workdir: string; env: Record<string, string> } | null;
+  /**
+   * Docker only: engine-visible paths and the host paths behind them. The
+   * policy maps tool paths through these and refuses everything else.
+   */
+  mounts?: PathMount[];
+  /**
+   * Docker only: release the Bot's host-side proxies when the Run segment
+   * ends (they forward only while a Run holds them).
+   */
+  release?: () => void;
   /**
    * Worktree only: the owner's repository and the Bot's own branch. Plugins
    * that run git (ADR-014) use exactly these, never what the Bot-writable
    * `.git` file in the workspace says.
    */
   git?: { repo: string; branch: string };
+}
+
+/** A path inside a container and the host directory mounted there. */
+export interface PathMount {
+  container: string;
+  host: string;
+  writable: boolean;
 }
 
 export interface SandboxSupport {

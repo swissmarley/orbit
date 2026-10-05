@@ -107,8 +107,12 @@ export function buildSdkOptions(
 ): Options {
   // CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: the engine strips API credentials from
   // the environment of its own children (Bash, hooks, MCP servers) — ADR-005.
-  const env = buildChildEnv('sdk-engine', o.env, { CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1' });
-  assertChildEnvSafe('sdk-engine', env);
+  // A proxied engine (docker, ADR-018) gets no API credential at all: the
+  // key stays in orbitd and the container sees a placeholder.
+  const env = buildChildEnv(req.apiKeyProxied === true ? 'tool' : 'sdk-engine', o.env, {
+    CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1',
+  });
+  assertChildEnvSafe(req.apiKeyProxied === true ? 'tool' : 'sdk-engine', env);
   const options: Options = {
     cwd: req.cwd,
     env,
@@ -131,7 +135,10 @@ export function buildSdkOptions(
     stderr: onStderr,
   };
   if (o.bare) options.extraArgs = { bare: null };
-  if (o.apiKeyHelper) options.settings = { apiKeyHelper: o.apiKeyHelper };
+  // The helper runs on the host for a proxied engine (the key proxy calls it).
+  if (o.apiKeyHelper && req.apiKeyProxied !== true) {
+    options.settings = { apiKeyHelper: o.apiKeyHelper };
+  }
   if (req.model) options.model = req.model;
   if (req.maxTurns) options.maxTurns = req.maxTurns;
   if (req.tools) options.tools = req.tools;
@@ -279,7 +286,14 @@ export class SdkDriver implements AgentDriver {
             bodies
               .flatMap((b) =>
                 b.type === 'session.init'
-                  ? [checkAuthSource('sdk', this.authMethod, b.data.apiKeySource).failure]
+                  ? [
+                      checkAuthSource(
+                        'sdk',
+                        // Behind the key proxy the engine only ever sees the placeholder key.
+                        req.apiKeyProxied === true ? 'api_key' : this.authMethod,
+                        b.data.apiKeySource,
+                      ).failure,
+                    ]
                   : [],
               )
               .find((f) => f !== null) ?? seq.engine(bodies);

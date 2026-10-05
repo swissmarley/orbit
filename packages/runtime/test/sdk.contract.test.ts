@@ -131,6 +131,45 @@ describe('SdkDriver specifics', () => {
     },
   );
 
+  it('behind the docker key proxy: no API credential, no apiKeyHelper, the placeholder source is accepted (ADR-018)', async () => {
+    const seen: Options[] = [];
+    const helperEngine = (q: QueryFn) =>
+      new SdkDriver({
+        authMethod: 'api_key_helper',
+        env: sourceEnv,
+        bare: true,
+        apiKeyHelper: '/usr/local/bin/key-helper',
+        queryFn: q,
+      });
+    const proxied = await collect(
+      helperEngine(fakeQuery(FIXTURE('pong'), seen, 'ANTHROPIC_API_KEY')),
+      {},
+      { apiKeyProxied: true },
+    );
+    expect(proxied.at(-1)?.type).toBe('run.completed');
+    const o = seen[0]!;
+    expect(o.env!.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(JSON.stringify(o.env)).not.toContain(PLANTED.ANTHROPIC_API_KEY);
+    expect(o.settings).toBeUndefined();
+    expect(o.extraArgs).toEqual({ bare: null });
+    expect(o.env!.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB).toBe('1');
+    // Without the proxy, a helper engine that reports ANTHROPIC_API_KEY is still stopped.
+    const direct = await collect(
+      helperEngine(fakeQuery(FIXTURE('pong'), [], 'ANTHROPIC_API_KEY')),
+      {},
+    );
+    const last = direct.at(-1)!;
+    expect(last.type === 'run.failed' && last.data.code).toBe('auth_source_mismatch');
+    // And a proxied engine reporting a login source is stopped too.
+    const login = await collect(
+      helperEngine(fakeQuery(FIXTURE('pong'), [], 'oauth')),
+      {},
+      { apiKeyProxied: true },
+    );
+    const end = login.at(-1)!;
+    expect(end.type === 'run.failed' && end.data.code).toBe('auth_source_mismatch');
+  });
+
   it('can disable --bare explicitly', async () => {
     const seen: Options[] = [];
     await collect(driver(fakeQuery(FIXTURE('pong'), seen), false), {});

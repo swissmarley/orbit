@@ -1,6 +1,6 @@
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
 import type { PermissionHandler, ToolPermissionDecision } from '@orbit/core';
 
 /** Built-in engine tools that only read (confined to the workspace + read roots). */
@@ -35,7 +35,8 @@ const PROTECTED_WORKSPACE_NAMES: ReadonlySet<string> = new Set([
   'CLAUDE.local.md',
   '.mcp.json',
 ]);
-const PROTECTED_WORKSPACE_DIRS: readonly string[] = ['.claude', '.git'];
+// `.orbit-home` is a container engine's HOME on the workspace volume (ADR-018).
+const PROTECTED_WORKSPACE_DIRS: readonly string[] = ['.claude', '.git', '.orbit-home'];
 
 export interface BaselinePolicyOptions {
   /** The Bot's workspace: reads and writes are confined to it. */
@@ -118,18 +119,49 @@ function targetsOf(toolName: string, input: Record<string, unknown>): string[] {
 const allow = (reason: string): ToolPermissionDecision => ({ behavior: 'allow', reason });
 const deny = (reason: string): ToolPermissionDecision => ({ behavior: 'deny', reason });
 
+/** A path inside a container and the host directory mounted there (see @orbit/sandbox). */
+export interface PathMount {
+  container: string;
+  host: string;
+  writable: boolean;
+}
+
+/**
+ * The host path behind a path the engine uses inside a container (ADR-018).
+ * Relative paths resolve against the first mount (the container workdir);
+ * `..` is normalized the way the container sees it. Paths outside every mount
+ * return null; `~` paths come back unchanged (they are refused later).
+ */
+export function toHostPath(target: string, mounts: readonly PathMount[]): string | null {
+  if (target.startsWith('~')) return target;
+  const workdir = mounts[0]?.container ?? '/';
+  const abs = posix.resolve(workdir, target);
+  for (const m of mounts) {
+    if (abs === m.container) return m.host;
+    if (abs.startsWith(`${m.container}/`)) {
+      return join(m.host, ...abs.slice(m.container.length + 1).split('/'));
+    }
+  }
+  return null;
+}
+
 export interface FileAccessContext {
   workspace: string;
   readRoots: readonly string[];
   sensitive: readonly string[];
+  /** Container Bots: engine paths are mapped to the host through these; anything else is refused. */
+  mounts: readonly PathMount[] | null;
 }
 
-export function fileAccessContext(o: BaselinePolicyOptions): FileAccessContext {
+export function fileAccessContext(
+  o: BaselinePolicyOptions & { mounts?: readonly PathMount[] },
+): FileAccessContext {
   const workspace = realish(resolve(o.workspace));
   return {
     workspace,
     readRoots: [workspace, ...(o.readRoots ?? []).map((r) => realish(resolve(r)))],
     sensitive: sensitiveRoots(o.home ?? homedir(), o.orbitHome),
+    mounts: o.mounts && o.mounts.length > 0 ? o.mounts : null,
   };
 }
 
@@ -142,13 +174,18 @@ export function checkFileAccess(
   input: Record<string, unknown>,
   ctx: FileAccessContext,
 ): string | null {
-  const { workspace, readRoots, sensitive } = ctx;
+  const { workspace, readRoots, sensitive, mounts } = ctx;
   const isSensitive = (abs: string) =>
     !within(workspace, abs) && sensitive.some((s) => within(s, abs));
+  /** The host path to check, or null when a container path lies outside its mounts. */
+  const onHost = (t: string): string | null => (mounts === null ? t : toHostPath(t, mounts));
+  const outside = (t: string) => `Paths outside the container's workspace are not allowed (${t})`;
   if (READ_TOOLS.has(toolName)) {
     for (const t of targetsOf(toolName, input)) {
       if (t.includes('..')) return `Path traversal is not allowed (${t})`;
-      const abs = resolveTarget(workspace, t);
+      const host = onHost(t);
+      if (host === null) return outside(t);
+      const abs = resolveTarget(workspace, host);
       if (abs === null) return `Home-relative paths are not allowed (${t})`;
       if (isSensitive(abs)) return `Reading credential or system paths is not allowed (${t})`;
       // Glob patterns: check the literal prefix before the first wildcard.
@@ -163,7 +200,9 @@ export function checkFileAccess(
     const targets = targetsOf(toolName, input);
     if (targets.length === 0) return 'File write without a path';
     for (const t of targets) {
-      const abs = resolveTarget(workspace, t);
+      const host = onHost(t);
+      if (host === null) return outside(t);
+      const abs = resolveTarget(workspace, host);
       if (abs === null) return `Home-relative paths are not allowed (${t})`;
       if (!within(workspace, abs)) return `Writes outside the Bot workspace are not allowed (${t})`;
       const rel = relative(workspace, abs);

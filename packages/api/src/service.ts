@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   type Bot,
   type BotProposal,
+  BotSandbox,
   BotSpec,
   type BotSpecInput,
   type Memory,
@@ -112,6 +113,7 @@ import type {
   CreateRuleBody,
   DecisionResult,
   DenyBody,
+  DockerSandboxStatus,
   DoctorReport,
   QueueSnapshot,
   SessionPrincipal,
@@ -229,6 +231,8 @@ export class OrbitService {
   private readonly now: () => Date;
   /** The principal of the API request being served (set by the auth middleware). */
   private readonly requestPrincipal = new AsyncLocalStorage<SessionPrincipal>();
+  /** Workspaces, containers and the Docker sandbox's host-side proxies (ADR-004, ADR-018). */
+  private readonly sandbox: SandboxManager;
 
   constructor(private readonly opts: ServiceOptions) {
     const { config, env, db } = opts;
@@ -303,6 +307,17 @@ export class OrbitService {
       },
     });
 
+    this.sandbox = createSandboxManager(config.home, env, {
+      legacyName: (bot) => this.m2WorkspaceName(bot),
+      apiKeyHelper: config.sdk.apiKeyHelper,
+      // Refusals name a host:port or an API route, never a query string or a header.
+      onProxyRefusal: (botId, proxy, r) =>
+        this.log(
+          'warn',
+          `sandbox ${proxy} proxy refused ${r.target} for Bot ${botId}: ${r.reason}`,
+        ),
+    });
+
     this.orchestrator = new Orchestrator({
       config,
       store: this.store,
@@ -319,12 +334,7 @@ export class OrbitService {
       },
       redactor: this.redactor,
       audit: this.audit,
-      workspaces:
-        opts.workspaces ??
-        sandboxWorkspaces(
-          createSandboxManager(config.home, env, (bot) => this.m2WorkspaceName(bot)),
-          env,
-        ),
+      workspaces: opts.workspaces ?? sandboxWorkspaces(this.sandbox, env),
       ...(opts.killPollMs ? { killPollMs: opts.killPollMs } : {}),
       now: this.now,
       memory: this.memory,
@@ -490,6 +500,7 @@ export class OrbitService {
     await this.orchestrator.drain(15_000);
     await this.engine?.handle.close();
     this.engine = null;
+    await this.sandbox.close();
   }
 
   // ── engine ────────────────────────────────────────────────────────────────
@@ -1800,12 +1811,58 @@ export class OrbitService {
 
   // ── doctor ────────────────────────────────────────────────────────────────
 
+  /** Whether Docker Bots can run, and what their host-side proxies did (ADR-018). */
+  private async dockerSandboxStatus(
+    r: AuthResolution,
+    dockerAvailable: boolean,
+  ): Promise<DockerSandboxStatus> {
+    const keyProxy: DockerSandboxStatus['keyProxy'] =
+      r.driver === 'cli'
+        ? 'subscription'
+        : r.apiCredential === 'bedrock' || r.apiCredential === 'vertex'
+          ? 'unsupported_provider'
+          : r.apiCredential === null
+            ? 'no_api_key'
+            : 'ready';
+    const used = this.bots
+      .list()
+      .filter((b) => b.spec.sandbox.kind === 'docker')
+      .map((b) => b.spec.sandbox.image);
+    const images = await this.sandbox.imageStatus(
+      used.length > 0 ? used : [BotSandbox.parse({}).image],
+    );
+    const missing = images.filter((i) => !i.present).map((i) => i.image);
+    const noSocat = images.filter((i) => i.present && i.socat !== true).map((i) => i.image);
+    const detail = !dockerAvailable
+      ? 'Docker is not available.'
+      : keyProxy === 'subscription'
+        ? 'Subscription (CLI) mode never runs Bots in containers; use an API key for Docker sandboxes.'
+        : keyProxy === 'unsupported_provider'
+          ? 'Bedrock and Vertex credentials cannot go through the key proxy; use worktree or directory sandboxes.'
+          : keyProxy === 'no_api_key'
+            ? 'Set ANTHROPIC_API_KEY or ORBIT_API_KEY_HELPER for orbitd.'
+            : missing.length > 0
+              ? `Build the sandbox image: docker build -f docker/sandbox.Dockerfile -t ${missing[0] ?? ''} .`
+              : noSocat.length > 0
+                ? `The image ${noSocat[0] ?? ''} has no socat; rebuild it from docker/sandbox.Dockerfile.`
+                : 'Ready: the API key stays on the host; containers reach the API through the key proxy.';
+    return {
+      ready:
+        dockerAvailable && keyProxy === 'ready' && missing.length === 0 && noSocat.length === 0,
+      keyProxy,
+      detail,
+      images,
+      proxies: this.sandbox.proxyStatus(),
+    };
+  }
+
   async doctor(): Promise<DoctorReport> {
     const env = this.opts.env;
     const [r, sandbox] = await Promise.all([
       this.resolve(),
       detectSandboxSupport(defaultRunner(buildChildEnv('tool', env)), { pathEnv: env.PATH ?? '' }),
     ]);
+    const dockerSandbox = await this.dockerSandboxStatus(r, sandbox.docker.available);
     const c = this.config;
     const listen = this.opts.listen ?? { tls: false, container: false };
     return {
@@ -1883,7 +1940,7 @@ export class OrbitService {
       home: c.home,
       node: process.version,
       platform: `${platform()}-${arch()}`,
-      sandbox,
+      sandbox: { ...sandbox, dockerSandbox },
       daemon: {
         pid: process.pid,
         startedAt: this.startedAt,

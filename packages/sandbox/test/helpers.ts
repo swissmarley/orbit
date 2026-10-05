@@ -28,19 +28,25 @@ export interface RecordedCall {
   opts: CommandOptions | undefined;
 }
 
-type Reply = Partial<CommandResult> | Error | undefined;
+export type Reply = Partial<CommandResult> | Error | undefined;
 
-/** A CommandRunner that records calls and answers from `reply` (default: exit 0, no output). */
+type ReplyFn = (file: string, args: string[]) => Reply;
+
+/**
+ * A CommandRunner that records calls and answers from `reply` (default: exit 0,
+ * no output). `reply` can be swapped between steps of a test.
+ */
 export function fakeRunner(
-  reply: (file: string, args: string[]) => Reply = () => undefined,
-): CommandRunner & { calls: RecordedCall[] } {
+  reply: ReplyFn = () => undefined,
+): CommandRunner & { calls: RecordedCall[]; reply: ReplyFn } {
   const calls: RecordedCall[] = [];
   const run = (async (file: string, args: string[], opts?: CommandOptions) => {
     calls.push({ file, args, opts });
-    const r = reply(file, args);
+    const r = run.reply(file, args);
     if (r instanceof Error) throw r;
     return { code: 0, stdout: '', stderr: '', ...r };
-  }) as CommandRunner & { calls: RecordedCall[] };
+  }) as CommandRunner & { calls: RecordedCall[]; reply: ReplyFn };
   run.calls = calls;
+  run.reply = reply;
   return run;
 }

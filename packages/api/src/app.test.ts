@@ -469,6 +469,42 @@ describe('orbitd API — approvals, controls and housekeeping', () => {
     });
   });
 
+  it('doctor reports the Docker sandbox: key proxy, images and proxy counters (ADR-018)', async () => {
+    h = current = harness();
+    const doctor = await h.json<{ sandbox: { dockerSandbox: Record<string, unknown> } }>(
+      'GET',
+      '/v1/doctor',
+    );
+    // Mock mode without an API key: nothing for the key proxy to inject.
+    expect(doctor.body.sandbox.dockerSandbox).toMatchObject({
+      ready: false,
+      keyProxy: 'no_api_key',
+      images: [{ image: 'orbit-sandbox:latest' }],
+      proxies: [],
+    });
+    const keyed = harness({ env: { ANTHROPIC_API_KEY: 'sk-ant-api03-DOCTORTEST' } });
+    try {
+      const d = await keyed.json<{ sandbox: { dockerSandbox: { keyProxy: string } } }>(
+        'GET',
+        '/v1/doctor',
+      );
+      expect(d.body.sandbox.dockerSandbox.keyProxy).toBe('ready');
+      expect(JSON.stringify(d.body)).not.toContain('DOCTORTEST');
+    } finally {
+      await keyed.close();
+    }
+    const bedrock = harness({ env: { CLAUDE_CODE_USE_BEDROCK: '1' } });
+    try {
+      const d = await bedrock.json<{ sandbox: { dockerSandbox: { keyProxy: string } } }>(
+        'GET',
+        '/v1/doctor',
+      );
+      expect(d.body.sandbox.dockerSandbox.keyProxy).toBe('unsupported_provider');
+    } finally {
+      await bedrock.close();
+    }
+  });
+
   it('refuses an edited approval that still carries a redaction placeholder (review LOW-4)', async () => {
     h = current = harness();
     await createBot({

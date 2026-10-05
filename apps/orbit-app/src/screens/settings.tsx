@@ -225,6 +225,11 @@ function Engine() {
                 ? `available ${d.sandbox.docker.version ?? ''}`
                 : 'not available'}
             </Row>
+            <Row term="Docker Bots">
+              {d.sandbox.dockerSandbox.ready
+                ? 'ready — the API key stays on the host (key proxy)'
+                : `not ready — ${d.sandbox.dockerSandbox.detail}`}
+            </Row>
             <Row term="Runtime">
               Node {d.node} · {d.platform}
             </Row>
