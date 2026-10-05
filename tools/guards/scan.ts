@@ -78,12 +78,15 @@ const SKIPPED_DIRS = new Set([
   'playwright-report',
   'test-results',
 ]);
+/** Other checkouts of this repository (Claude Code agent worktrees) are scanned in their own runs. */
+const SKIPPED_PATHS = new Set(['.claude/worktrees']);
 
 export function listFiles(root: string, dir = root): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
     if (SKIPPED_DIRS.has(entry)) continue;
     const full = join(dir, entry);
+    if (SKIPPED_PATHS.has(relative(root, full).split(sep).join('/'))) continue;
     const st = statSync(full);
     if (st.isDirectory()) out.push(...listFiles(root, full));
     else if (SCANNED_EXT.test(entry) && entry !== 'pnpm-lock.yaml') {
