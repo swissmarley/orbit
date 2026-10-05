@@ -525,17 +525,27 @@ export class OrbitService {
     try {
       if (job.kind === 'start') {
         await this.orchestrator.execute(job.runId);
-        return;
+      } else {
+        const options = this.resumeOptions.get(job.runId) ?? {};
+        this.resumeOptions.delete(job.runId);
+        await this.orchestrator.resume(job.runId, options);
       }
-      const options = this.resumeOptions.get(job.runId) ?? {};
-      this.resumeOptions.delete(job.runId);
-      await this.orchestrator.resume(job.runId, options);
     } catch (err) {
       // Review M1: a job that died before its segment ended must not leave the
       // Run looking queued or running (it would also block its trigger forever).
       this.closeOrphan(job.runId, err);
       throw err;
     }
+    // A child that ended while this job was still finishing could not queue
+    // the parent's resume (the queue holds one job per Run), and nobody else
+    // would: look again once the queue has let go of the Run (M8 corpus).
+    setImmediate(() => {
+      try {
+        if (this.store.getRun(job.runId)?.status === 'delegating') this.maybeAutoResume(job.runId);
+      } catch (err) {
+        this.log('warn', `after ${job.kind} ${job.runId}: ${errorMessage(err)}`);
+      }
+    });
   }
 
   /** Fail a Run that claims to be queued or running but executes nowhere. */

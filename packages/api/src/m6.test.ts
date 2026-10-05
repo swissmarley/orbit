@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Bot, Memory, MemoryHit, RunEvent, RunState } from '@orbit/core';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type Harness, harness } from '../test/harness';
 import type { Approval } from './contract';
 
@@ -303,6 +303,34 @@ describe('peer-Bot delegation', () => {
     );
     expect(tree.body.root).toBe(parent.runId);
     expect(tree.body.runs.map((r) => r.runId)).toEqual([parent.runId, child.runId]);
+  });
+
+  it('a peer whose Run ends while the parent’s own job is still finishing still resumes the parent (M8 corpus)', async () => {
+    start();
+    // The peer's daily Run budget is spent, so its Run fails the moment it
+    // starts: before the parent has parked and the queue has let go of it.
+    await createBot({
+      name: 'Researcher',
+      mock: { fixture: 'pong' },
+      budgets: { maxRunsPerDay: 1 },
+    });
+    expect((await runBot('researcher')).status).toBe('completed');
+    await createBot({
+      name: 'Lead',
+      mock: { fixture: 'delegate-to-peer' },
+      delegation: { allowedBots: ['Researcher'] },
+    });
+    const res = await h.json<RunState>('POST', '/v1/bots/lead/runs', {});
+    await vi.waitFor(
+      async () => {
+        await settle();
+        const parent = (await h.json<RunState>('GET', `/v1/runs/${res.body.runId}`)).body;
+        expect(parent.status).toBe('completed');
+      },
+      { timeout: 5000 },
+    );
+    const ev = await events(res.body.runId);
+    expect(ev.filter((e) => e.type === 'run.resumed')).toHaveLength(1);
   });
 
   it('refuses Bots the owner did not allow; the parent continues without a child', async () => {
