@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { createServer as createHttpServer } from 'node:http';
 import { type Server, createServer } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { PluginManifest, type PluginManifestInput } from '@orbit/core';
 import { SecretVault } from '@orbit/policy';
 import { type PluginSandboxSupport, detectPluginSandbox } from '@orbit/sandbox';
@@ -436,7 +436,19 @@ describe.skipIf(!realSandbox)('a plugin in a real bwrap sandbox', () => {
   it("cannot read the owner's home or $ORBIT_HOME; HOME is an empty private folder", async () => {
     const probe = start(manifest());
     expect(await probe({ op: 'read', path: homeSecret })).toBe('error:ENOENT');
-    expect(await probe({ op: 'list', path: homedir() })).toBe('list:');
+    // Only the directories leading to what is bound (the plugin, Node, this
+    // checkout's package store) appear, as empty mount points; CI checks out
+    // under $HOME (/home/runner/work/…).
+    const leading = new Set(
+      [pluginDir, process.execPath, process.cwd()]
+        .map((p) => relative(homedir(), p))
+        .filter((r) => r !== '' && !r.startsWith('..') && !isAbsolute(r))
+        .map((r) => r.split(sep)[0]),
+    );
+    const listed = (await probe({ op: 'list', path: homedir() })).replace(/^list:/, '');
+    for (const entry of listed === '' ? [] : listed.split(',')) {
+      expect(leading.has(entry), `${entry} in the sandbox's HOME`).toBe(true);
+    }
     expect(await probe({ op: 'read', path: join(orbitHome, 'orbit.db') })).toBe('error:ENOENT');
     expect(JSON.parse(await probe({ op: 'env' }))).toEqual({
       home: homedir(),
