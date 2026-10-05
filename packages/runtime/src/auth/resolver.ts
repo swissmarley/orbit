@@ -1,6 +1,7 @@
 import type { AuthMethod, DriverKind, OrbitConfig } from '@orbit/core';
 import type { Env } from '../env';
 import { type GuardResult, GUARD_API_KEY_HOWTO, checkCliDriverAllowed } from './guard';
+import { BUBBLEWRAP_HOWTO, engineScrubBlocker } from '../drivers/sdk';
 import { hasOAuthTokenEnv } from './oauth-presence';
 
 export interface CliStatus {
@@ -17,6 +18,13 @@ export interface CliStatus {
 export interface AuthProbes {
   findClaude(): Promise<string | null>;
   cliStatus(path: string): Promise<CliStatus>;
+  /**
+   * Where bubblewrap is, or null. On Linux the host SDK engine needs it for
+   * its credential scrub (see `engineScrubBlocker`); omitted = not checked.
+   */
+  findBwrap?(): string | null;
+  /** The host platform (default: this process's). */
+  platform?: NodeJS.Platform;
 }
 
 export type ApiCredential = 'api_key' | 'api_key_helper' | 'bedrock' | 'vertex';
@@ -26,7 +34,8 @@ export interface AuthWarning {
     | 'stray_api_key'
     | 'oauth_token_env_not_forwarded'
     | 'cli_probe_failed'
-    | 'base_url_not_forwarded';
+    | 'base_url_not_forwarded'
+    | 'sdk_needs_bubblewrap';
   message: string;
 }
 
@@ -185,7 +194,20 @@ export async function resolveAuth(input: {
     });
   }
 
-  const sdkResolution = (credential: ApiCredential): AuthResolution => ({
+  const sdkResolution = (credential: ApiCredential): AuthResolution => {
+    const blocker = probes.findBwrap
+      ? engineScrubBlocker(probes.platform ?? process.platform, probes.findBwrap())
+      : null;
+    // Docker Bots still run (their engine holds no key), so this warns rather than refuses.
+    if (blocker) {
+      warnings.push({
+        code: 'sdk_needs_bubblewrap',
+        message: `${blocker} Runs outside a Docker sandbox fail until it is installed. ${BUBBLEWRAP_HOWTO}`,
+      });
+    }
+    return sdkResolutionOf(credential);
+  };
+  const sdkResolutionOf = (credential: ApiCredential): AuthResolution => ({
     ...base,
     driver: 'sdk',
     authMethod: credential,

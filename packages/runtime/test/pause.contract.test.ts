@@ -97,6 +97,7 @@ const drivers: [string, () => { driver: AgentDriver; cwd: string }][] = [
         bare: true,
         apiKeyHelper: null,
         queryFn: fakeQuery(FIXTURE('many-reads')),
+        findBwrap: () => '/usr/bin/bwrap',
       }),
       cwd: workspace({ behavior: 'normal' }),
     }),

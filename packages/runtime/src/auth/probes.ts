@@ -59,6 +59,7 @@ export function systemProbes(config: OrbitConfig, env: Env, timeoutMs = 15_000):
       }
       return Promise.resolve(findExecutable('claude', env.PATH));
     },
+    findBwrap: () => findExecutable('bwrap', env.PATH),
     async cliStatus(path): Promise<CliStatus> {
       const [status, version] = await Promise.all([
         run(path, ['auth', 'status', '--json'], childEnv, timeoutMs),

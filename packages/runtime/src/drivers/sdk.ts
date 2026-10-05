@@ -7,6 +7,7 @@ import type {
   SDKMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { type AuthMethod, type RunEventBody, event } from '@orbit/core';
+import { findExecutable } from '../auth/probes';
 import { type Env, assertChildEnvSafe, buildChildEnv } from '../env';
 import { Channel } from './channel';
 import { checkAuthSource } from './auth-source';
@@ -30,6 +31,25 @@ export interface SdkDriverOptions {
   apiKeyHelper: string | null;
   /** Injected in tests; defaults to the Agent SDK's `query`. */
   queryFn?: QueryFn;
+  /** Tests: the host platform and where bubblewrap is (see `engineScrubBlocker`). */
+  platform?: NodeJS.Platform;
+  findBwrap?: (pathEnv: string | undefined) => string | null;
+}
+
+/** How to fix a host without bubblewrap (doctor and the failed Run say the same). */
+export const BUBBLEWRAP_HOWTO =
+  'Install bubblewrap (Debian/Ubuntu: sudo apt-get install -y bubblewrap; Fedora: sudo dnf install bubblewrap), then run orbit daemon restart — or give the Bot a Docker sandbox, whose engine never holds the key.';
+
+/**
+ * Why the host SDK engine cannot start, or null. Orbit starts it with
+ * `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` so the API key never reaches the
+ * engine's own children (Bash, hooks, MCP servers; ADR-005). On Linux Claude
+ * Code enforces that scrub with bubblewrap and refuses to start without it;
+ * turning the scrub off instead would hand the key to every shell command.
+ */
+export function engineScrubBlocker(platform: NodeJS.Platform, bwrap: string | null): string | null {
+  if (platform !== 'linux' || bwrap !== null) return null;
+  return 'The SDK engine needs bubblewrap (bwrap) on Linux to keep the API key out of its shell commands and tools, and bwrap is not on PATH.';
 }
 
 async function defaultQuery(): Promise<QueryFn> {
@@ -258,6 +278,27 @@ export class SdkDriver implements AgentDriver {
 
     const consume = async () => {
       try {
+        // A proxied (Docker) engine holds no key and scrubs nothing (ADR-018).
+        const blocker =
+          req.apiKeyProxied === true
+            ? null
+            : engineScrubBlocker(
+                this.opts.platform ?? process.platform,
+                this.opts.findBwrap
+                  ? this.opts.findBwrap(this.opts.env.PATH)
+                  : findExecutable('bwrap', this.opts.env.PATH),
+              );
+        if (blocker) {
+          finish(
+            event('run.failed', {
+              code: 'engine_sandbox_missing',
+              message: `${blocker} ${BUBBLEWRAP_HOWTO}`,
+              retryable: true,
+              sessionId: req.resumeSessionId ?? req.sessionId ?? null,
+            }),
+          );
+          return;
+        }
         const orbitServer =
           req.orbitTools && req.orbitTools.tools.length > 0
             ? await orbitSdkServer(req.orbitTools)

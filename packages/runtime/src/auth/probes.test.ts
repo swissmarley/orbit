@@ -259,7 +259,9 @@ describe('systemProbes with a fake claude', () => {
   it('resolveAuth: stray API key + fake subscription login → SdkDriver + stray_api_key warning', async () => {
     const f = fake();
     const env = dirtyEnv(f);
-    const r = await resolveAuth({ config: config(), env, probes: systemProbes(config(), env) });
+    // bubblewrap present (the host check has its own tests in sdk.contract).
+    const probes = { ...systemProbes(config(), env), findBwrap: () => '/usr/bin/bwrap' };
+    const r = await resolveAuth({ config: config(), env, probes });
     expect(r.driver).toBe('sdk');
     expect(r.cli?.loggedIn).toBe(true);
     expect(r.warnings.map((w) => w.code)).toEqual(['stray_api_key']);

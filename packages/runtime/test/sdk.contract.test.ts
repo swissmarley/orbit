@@ -3,6 +3,8 @@ import type { HookCallback, Options, SDKMessage } from '@anthropic-ai/claude-age
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { FIXTURES_DIR } from '../src/drivers/fixtures';
+import { OrbitConfig } from '@orbit/core';
+import { resolveAuth } from '../src/auth/resolver';
 import { type QueryFn, SdkDriver } from '../src/drivers/sdk';
 import { type Harness, collect, expectWellFormed, runDriverContract } from './driver-contract';
 import { readFixture, replay } from './fake-engine.mjs';
@@ -67,6 +69,8 @@ function driver(queryFn: QueryFn, bare = true): SdkDriver {
     bare,
     apiKeyHelper: null,
     queryFn,
+    // The host check below has its own tests; the contract runs on any host.
+    findBwrap: () => '/usr/bin/bwrap',
   });
 }
 
@@ -140,6 +144,8 @@ describe('SdkDriver specifics', () => {
         bare: true,
         apiKeyHelper: '/usr/local/bin/key-helper',
         queryFn: q,
+        // A proxied engine never needs it; the plain one below has it.
+        findBwrap: () => '/usr/bin/bwrap',
       });
     const proxied = await collect(
       helperEngine(fakeQuery(FIXTURE('pong'), seen, 'ANTHROPIC_API_KEY')),
@@ -247,5 +253,66 @@ describe('SdkDriver: Orbit tools and subagents (M6)', () => {
     expect(o.agents).toEqual({
       scan: { description: 'd', prompt: 'p', tools: ['Read'], model: 'haiku' },
     });
+  });
+});
+
+describe('the host engine needs bubblewrap on Linux (CLAUDE_CODE_SUBPROCESS_ENV_SCRUB)', () => {
+  const host = (platform: NodeJS.Platform, bwrap: string | null, q: QueryFn) =>
+    new SdkDriver({
+      authMethod: 'api_key',
+      env: sourceEnv,
+      bare: true,
+      apiKeyHelper: null,
+      queryFn: q,
+      platform,
+      findBwrap: () => bwrap,
+    });
+
+  it('fails the Run before the engine starts, saying how to fix it, and never turns the scrub off', async () => {
+    const seen: Options[] = [];
+    const events = await collect(host('linux', null, fakeQuery(FIXTURE('pong'), seen)), {});
+    expect(seen).toHaveLength(0);
+    const failed = events.find((e) => e.type === 'run.failed');
+    expect(failed?.data).toMatchObject({ code: 'engine_sandbox_missing', retryable: true });
+    expect(JSON.stringify(failed)).toContain('apt-get install -y bubblewrap');
+  });
+
+  it('positive controls: bwrap present, macOS, and a proxied Docker engine all start', async () => {
+    for (const [platform, bwrap, proxied] of [
+      ['linux', '/usr/bin/bwrap', false],
+      ['darwin', null, false],
+      ['linux', null, true],
+    ] as const) {
+      const seen: Options[] = [];
+      const events = await collect(
+        host(platform, bwrap, fakeQuery(FIXTURE('pong'), seen)),
+        proxied ? { apiKeyProxied: true } : {},
+      );
+      expect(seen, `${platform} ${String(bwrap)} ${String(proxied)}`).toHaveLength(1);
+      expect(seen[0]!.env!.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB).toBe('1');
+      expect(events.some((e) => e.type === 'run.completed')).toBe(true);
+    }
+  });
+
+  it('doctor warns (sdk_needs_bubblewrap) but still resolves the SDK driver, since Docker Bots work', async () => {
+    const probes = {
+      findClaude: () => Promise.resolve(null),
+      cliStatus: () => Promise.reject(new Error('unused')),
+      platform: 'linux' as const,
+      findBwrap: () => null,
+    };
+    const r = await resolveAuth({
+      config: OrbitConfig.parse({ home: '/tmp/orbit-test' }),
+      env: { ANTHROPIC_API_KEY: 'sk-ant-api03-test-000000' },
+      probes,
+    });
+    expect(r.driver).toBe('sdk');
+    expect(r.warnings.map((w) => w.code)).toEqual(['sdk_needs_bubblewrap']);
+    const ok = await resolveAuth({
+      config: OrbitConfig.parse({ home: '/tmp/orbit-test' }),
+      env: { ANTHROPIC_API_KEY: 'sk-ant-api03-test-000000' },
+      probes: { ...probes, findBwrap: () => '/usr/bin/bwrap' },
+    });
+    expect(ok.warnings).toEqual([]);
   });
 });
