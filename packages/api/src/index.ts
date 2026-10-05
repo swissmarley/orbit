@@ -5,6 +5,7 @@
  */
 export * from './app';
 export * from './contract';
+export * from './oidc';
 export * from './openapi';
 export * from './service';
 export * from './session';

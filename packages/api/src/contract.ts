@@ -10,6 +10,7 @@ import {
   MemoryHit,
   MemoryKind,
   PluginStatus,
+  PrincipalRole,
   RunEvent,
   RunState,
   RunStatus,
@@ -46,12 +47,23 @@ export const ErrorBody = z.object({
 });
 export type ErrorBody = z.infer<typeof ErrorBody>;
 
+/** Browser sign-in through the issuer (hosted mode, ADR-015); not part of the client contract. */
+export const OIDC_LOGIN_PATH = '/v1/auth/oidc/login';
+export const OIDC_CALLBACK_PATH = '/v1/auth/oidc/callback';
+
 export const Health = z.object({
   ok: z.literal(true),
   version: z.string(),
   api: z.literal(API_VERSION),
   pid: z.int(),
   startedAt: z.string(),
+  /**
+   * How a browser signs in: `ticket` (a one-time link from `orbit app`) or
+   * `oidc` (hosted mode: the issuer, starting at OIDC_LOGIN_PATH).
+   */
+  signIn: z.enum(['ticket', 'oidc']).default('ticket'),
+  /** Hosted mode: orbitd's public https origin; null locally. */
+  publicUrl: z.string().nullable().default(null),
 });
 
 export const ApprovalCard = z.object({
@@ -207,6 +219,18 @@ export const DoctorReport = z.object({
   mode: z.string(),
   api: z.object({ host: z.string(), port: z.int() }),
   humanPrincipals: z.int(),
+  /** Configured principals per role (ADR-015). */
+  principals: z.object({ owner: z.int(), operator: z.int(), viewer: z.int() }),
+  /** Hosted mode: where browsers and webhooks reach orbitd, and who signs them in; null locally. */
+  hosted: z
+    .object({
+      publicUrl: z.string().nullable(),
+      issuer: z.string().nullable(),
+      tls: z.boolean(),
+    })
+    .nullable(),
+  /** How orbitd listens: in-process TLS, and a container bind (0.0.0.0 inside a container). */
+  listen: z.object({ tls: z.boolean(), container: z.boolean() }),
   models: z.object({ default: z.string(), triage: z.string() }),
   home: z.string(),
   node: z.string(),
@@ -334,12 +358,16 @@ export const InboundTrigger = z.object({
   detail: z.string().nullable(),
   /** Webhooks: the path to POST to on orbitd's loopback port. */
   path: z.string().nullable(),
+  /** Webhooks in hosted mode: the public address senders on other machines use. */
+  url: z.string().nullable().default(null),
 });
 
 export const WebhookSecret = z.object({
   /** Shown once; Orbit keeps it in the vault. */
   secret: z.string(),
   path: z.string(),
+  /** Hosted mode: the public address to give the sender; null locally (use a tunnel). */
+  url: z.string().nullable().default(null),
   style: z.enum(['orbit', 'github']),
   /** What a sender must add. */
   headers: z.array(z.string()),
@@ -350,9 +378,18 @@ export const WebhookAccepted = z.object({
   runId: z.string().nullable(),
 });
 
+/** Who is calling: the bearer token acts as the owner; a browser session as its principal. */
+export const SessionPrincipal = z.object({
+  id: z.string(),
+  name: z.string(),
+  role: PrincipalRole,
+});
+export type SessionPrincipal = z.infer<typeof SessionPrincipal>;
+
 export const SessionInfo = z.object({
   /** How this request authenticated: the bearer token (CLI, TUI) or the App's cookie. */
   via: z.enum(['token', 'session']),
+  principal: SessionPrincipal,
 });
 export const LoginTicket = z.object({ ticket: z.string(), expiresAt: z.string() });
 export const CreateSessionBody = z.object({ ticket: z.string().min(16).max(128) });
@@ -411,8 +448,13 @@ export interface RouteDef {
   path: string;
   summary: string;
   tag: string;
-  /** false only for /v1/health and /openapi.json. */
+  /** false only for /v1/health, /openapi.json and redeeming a sign-in ticket. */
   auth?: boolean;
+  /**
+   * The least role that may call this route (ADR-015); default `viewer` for
+   * GET and `owner` for everything else (see routeRole).
+   */
+  role?: PrincipalRole;
   query?: z.ZodType;
   body?: z.ZodType;
   /** Success status (default 200). */
@@ -465,6 +507,7 @@ export const routes = {
   },
   createSession: {
     method: 'POST',
+    role: 'viewer',
     path: '/v1/session',
     summary: 'Redeem a login ticket for an HttpOnly App session cookie',
     tag: 'session',
@@ -475,6 +518,7 @@ export const routes = {
   },
   deleteSession: {
     method: 'DELETE',
+    role: 'viewer',
     path: '/v1/session',
     summary: 'Sign this App session out',
     tag: 'session',
@@ -534,6 +578,7 @@ export const routes = {
   },
   startRun: {
     method: 'POST',
+    role: 'operator',
     path: '/v1/bots/{bot}/runs',
     summary: 'Queue a Run of this Bot (manual trigger)',
     tag: 'runs',
@@ -566,6 +611,7 @@ export const routes = {
   },
   stopRun: {
     method: 'POST',
+    role: 'operator',
     path: '/v1/runs/{run}/stop',
     summary: 'Run kill switch (queued, executing, parked or rate-limited)',
     tag: 'controls',
@@ -573,6 +619,7 @@ export const routes = {
   },
   resumeRun: {
     method: 'POST',
+    role: 'operator',
     path: '/v1/runs/{run}/resume',
     summary: 'Queue a resume of a parked (all decided) or rate-limited Run',
     tag: 'runs',
@@ -597,6 +644,7 @@ export const routes = {
   },
   approve: {
     method: 'POST',
+    role: 'operator',
     path: '/v1/approvals/{approval}/approve',
     summary: 'Approve (optionally edited, optionally always)',
     tag: 'approvals',
@@ -605,6 +653,7 @@ export const routes = {
   },
   deny: {
     method: 'POST',
+    role: 'operator',
     path: '/v1/approvals/{approval}/deny',
     summary: 'Deny with a reason the Bot will see',
     tag: 'approvals',
@@ -637,6 +686,7 @@ export const routes = {
   },
   listAudit: {
     method: 'GET',
+    role: 'owner',
     path: '/v1/audit',
     summary: 'Latest audit records (oldest first)',
     tag: 'audit',
@@ -652,6 +702,7 @@ export const routes = {
   },
   exportAudit: {
     method: 'GET',
+    role: 'owner',
     path: '/v1/audit/export',
     summary: 'The whole audit log as JSON Lines',
     tag: 'audit',
@@ -659,6 +710,7 @@ export const routes = {
   },
   listSecrets: {
     method: 'GET',
+    role: 'owner',
     path: '/v1/secrets',
     summary: 'Secret names (values are never returned)',
     tag: 'secrets',
@@ -757,6 +809,7 @@ export const routes = {
   },
   runFeedback: {
     method: 'POST',
+    role: 'operator',
     path: '/v1/runs/{run}/feedback',
     summary: 'Thumbs up or down on a finished Run (becomes feedback memory)',
     tag: 'memory',
@@ -903,6 +956,11 @@ export const routes = {
 } as const satisfies Record<string, RouteDef>;
 
 export type Routes = typeof routes;
+
+/** The least role that may call a route (ADR-015): reads are for viewers, writes for owners unless the table says otherwise. */
+export function routeRole(def: RouteDef): PrincipalRole {
+  return def.role ?? (def.method === 'GET' ? 'viewer' : 'owner');
+}
 export type RouteName = keyof Routes;
 
 type Field<R, K extends string> = R extends Record<K, infer S> ? S : never;

@@ -10,6 +10,7 @@ import { SessionStore } from './session';
 const BASE = 'http://127.0.0.1:7420';
 const HOSTS = ['127.0.0.1:7420', 'localhost:7420'];
 const COOKIE = 'orbit_session_7420';
+const ADA = { id: 'ada', name: 'Ada', role: 'operator' } as const;
 
 let h: Harness | undefined;
 let dirs: string[] = [];
@@ -70,11 +71,11 @@ describe('SessionStore', () => {
   it('tickets are single-use and expire after two minutes', () => {
     const clock = clockAt('2026-10-05T10:00:00Z');
     const s = new SessionStore({ now: clock.now });
-    const a = s.mintTicket();
+    const a = s.mintTicket(ADA);
     expect(a.expiresAt).toBe('2026-10-05T10:02:00.000Z');
     expect(s.redeem(a.ticket)).not.toBeNull();
     expect(s.redeem(a.ticket)).toBeNull();
-    const b = s.mintTicket();
+    const b = s.mintTicket(ADA);
     clock.advance(121_000);
     expect(s.redeem(b.ticket)).toBeNull();
     expect(s.redeem('x'.repeat(43))).toBeNull();
@@ -83,7 +84,7 @@ describe('SessionStore', () => {
   it('sessions slide on use, expire when idle and after seven days at most', () => {
     const clock = clockAt('2026-10-05T10:00:00Z');
     const s = new SessionStore({ now: clock.now });
-    const one = s.redeem(s.mintTicket().ticket);
+    const one = s.redeem(s.mintTicket(ADA).ticket);
     const check = (x: typeof one) => s.check(x?.session ?? '', x?.csrf);
     clock.advance(11 * 3_600_000);
     expect(check(one)).toBe('ok');
@@ -91,7 +92,7 @@ describe('SessionStore', () => {
     expect(check(one)).toBe('ok');
     clock.advance(13 * 3_600_000);
     expect(check(one)).toBe('none');
-    const long = s.redeem(s.mintTicket().ticket);
+    const long = s.redeem(s.mintTicket(ADA).ticket);
     for (let i = 0; i < 16; i++) {
       clock.advance(11 * 3_600_000);
       check(long);
@@ -101,8 +102,8 @@ describe('SessionStore', () => {
 
   it('a session needs its own CSRF secret, not just the cookie (review HIGH-1)', () => {
     const s = new SessionStore();
-    const a = s.redeem(s.mintTicket().ticket);
-    const b = s.redeem(s.mintTicket().ticket);
+    const a = s.redeem(s.mintTicket(ADA).ticket);
+    const b = s.redeem(s.mintTicket(ADA).ticket);
     expect(s.check(a?.session ?? '', a?.csrf)).toBe('ok');
     expect(s.check(a?.session ?? '', undefined)).toBe('bad_csrf');
     expect(s.check(a?.session ?? '', '1')).toBe('bad_csrf');
@@ -112,7 +113,7 @@ describe('SessionStore', () => {
 
   it('revoke and the session cap drop sessions', () => {
     const s = new SessionStore({ maxSessions: 2 });
-    const [a, b, c] = [1, 2, 3].map(() => s.redeem(s.mintTicket().ticket));
+    const [a, b, c] = [1, 2, 3].map(() => s.redeem(s.mintTicket(ADA).ticket));
     expect(s.check(a?.session ?? '', a?.csrf)).toBe('none');
     expect(s.check(b?.session ?? '', b?.csrf)).toBe('ok');
     s.revoke(c?.session ?? '');
@@ -133,7 +134,10 @@ describe('App sign-in (ADR-011)', () => {
     expect(set).toMatch(/SameSite=Strict/);
     expect(set).toMatch(/Path=\//);
     const ok = await t.req('/v1/session', { headers: { cookie, [CSRF_HEADER]: csrf } });
-    expect(await ok.json()).toEqual({ via: 'session' });
+    expect(await ok.json()).toEqual({
+      via: 'session',
+      principal: { id: 'owner', name: 'Local owner', role: 'owner' },
+    });
     expect(
       (await t.req('/v1/bots', { headers: { cookie, [CSRF_HEADER]: csrf, origin: BASE } })).status,
     ).toBe(200);

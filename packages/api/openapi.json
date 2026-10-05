@@ -3,7 +3,7 @@
   "info": {
     "title": "orbitd API",
     "version": "1",
-    "description": "Local API of the Orbit daemon. Loopback only; authenticate with the bearer token in $ORBIT_HOME/daemon.token, or (the App) with the session cookie from POST /v1/session plus the X-Orbit-CSRF: 1 header (ADR-011)."
+    "description": "API of the Orbit daemon. Local mode listens on loopback; authenticate with the bearer token in $ORBIT_HOME/daemon.token, or (the App) with the session cookie from POST /v1/session plus the session’s X-Orbit-CSRF header (ADR-011). Hosted mode (ADR-015) serves its public https URL, signs browsers in through OIDC (cookie __Host-orbit_session) and limits each route to a least role (x-orbit-role: viewer < operator < owner); the bearer token acts as the owner."
   },
   "servers": [
     {
@@ -27,7 +27,8 @@
       "session": {
         "type": "apiKey",
         "in": "cookie",
-        "name": "orbit_session_<port>"
+        "name": "orbit_session_<port>",
+        "description": "Hosted mode: __Host-orbit_session"
       }
     }
   },
@@ -66,6 +67,21 @@
                     },
                     "startedAt": {
                       "type": "string"
+                    },
+                    "signIn": {
+                      "default": "ticket",
+                      "type": "string",
+                      "enum": [
+                        "ticket",
+                        "oidc"
+                      ]
+                    },
+                    "publicUrl": {
+                      "default": null,
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
@@ -73,7 +89,9 @@
                     "version",
                     "api",
                     "pid",
-                    "startedAt"
+                    "startedAt",
+                    "signIn",
+                    "publicUrl"
                   ],
                   "additionalProperties": false
                 }
@@ -375,6 +393,81 @@
                       "minimum": -9007199254740991,
                       "maximum": 9007199254740991
                     },
+                    "principals": {
+                      "type": "object",
+                      "properties": {
+                        "owner": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "operator": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "viewer": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "owner",
+                        "operator",
+                        "viewer"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "hosted": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "publicUrl": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "issuer": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "tls": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "publicUrl",
+                            "issuer",
+                            "tls"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "listen": {
+                      "type": "object",
+                      "properties": {
+                        "tls": {
+                          "type": "boolean"
+                        },
+                        "container": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "tls",
+                        "container"
+                      ],
+                      "additionalProperties": false
+                    },
                     "models": {
                       "type": "object",
                       "properties": {
@@ -503,6 +596,9 @@
                     "mode",
                     "api",
                     "humanPrincipals",
+                    "principals",
+                    "hosted",
+                    "listen",
                     "models",
                     "home",
                     "node",
@@ -554,7 +650,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       }
     },
     "/v1/daemon/stop": {
@@ -625,7 +722,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "owner"
       }
     },
     "/v1/session": {
@@ -650,10 +748,36 @@
                         "token",
                         "session"
                       ]
+                    },
+                    "principal": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "viewer",
+                            "operator",
+                            "owner"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "role"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
-                    "via"
+                    "via",
+                    "principal"
                   ],
                   "additionalProperties": false
                 }
@@ -699,7 +823,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       },
       "post": {
         "operationId": "createSession",
@@ -862,7 +987,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       }
     },
     "/v1/session/tickets": {
@@ -936,7 +1062,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "owner"
       }
     },
     "/v1/bots": {
@@ -1712,7 +1839,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       },
       "post": {
         "operationId": "createBot",
@@ -2484,6 +2612,7 @@
             }
           }
         },
+        "x-orbit-role": "owner",
         "requestBody": {
           "required": true,
           "content": {
@@ -3874,7 +4003,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       },
       "put": {
         "operationId": "updateBot",
@@ -4655,6 +4785,7 @@
             }
           }
         },
+        "x-orbit-role": "owner",
         "requestBody": {
           "required": true,
           "content": {
@@ -6022,7 +6153,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       }
     },
     "/v1/bots/{bot}/pause": {
@@ -6804,7 +6936,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "owner"
       }
     },
     "/v1/bots/{bot}/resume": {
@@ -7586,7 +7719,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "owner"
       }
     },
     "/v1/bots/{bot}/runs": {
@@ -8242,6 +8376,7 @@
             }
           }
         },
+        "x-orbit-role": "operator",
         "requestBody": {
           "required": true,
           "content": {
@@ -8943,7 +9078,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       }
     },
     "/v1/runs/{run}": {
@@ -9598,7 +9734,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       }
     },
     "/v1/runs/{run}/events": {
@@ -12571,7 +12708,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       }
     },
     "/v1/runs/{run}/stop": {
@@ -13226,7 +13364,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "operator"
       }
     },
     "/v1/runs/{run}/resume": {
@@ -13882,6 +14021,7 @@
             }
           }
         },
+        "x-orbit-role": "operator",
         "requestBody": {
           "required": true,
           "content": {
@@ -14219,7 +14359,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       }
     },
     "/v1/approvals/{approval}": {
@@ -14504,7 +14645,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       }
     },
     "/v1/approvals/{approval}/approve": {
@@ -15399,6 +15541,7 @@
             }
           }
         },
+        "x-orbit-role": "operator",
         "requestBody": {
           "required": true,
           "content": {
@@ -16362,6 +16505,7 @@
             }
           }
         },
+        "x-orbit-role": "operator",
         "requestBody": {
           "required": true,
           "content": {
@@ -16545,7 +16689,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       },
       "post": {
         "operationId": "createRule",
@@ -16679,6 +16824,7 @@
             }
           }
         },
+        "x-orbit-role": "owner",
         "requestBody": {
           "required": true,
           "content": {
@@ -16901,7 +17047,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "owner"
       }
     },
     "/v1/audit": {
@@ -17034,7 +17181,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "owner"
       }
     },
     "/v1/audit/verify": {
@@ -17144,7 +17292,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       }
     },
     "/v1/audit/export": {
@@ -17201,7 +17350,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "owner"
       }
     },
     "/v1/secrets": {
@@ -17282,7 +17432,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "owner"
       }
     },
     "/v1/secrets/{name}": {
@@ -17370,6 +17521,7 @@
             }
           }
         },
+        "x-orbit-role": "owner",
         "requestBody": {
           "required": true,
           "content": {
@@ -17467,7 +17619,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "owner"
       }
     },
     "/v1/kill": {
@@ -17544,7 +17697,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       },
       "post": {
         "operationId": "setKill",
@@ -17620,6 +17774,7 @@
             }
           }
         },
+        "x-orbit-role": "owner",
         "requestBody": {
           "required": true,
           "content": {
@@ -17801,7 +17956,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       }
     },
     "/v1/schedules": {
@@ -17924,7 +18080,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       }
     },
     "/v1/memory": {
@@ -18141,7 +18298,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       }
     },
     "/v1/bots/{bot}/memory": {
@@ -18315,6 +18473,7 @@
             }
           }
         },
+        "x-orbit-role": "owner",
         "requestBody": {
           "required": true,
           "content": {
@@ -18524,7 +18683,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       },
       "put": {
         "operationId": "updateMemory",
@@ -18696,6 +18856,7 @@
             }
           }
         },
+        "x-orbit-role": "owner",
         "requestBody": {
           "required": true,
           "content": {
@@ -18801,7 +18962,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "owner"
       }
     },
     "/v1/runs/{run}/memory": {
@@ -18977,7 +19139,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       }
     },
     "/v1/runs/{run}/feedback": {
@@ -19151,6 +19314,7 @@
             }
           }
         },
+        "x-orbit-role": "operator",
         "requestBody": {
           "required": true,
           "content": {
@@ -19847,7 +20011,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       }
     },
     "/v1/bots/{bot}/taint": {
@@ -19944,7 +20109,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       },
       "delete": {
         "operationId": "clearBotTaint",
@@ -20023,7 +20189,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "owner"
       }
     },
     "/v1/triage": {
@@ -20197,7 +20364,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       }
     },
     "/v1/triage/bot-proposal": {
@@ -20511,6 +20679,7 @@
             }
           }
         },
+        "x-orbit-role": "owner",
         "requestBody": {
           "required": true,
           "content": {
@@ -20836,7 +21005,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       },
       "post": {
         "operationId": "addPlugin",
@@ -21138,6 +21308,7 @@
             }
           }
         },
+        "x-orbit-role": "owner",
         "requestBody": {
           "required": true,
           "content": {
@@ -21469,7 +21640,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       },
       "delete": {
         "operationId": "removePlugin",
@@ -21547,7 +21719,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "owner"
       }
     },
     "/v1/plugins/{plugin}/enable": {
@@ -21859,7 +22032,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "owner"
       }
     },
     "/v1/plugins/{plugin}/disable": {
@@ -22171,7 +22345,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "owner"
       }
     },
     "/v1/plugins/{plugin}/check": {
@@ -22483,7 +22658,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "owner"
       }
     },
     "/v1/plugins/{plugin}/secrets/{name}": {
@@ -22804,6 +22980,7 @@
             }
           }
         },
+        "x-orbit-role": "owner",
         "requestBody": {
           "required": true,
           "content": {
@@ -23141,7 +23318,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "owner"
       }
     },
     "/v1/plugins/{plugin}/settings/{name}": {
@@ -23462,6 +23640,7 @@
             }
           }
         },
+        "x-orbit-role": "owner",
         "requestBody": {
           "required": true,
           "content": {
@@ -23553,6 +23732,13 @@
                           "string",
                           "null"
                         ]
+                      },
+                      "url": {
+                        "default": null,
+                        "type": [
+                          "string",
+                          "null"
+                        ]
                       }
                     },
                     "required": [
@@ -23564,7 +23750,8 @@
                       "enabled",
                       "state",
                       "detail",
-                      "path"
+                      "path",
+                      "url"
                     ],
                     "additionalProperties": false
                   }
@@ -23611,7 +23798,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       }
     },
     "/v1/bots/{bot}/webhooks/{trigger}/secret": {
@@ -23653,6 +23841,13 @@
                     "path": {
                       "type": "string"
                     },
+                    "url": {
+                      "default": null,
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "style": {
                       "type": "string",
                       "enum": [
@@ -23670,6 +23865,7 @@
                   "required": [
                     "secret",
                     "path",
+                    "url",
                     "style",
                     "headers"
                   ],
@@ -23717,7 +23913,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "owner"
       }
     },
     "/v1/events": {
@@ -23801,7 +23998,8 @@
               }
             }
           }
-        }
+        },
+        "x-orbit-role": "viewer"
       }
     }
   }

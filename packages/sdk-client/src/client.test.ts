@@ -142,10 +142,14 @@ describe('OrbitClient', () => {
   });
 
   it('browser mode: no token, a credentials mode and extra headers on every call (ADR-011)', async () => {
+    const SESSION = {
+      via: 'session',
+      principal: { id: 'owner', name: 'Local owner', role: 'owner' },
+    };
     const seen: { headers: Headers; credentials: string | undefined }[] = [];
     const fake = (_url: string, init?: RequestInit) => {
       seen.push({ headers: new Headers(init?.headers), credentials: init?.credentials });
-      return Promise.resolve(Response.json({ via: 'session' }));
+      return Promise.resolve(Response.json(SESSION));
     };
     const client = new OrbitClient({
       baseUrl: '',
@@ -153,7 +157,7 @@ describe('OrbitClient', () => {
       headers: { 'x-orbit-csrf': '1' },
       fetch: fake,
     });
-    expect(await client.call('getSession')).toEqual({ via: 'session' });
+    expect(await client.call('getSession')).toEqual(SESSION);
     expect(seen[0]?.headers.get('authorization')).toBeNull();
     expect(seen[0]?.headers.get('x-orbit-csrf')).toBe('1');
     expect(seen[0]?.credentials).toBe('same-origin');
