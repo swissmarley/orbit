@@ -1,9 +1,8 @@
 import { spawn } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { OrbitError } from '@orbit/core';
-import { buildChildEnv, defaultHome } from '@orbit/runtime';
+import { buildChildEnv, defaultHome, orbitLayout } from '@orbit/runtime';
 import { type OrbitClient, daemonFiles, localClient, readDaemonInfo } from '@orbit/sdk-client';
 
 const START_TIMEOUT_MS = 15_000;
@@ -11,17 +10,17 @@ const START_TIMEOUT_MS = 15_000;
 /**
  * Spawn orbitd detached, logging to $ORBIT_HOME/logs/orbitd.log. Its env is
  * an allowlist ('orbitd': Orbit settings + API credentials, never OAuth
- * tokens). In the dev tree the bin is TypeScript, so tsx is preloaded.
+ * tokens). In the dev tree the bin is TypeScript, so tsx is preloaded; the
+ * npm package runs its bundled `dist/orbitd.mjs` directly (ADR-017).
  */
 export function spawnDaemon(
   env: Record<string, string | undefined>,
   spawnFn: typeof spawn = spawn,
+  args: readonly string[] = orbitLayout().orbitd.args,
 ): void {
   const home = defaultHome(env);
   const files = daemonFiles(home);
   mkdirSync(dirname(files.log), { recursive: true, mode: 0o700 });
-  const bin = fileURLToPath(import.meta.resolve('@orbit/orbitd/bin'));
-  const args = bin.endsWith('.ts') ? ['--import', import.meta.resolve('tsx'), bin] : [bin];
   const log = openSync(files.log, 'a', 0o600);
   try {
     const child = spawnFn(process.execPath, args, {

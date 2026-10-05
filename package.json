@@ -20,7 +20,9 @@
     "test:live": "ORBIT_LIVE=1 vitest run --config vitest.live.config.ts",
     "orbit": "tsx apps/orbit-tui/src/bin.ts",
     "orbitd": "tsx apps/orbitd/src/bin.ts",
-    "test:e2e": "pnpm --filter @orbit/app build && pnpm --filter @orbit/app e2e"
+    "test:e2e": "pnpm --filter @orbit/app build && pnpm --filter @orbit/app e2e",
+    "package": "pnpm --filter orbit-bots build",
+    "smoke": "pnpm --filter orbit-bots smoke"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

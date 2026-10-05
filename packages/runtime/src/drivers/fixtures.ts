@@ -1,8 +1,9 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
+import { orbitLayout } from '../layout';
 
-export const FIXTURES_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../fixtures');
+/** The MockDriver's recordings (`fixtures/claude-<version>/`, dev tree or package). */
+export const FIXTURES_DIR = orbitLayout().fixturesDir;
 
 /** Newest engine-version directory, e.g. `claude-2.1.289`. */
 function latestVersionDir(root: string): string | null {

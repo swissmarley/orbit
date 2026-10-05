@@ -8,3 +8,5 @@ storybook-static
 playwright-report
 test-results
 .claude/worktrees
+apps/orbit-desktop/src-tauri/gen
+apps/orbit-desktop/src-tauri/target

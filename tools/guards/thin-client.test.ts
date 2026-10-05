@@ -8,13 +8,15 @@ const ROOT = resolve(import.meta.dirname, '../..');
  * Clients talk to orbitd only through @orbit/sdk-client (CLAUDE.md). The CLI
  * may use @orbit/core (types, errors, redaction) and a few process-level
  * helpers from @orbit/runtime (ORBIT_HOME, the orbitd child-env allowlist,
- * the name-only OAuth presence check, help text) — never the store, policy, sandbox,
+ * the name-only OAuth presence check, help text, where the orbitd bin is) — never the store, policy, sandbox,
  * orchestrator or API internals, which would let it bypass the daemon.
  */
 const ALLOWED_RUNTIME_IMPORTS = new Set([
   'defaultHome',
   'buildChildEnv',
   'hasOAuthTokenEnv',
+  // where the orbitd bin lives: the dev tree or the npm package (ADR-017)
+  'orbitLayout',
   // static help text for `orbit login-help`
   'ONBOARDING_STEPS',
 ]);

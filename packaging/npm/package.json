@@ -1,0 +1,54 @@
+{
+  "name": "orbit-bots",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Orbit: self-hostable, always-on, goal-driven AI agents (Bots) on Claude Code and the Claude Agent SDK. The orbit CLI and TUI, the orbitd daemon and the web App.",
+  "keywords": [
+    "agents",
+    "ai",
+    "claude",
+    "claude-code",
+    "automation",
+    "daemon",
+    "cli"
+  ],
+  "homepage": "https://github.com/swissmarley/orbit#readme",
+  "bugs": "https://github.com/swissmarley/orbit/issues",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/swissmarley/orbit.git",
+    "directory": "packaging/npm"
+  },
+  "license": "MIT",
+  "author": "Nakya",
+  "type": "module",
+  "bin": {
+    "orbit": "dist/orbit.mjs",
+    "orbitd": "dist/orbitd.mjs"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "build": "tsx scripts/build.ts",
+    "smoke": "tsx scripts/smoke.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.289",
+    "@anthropic-ai/sdk": "0.131.0",
+    "@modelcontextprotocol/sdk": "1.32.0",
+    "@napi-rs/keyring": "2.1.0",
+    "better-sqlite3": "13.0.3",
+    "playwright-core": "1.56.1",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

@@ -2,6 +2,7 @@ import type { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { resolveLayout } from '@orbit/runtime';
 import { afterEach, describe, expect, it } from 'vitest';
 import { spawnDaemon } from './daemon-control';
 
@@ -35,5 +36,16 @@ describe('spawnDaemon', () => {
     for (const leaked of ['sk-ant-oat01-never', 'never-either', 'ghp_unrelated']) {
       expect(blob).not.toContain(leaked);
     }
+  });
+
+  it('the npm package starts its bundled orbitd.mjs with plain node: no tsx (ADR-017)', () => {
+    let captured: { cmd: string; args: string[] } | undefined;
+    const fake = ((cmd: string, args: string[]) => {
+      captured = { cmd, args };
+      return { unref: () => undefined };
+    }) as unknown as typeof spawn;
+    const { args } = resolveLayout('packaged', '/opt/orbit-bots/dist').orbitd;
+    spawnDaemon({ ORBIT_HOME: home, PATH: '/usr/bin' }, fake, args);
+    expect(captured).toEqual({ cmd: process.execPath, args: ['/opt/orbit-bots/dist/orbitd.mjs'] });
   });
 });

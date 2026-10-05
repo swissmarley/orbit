@@ -64,3 +64,50 @@ jobs:
         with:
           name: playwright-report
           path: apps/orbit-app/playwright-report
+
+  package:
+    name: package · npm tarball · install · smoke (mock driver)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ORBIT_DRIVER: mock
+      ANTHROPIC_API_KEY: ''
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Builds orbit-bots, npm-packs it, installs the tarball into a temp prefix and
+      # drives the installed `orbit` against the orbitd it auto-starts (ADR-017).
+      - run: pnpm smoke
+
+  docker:
+    name: docker · compose up (mock driver) · CLI in the container
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # compose.yaml passes it through; no API key ever reaches this job.
+      ORBIT_DRIVER: mock
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker compose config --quiet
+      - run: docker compose build
+      - run: docker compose up --detach --wait --wait-timeout 120
+      - name: The CLI inside the container
+        run: |
+          docker compose exec -T orbitd orbit doctor --json | tee doctor.json
+          jq -e '.ok and .driver == "mock" and .daemon != null' doctor.json
+          docker compose exec -T orbitd orbit bot create --name Smoke --goal 'Answer pong' --fixture pong --json
+          docker compose exec -T orbitd orbit run smoke --json | tail -n 1 | jq -e '.type == "run.completed"'
+          docker compose exec -T orbitd orbit app --json | jq -e '.url | test("^http://127\\.0\\.0\\.1:7420/login#ticket=")'
+      - name: The host reaches orbitd and the App on loopback
+        run: |
+          curl -fsS http://127.0.0.1:7420/v1/health
+          curl -fsS http://127.0.0.1:7420/ | grep -q '<div id="root">'
+      - if: failure()
+        run: docker compose logs
+      - if: always()
+        run: docker compose down --volumes

@@ -1,11 +1,11 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { fileURLToPath } from 'node:url';
 import { type AuthMethod, type RunEventBody, event } from '@orbit/core';
 import { type Env, assertChildEnvSafe, buildChildEnv } from '../env';
+import { orbitLayout } from '../layout';
 import { Channel } from './channel';
 import type { HookBridge } from './hook-bridge';
 import { checkAuthSource } from './auth-source';
@@ -14,10 +14,7 @@ import { decide, hookOutput, postHookOutput, postProcess } from './permission';
 import { EventSequencer } from './sequencer';
 import type { AgentDriver, DriverRunRequest } from './types';
 
-export const HOOK_SCRIPT = join(
-  dirname(fileURLToPath(import.meta.url)),
-  '../../bin/orbit-hook.mjs',
-);
+export const HOOK_SCRIPT = orbitLayout().hookScript;
 
 /** Seconds Claude Code waits for Orbit's PreToolUse hook before giving up. */
 export const HOOK_TIMEOUT_SECONDS = 600;

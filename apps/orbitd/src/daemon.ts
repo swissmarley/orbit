@@ -11,7 +11,7 @@ import {
 import type { Server } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import type { AddressInfo } from 'node:net';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { serve } from '@hono/node-server';
 import {
   type Logger,
@@ -23,7 +23,7 @@ import {
   createApp,
 } from '@orbit/api';
 import { type OrbitConfig, OrbitError, isLoopbackHost } from '@orbit/core';
-import { type Env, GUARD_API_KEY_HOWTO, loadConfig } from '@orbit/runtime';
+import { type Env, GUARD_API_KEY_HOWTO, appDir as layoutAppDir, loadConfig } from '@orbit/runtime';
 import { type DaemonInfo, daemonFiles } from '@orbit/sdk-client';
 import { openDatabase } from '@orbit/store';
 
@@ -151,10 +151,10 @@ export function planListen(
 
 /**
  * Where the built App lives: `ORBIT_APP_DIR`, else `apps/orbit-app/dist` of
- * this checkout (the packaged layout arrives in M8).
+ * this checkout or `app/` of the npm package (`orbitLayout`, ADR-017).
  */
 export function appDir(env: Env): string {
-  return resolve(env.ORBIT_APP_DIR ?? join(import.meta.dirname, '../../orbit-app/dist'));
+  return layoutAppDir(env);
 }
 
 export interface Daemon {

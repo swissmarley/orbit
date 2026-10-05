@@ -1,0 +1,61 @@
+# Orbit in Docker (ADR-017): orbitd serves the API and the App from one
+# container, in API-key mode (the Claude Code CLI login is never used here).
+#
+#   echo 'ANTHROPIC_API_KEY=sk-ant-…' > .env    # or export it; never commit .env
+#   docker compose up -d --build
+#   docker compose exec orbitd orbit app --no-open   # one-time sign-in link for the App
+#   docker compose exec orbitd orbit doctor          # any CLI command works this way
+#   docker compose exec orbitd orbit bot create --template inbox-triage
+#
+# No key at hand? ORBIT_DRIVER=mock docker compose up -d replays recorded
+# sessions. A released image instead of a local build:
+#   ORBIT_IMAGE=ghcr.io/swissmarley/orbit:latest docker compose up -d --no-build
+#
+# The key reaches orbitd from your environment or .env at run time; it is
+# never part of the image. Instead of a raw key, ORBIT_API_KEY_HELPER may name
+# a command inside the container that prints one (Claude Code's apiKeyHelper),
+# e.g. a script you mount read-only.
+name: orbit
+
+services:
+  orbitd:
+    build:
+      context: .
+      dockerfile: docker/orbitd.Dockerfile
+    image: ${ORBIT_IMAGE:-orbit:local}
+    restart: unless-stopped
+    environment:
+      # Listen on the container's interface so the published port reaches it.
+      # orbitd accepts a wildcard bind only inside a container
+      # (ORBIT_CONTAINER=1 plus the runtime's marker file) and still publishes
+      # http://127.0.0.1:7420 to the CLI and the App.
+      ORBIT_HOST: 0.0.0.0
+      ORBIT_CONTAINER: '1'
+      # Passed through from your shell or .env only when set.
+      ANTHROPIC_API_KEY:
+      ORBIT_API_KEY_HELPER:
+      ORBIT_DRIVER:
+      ORBIT_DEFAULT_MODEL:
+      ORBIT_TRIAGE_MODEL:
+      TZ:
+    ports:
+      # Host loopback only: the API is plain HTTP with a bearer token and the
+      # App's session cookie. Never publish it on 0.0.0.0 or a LAN address.
+      # Keep both sides 7420: orbitd checks the Host header against its port.
+      - '127.0.0.1:7420:7420'
+    volumes:
+      - orbit-data:/data
+      - orbit-home:/home/orbit
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  # Orbit's database, vault, workspaces and memory ($ORBIT_HOME).
+  orbit-data:
+  # The engine's own state ($HOME): session transcripts parked Runs resume from.
+  orbit-home:
