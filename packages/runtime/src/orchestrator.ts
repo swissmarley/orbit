@@ -18,6 +18,7 @@ import {
   event,
   inputHash,
   isTerminalEvent,
+  neutraliseTags,
   newId,
   slugify,
 } from '@orbit/core';
@@ -228,7 +229,15 @@ export function childBudget(left: BudgetCap): BudgetCap {
   };
 }
 
-const escapeTags = (t: string) => t.replace(/<(\/?)(orbit-[a-z-]+)/gi, '‹$1$2');
+/** Every string inside a tool's output with Orbit's own tags neutralised. */
+function neutraliseDeep(value: unknown): unknown {
+  if (typeof value === 'string') return neutraliseTags(value);
+  if (Array.isArray(value)) return value.map(neutraliseDeep);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, neutraliseDeep(v)]));
+  }
+  return value;
+}
 
 export interface EnqueueOptions {
   prompt?: string;
@@ -833,7 +842,7 @@ export class Orchestrator {
             e.type === 'delegation.finished'
               ? [
                   `<orbit-delegation bot="${(names.get(e.data.childRunId) ?? e.data.childBotId).replace(/["<>]/g, ' ')}" run="${e.data.childRunId}" status="${e.data.status}">`,
-                  escapeTags(e.data.result),
+                  neutraliseTags(e.data.result),
                   '</orbit-delegation>',
                 ].join('\n')
               : '',
@@ -964,6 +973,8 @@ export class Orchestrator {
       });
     };
     const parked: string[] = [];
+    /** Untrusted sources a call's own output carries in (a read of a marked workspace file). */
+    const exposedBy = new Map<string, string[]>();
     let toolCalls = spentBefore.toolCalls;
     let lastAssistantText: string | null = null;
     const files = fileAccessContext({
@@ -999,9 +1010,10 @@ export class Orchestrator {
       input: Record<string, unknown>,
       taintBefore: number,
     ) => {
-      this.carryFileTaint(bot, runId, ws, req.toolName, input, taint, taintBefore, (src) =>
-        addTaint(src, req.toolUseId),
-      );
+      this.carryFileTaint(bot, runId, ws, req.toolName, input, taint, taintBefore, (src) => {
+        if (req.toolUseId && src.length > 0) exposedBy.set(req.toolUseId, [...src]);
+        addTaint(src, req.toolUseId);
+      });
       const orbitTool = orbitToolOf(req.toolName);
       if (orbitTool && session) {
         const args = canonicalArgs(orbitTool, input);
@@ -1187,9 +1199,8 @@ export class Orchestrator {
     };
 
     const toolResult: ToolResultHandler = (req) => {
-      const redacted = this.deps.redactor.redact(req.response);
-      const changed = JSON.stringify(redacted) !== JSON.stringify(req.response);
-      if (req.isError && changed) {
+      let redacted = this.deps.redactor.redact(req.response);
+      if (req.isError && JSON.stringify(redacted) !== JSON.stringify(req.response)) {
         // The engine cannot rewrite a failed tool's error text (PostToolUseFailure
         // has no updatedToolOutput), so stop before the model's next turn sees it.
         abort({ kind: 'exposure', toolName: req.toolName });
@@ -1197,7 +1208,16 @@ export class Orchestrator {
           stop: 'Orbit stopped this run: a tool error contained a secret.',
         });
       }
-      const source = [...taint].find((s) => s === req.toolName);
+      // Output from an untrusted source (the tool itself, or a marked workspace
+      // file it read) is data: the model is told so, and Orbit's own tags in it
+      // are neutralised, so it cannot close or forge a block (M8 corpus).
+      const source =
+        [...taint].find((s) => s === req.toolName) ??
+        (req.toolUseId ? exposedBy.get(req.toolUseId)?.join(', ') : undefined);
+      if (source && !req.isError && orbitToolOf(req.toolName) === null) {
+        redacted = neutraliseDeep(redacted);
+      }
+      const changed = JSON.stringify(redacted) !== JSON.stringify(req.response);
       // A delegation pauses this Run: stop the engine after the tool result,
       // park, and resume with the peer's answer (no slot held while it works).
       const delegated =
