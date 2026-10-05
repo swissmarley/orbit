@@ -111,6 +111,9 @@ const fmtValue = (v: unknown) => clip(typeof v === 'string' ? v : JSON.stringify
 /** Argument names come from the model's call: word characters only, short (review M6 L2). */
 const fieldName = (k: string) => k.replace(/[^\w.-]/g, '').slice(0, 40) || 'field';
 
+/** Trigger kinds whose prompt is the owner's own text or the Bot's goal. */
+const OWNER_TASK_KINDS: ReadonlySet<string> = new Set(['manual', 'cron', 'interval', 'resume']);
+
 export function thumbsFeedback(
   run: Pick<RunState, 'runId' | 'prompt' | 'trigger' | 'createdAt'>,
   rating: 'up' | 'down',
@@ -119,8 +122,10 @@ export function thumbsFeedback(
   const lines = [
     `Your owner rated the result of ${runLabel(run)} as ${rating === 'up' ? 'good' : 'not good'}.`,
   ];
-  // The task text of a delegated Run was written by another Bot: leave it out.
-  if (run.trigger?.kind !== 'delegation' && run.prompt)
+  // Only a task the owner wrote (or the Bot's own goal on a schedule) is quoted:
+  // delegated tasks come from another Bot, and webhook, Slack, file and git
+  // prompts carry outside content — none of that may become trusted memory.
+  if (OWNER_TASK_KINDS.has(run.trigger?.kind ?? 'manual') && run.prompt)
     lines.push(`Task: ${clip(run.prompt, 300)}`);
   if (comment) lines.push(`Owner's comment: ${clip(comment, 1500)}`);
   return {

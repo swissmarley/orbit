@@ -290,11 +290,77 @@ export function maxTier(a: Tier, b: Tier): Tier {
 }
 
 /**
+ * Words that make a plugin tool at least EXTERNAL wherever they appear: a
+ * plugin runs outside the Bot's sandbox, so writing, creating, changing,
+ * running or clicking anything there leaves it (M7 safety review M2).
+ */
+const PLUGIN_EXTERNAL_VERBS = [
+  ...MUTATING_VERBS.filter(
+    (v) =>
+      ![
+        'commit',
+        'run',
+        'call',
+        'move',
+        'close',
+        'start',
+        'stop',
+        'sync',
+        'import',
+        'make',
+        'place',
+      ].includes(v),
+  ),
+  'push',
+  'click',
+  'fill',
+  'press',
+  'submit',
+  'upload',
+  'drop',
+  'kick',
+  'pin',
+  'react',
+  'transfer',
+];
+/**
+ * Words that are verbs when they lead the name or another word follows them
+ * (`post_message`, `chat_postMessage`, `run_query`) and nouns when they end
+ * it (`get_post`, `list_comment`, `get_run`).
+ */
+const PLUGIN_EXTERNAL_UNLESS_LAST = [
+  'post',
+  'reply',
+  'respond',
+  'comment',
+  'message',
+  'email',
+  'dm',
+  'run',
+  'call',
+  'move',
+  'close',
+  'start',
+  'stop',
+  'sync',
+  'import',
+  'type',
+  'select',
+  'navigate',
+  'make',
+  'place',
+];
+/** Local-only effects a plugin may declare as WRITE_LOCAL (a git commit in the Bot's worktree). */
+const PLUGIN_LOCAL_VERBS = ['commit'];
+
+/**
  * The lowest tier a declared (plugin) tier may give a tool, from its name
- * alone (ADR-014): a money-moving name stays FINANCIAL and a sending name
- * (`send_*`, `post_message`, `publish`, `merge`, …) stays at least EXTERNAL.
- * Everything else may be declared lower than the heuristics say (a read that
- * looks like a write), which is what manifests are for (ADR-009).
+ * alone (ADR-014): a money-moving name stays FINANCIAL; a name that sends,
+ * writes, creates, changes, runs or clicks anything stays at least EXTERNAL
+ * (plugins run outside the Bot's sandbox); drafting stays at least
+ * WRITE_LOCAL, and so does a commit. Only names with no such word may be
+ * declared READ — which is what manifests are for (ADR-009): removing the
+ * heuristics' false positives, never lowering an action.
  */
 export function tierFloor(toolName: string): Tier {
   const m = /^mcp__[^_]+(?:_[^_]+)*?__(.+)$/.exec(toolName);
@@ -303,7 +369,23 @@ export function tierFloor(toolName: string): Tier {
   if (has(FINANCIAL_VERBS)) return 'FINANCIAL';
   const sends = has(SEND_VERBS) || LEADING_SEND_VERBS.includes(toolWords[0] ?? '');
   if (has(FINANCIAL_NOUNS) && (sends || has(COMMIT_VERBS))) return 'FINANCIAL';
-  return sends ? 'EXTERNAL' : 'READ';
+  if (sends) return 'EXTERNAL';
+  const actions = toolWords.filter(
+    (w, i) =>
+      PLUGIN_EXTERNAL_VERBS.includes(w) ||
+      (PLUGIN_EXTERNAL_UNLESS_LAST.includes(w) && (i === 0 || i < toolWords.length - 1)),
+  );
+  if (actions.length > 0) {
+    const draftsOnly =
+      has(DRAFT_VERBS) &&
+      !has(CONJUNCTIONS) &&
+      actions.every((w) => [...DRAFT_HELPER_VERBS, 'write'].includes(w));
+    return draftsOnly ? 'WRITE_LOCAL' : 'EXTERNAL';
+  }
+  // `list_drafts`, `get_preview`: a leading read verb makes the draft word a noun.
+  const drafting = has(DRAFT_VERBS) && !READ_VERBS.includes(toolWords[0] ?? '');
+  if (drafting || has(PLUGIN_LOCAL_VERBS)) return 'WRITE_LOCAL';
+  return 'READ';
 }
 
 /** A plugin's declared tier, raised to the floor its name sets. */

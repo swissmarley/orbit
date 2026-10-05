@@ -327,6 +327,29 @@ describe('plugin tier floors (ADR-014)', () => {
     ['mcp__shop__get_and_pay_invoice', 'READ', 'FINANCIAL', true],
     ['mcp__bank__create_payment', 'EXTERNAL', 'FINANCIAL', true],
     ['mcp__x__send_payment', 'EXTERNAL', 'FINANCIAL', true],
+    // A plugin runs outside the sandbox: writing, creating, running or clicking
+    // anything is at least EXTERNAL, whatever the manifest says (M7 review M2).
+    ['mcp__github__git_push', 'READ', 'EXTERNAL', true],
+    ['mcp__slack__chat_postMessage', 'READ', 'EXTERNAL', true],
+    ['mcp__github__create_issue', 'READ', 'EXTERNAL', true],
+    ['mcp__filesystem__write_file', 'WRITE_LOCAL', 'EXTERNAL', true],
+    ['mcp__db__execute_sql', 'READ', 'EXTERNAL', true],
+    ['mcp__db__run_query', 'READ', 'EXTERNAL', true],
+    ['mcp__google__create_event', 'WRITE_LOCAL', 'EXTERNAL', true],
+    ['mcp__browser__click', 'READ', 'EXTERNAL', true],
+    ['mcp__browser__fill_form', 'READ', 'EXTERNAL', true],
+    ['mcp__crm__update_contact', 'READ', 'EXTERNAL', true],
+    ['mcp__gmail__create_draft', 'READ', 'WRITE_LOCAL', true],
+    ['mcp__github__git_commit', 'READ', 'WRITE_LOCAL', true],
+    ['mcp__gmail__compose_and_update_draft', 'READ', 'EXTERNAL', true],
+    // Nouns that look like verbs stay READ-able.
+    ['mcp__blog__get_post', 'READ', 'READ', false],
+    ['mcp__google__list_drafts', 'READ', 'READ', false],
+    ['mcp__gmail__draft_reply', 'READ', 'WRITE_LOCAL', true],
+    ['mcp__ci__get_run', 'READ', 'READ', false],
+    ['mcp__github__list_comments', 'READ', 'READ', false],
+    ['mcp__slack__get_thread_replies', 'READ', 'READ', false],
+    ['mcp__browser__open_page', 'READ', 'READ', false],
     // Raising is always allowed.
     ['mcp__github__list_issues', 'EXTERNAL', 'EXTERNAL', false],
   ])('%s declared %s → %s', (name, declared, tier, raised) => {
