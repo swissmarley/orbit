@@ -902,10 +902,11 @@ export class Orchestrator {
 
   private async segment(seg: Segment): Promise<RunState> {
     const { runId, bot } = seg;
+    const driver = this.driver;
     const prior = this.state(runId);
     let ws: PreparedWorkspace;
     try {
-      ws = await this.workspaces(bot, this.driver.kind);
+      ws = await this.workspaces(bot, driver.kind);
     } catch (err) {
       // Review M1: never leave a Run looking queued or running when nothing executes.
       this.deps.store.append(
@@ -925,17 +926,21 @@ export class Orchestrator {
       return this.state(runId);
     }
     try {
-      return await this.segmentIn(seg, ws, prior);
+      return await this.segmentIn(seg, driver, ws, prior);
     } finally {
       // The Bot's host-side proxies stop forwarding once no Run holds them (ADR-018).
       ws.release?.();
     }
   }
 
-  private async segmentIn(seg: Segment, ws: PreparedWorkspace, prior: RunState): Promise<RunState> {
+  private async segmentIn(
+    seg: Segment,
+    driver: AgentDriver,
+    ws: PreparedWorkspace,
+    prior: RunState,
+  ): Promise<RunState> {
     const { runId, bot } = seg;
     const { config } = this.deps;
-    const driver = this.driver;
     const append = this.appender(runId, bot.id);
     // Review M2: a kill switch engaged while the workspace was prepared wins.
     const blockedBy = this.blockedBy(bot.id, runId);
