@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { arch, platform } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -10,9 +11,11 @@ import {
   OrbitError,
   Redactor,
   type RunState,
+  type PluginStatus,
   type TriggerRef,
   type TriggerSpec,
   errorMessage,
+  pluginSecretKey,
   event,
   humanPrincipalCount,
   slugify,
@@ -52,6 +55,7 @@ import {
   type DriverHandle,
   type Env,
   type MockDriverOptions,
+  ORBIT_TOOL_TIERS,
   Orchestrator,
   OrbitSessions,
   OrbitToolset,
@@ -63,7 +67,17 @@ import {
   Scheduler,
   type ScheduleEntry,
   type WorkspaceProvider,
+  type InboundContent,
+  type InboundStatus,
+  PluginRegistry,
+  PluginSegments,
+  TriggerRouter,
   buildChildEnv,
+  gitRunner,
+  triggerKey,
+  triggerPrompt,
+  verifyWebhook,
+  webhookSecretName,
   createDriver,
   createSandboxManager,
   driverTriage,
@@ -128,6 +142,13 @@ export interface ServiceOptions {
   vaultKeySource?: 'auto' | 'keychain' | 'file';
   /** Markdown mirror of memories; default $ORBIT_HOME/memory, null = none (tests). */
   memoryDir?: string | null;
+  /** Reference plugins directory; default the repository's plugins/, null = none (tests). */
+  pluginsDir?: string | null;
+  /** Tests: Slack Socket Mode doubles. */
+  slack?: {
+    fetch?: typeof fetch;
+    connect?: ConstructorParameters<typeof TriggerRouter>[0]['slackConnect'];
+  };
   log?: Logger;
   now?: () => Date;
 }
@@ -156,6 +177,10 @@ export class OrbitService {
   readonly orbitTools: OrbitToolset;
   readonly orbitSessions: OrbitSessions;
   readonly triage: TriagePath;
+  readonly plugins: PluginRegistry;
+  readonly pluginSegments: PluginSegments;
+  readonly triggers: TriggerRouter;
+  private readonly triggerState: TriggerStateRepo;
   readonly startedAt: string;
   readonly version: string;
   /** Base URL once orbitd listens (shown by doctor). */
@@ -210,6 +235,18 @@ export class OrbitService {
     });
     this.workspaceTaint = new WorkspaceTaint(db, this.now);
     this.orbitSessions = new OrbitSessions();
+    this.plugins = new PluginRegistry({
+      db,
+      vault: this.vault,
+      env,
+      home: config.home,
+      ...(opts.pluginsDir !== undefined ? { builtInDir: opts.pluginsDir } : {}),
+      bots: () => this.bots.list(),
+      now: this.now,
+      redact: (t) => this.redactor.redactString(t),
+      audit: this.audit,
+    });
+    this.pluginSegments = new PluginSegments();
     this.orbitTools = new OrbitToolset({
       memory: this.memory,
       store: this.store,
@@ -263,6 +300,8 @@ export class OrbitService {
       orbitTools: this.orbitTools,
       orbitSessions: this.orbitSessions,
       mcpUrl: () => this.url || null,
+      plugins: this.plugins,
+      pluginSegments: this.pluginSegments,
     });
 
     this.rateLimits = new RateLimitManager({
@@ -281,6 +320,7 @@ export class OrbitService {
     });
 
     const triggerState = new TriggerStateRepo(db);
+    this.triggerState = triggerState;
     this.scheduler = new Scheduler({
       bots: () => this.bots.list(),
       state: triggerState,
@@ -290,6 +330,20 @@ export class OrbitService {
         return s !== undefined && IN_FLIGHT.includes(s.status);
       },
       now: this.now,
+    });
+
+    this.triggers = new TriggerRouter({
+      bots: () => this.bots.list(),
+      fire: (bot, trigger, ref, content) => this.fireInbound(bot, trigger, ref, content),
+      slack: {
+        appToken: () => this.vault.get(pluginSecretKey('slack', 'SLACK_APP_TOKEN')),
+        apiUrl: env.SLACK_API_URL ?? 'https://slack.com/api',
+      },
+      git: (repo) => gitRunner(repo, buildChildEnv('tool', env)),
+      hasWebhookSecret: (bot, name) => this.vault.has(webhookSecretName(bot.id, name)),
+      log: (m) => this.log('info', m),
+      ...(opts.slack?.fetch ? { slackFetch: opts.slack.fetch } : {}),
+      ...(opts.slack?.connect ? { slackConnect: opts.slack.connect } : {}),
     });
   }
 
@@ -353,6 +407,7 @@ export class OrbitService {
       this.maybeAutoResume(run.runId);
     }
     this.rateLimits.recover();
+    this.syncTriggers();
     this.ticker = setInterval(() => this.tick(), this.opts.tickMs ?? 1000);
     this.ticker.unref();
   }
@@ -368,9 +423,19 @@ export class OrbitService {
       }
       this.rateLimits.tick();
       this.queue.pump();
+      this.syncTriggers();
     } catch (err) {
       this.log('error', `housekeeping failed: ${errorMessage(err)}`);
     }
+  }
+
+  /** Inbound listeners follow the Bots' specs (and the kill switch: nothing listens while it is on). */
+  private syncTriggers(): void {
+    if (this.controls.globalKill()) {
+      void this.triggers.stop();
+      return;
+    }
+    this.triggers.sync();
   }
 
   /** Graceful stop: no new dispatches, executing Runs end as interrupted. */
@@ -379,6 +444,7 @@ export class OrbitService {
     this.unsubscribe?.();
     this.unsubscribeRuns?.();
     this.queue.freeze();
+    await this.triggers.stop();
     this.orchestrator.shutdown();
     await this.orchestrator.drain(15_000);
     await this.engine?.handle.close();
@@ -630,6 +696,175 @@ export class OrbitService {
     });
     this.queue.push({ kind: 'start', runId: run.runId, botId: bot.id, priority: run.priority });
     return { fired: true as const, runId: run.runId };
+  }
+
+  /**
+   * An inbound trigger delivered something (ADR-014): start a Run whose task
+   * carries it as untrusted data, tainted from the start. Never while the
+   * trigger's previous Run is still in flight.
+   */
+  fireInbound(
+    bot: Bot,
+    trigger: TriggerSpec,
+    ref: TriggerRef,
+    content: InboundContent,
+  ): { fired: true; runId: string } | { fired: false; reason: string } {
+    const key = triggerKey(bot.id, trigger);
+    const previous = this.triggerState.get(key);
+    if (bot.pausedAt) return { fired: false, reason: 'Bot is paused' };
+    const kill = this.controls.globalKill();
+    if (kill) return { fired: false, reason: `the global kill switch is engaged (by ${kill})` };
+    if (previous?.lastRunId) {
+      const prev = this.store.getRun(previous.lastRunId);
+      if (prev && IN_FLIGHT.includes(prev.status)) {
+        return { fired: false, reason: `previous run ${previous.lastRunId} still in flight` };
+      }
+    }
+    const task = trigger.prompt ?? bot.spec.goal;
+    const run = this.orchestrator.enqueue(bot, {
+      trigger: ref,
+      prompt: triggerPrompt(
+        content.context ? `${task}\n\n${content.context}` : task,
+        content.source,
+        content.text,
+      ),
+      inheritedTaint: [content.source],
+    });
+    this.triggerState.record({
+      key,
+      botId: bot.id,
+      lastFiredAt: this.now().toISOString(),
+      lastRunId: run.runId,
+    });
+    this.audit.append({
+      actor: `trigger:${trigger.kind}`,
+      action: 'trigger.fired',
+      subject: run.runId,
+      data: { botId: bot.id, kind: trigger.kind, source: content.source },
+    });
+    this.queue.push({ kind: 'start', runId: run.runId, botId: bot.id, priority: run.priority });
+    return { fired: true, runId: run.runId };
+  }
+
+  inboundTriggers(): InboundStatus[] {
+    return this.triggers.status();
+  }
+
+  /**
+   * A webhook delivery (`POST /hooks/<bot>/<trigger>`). The signature is
+   * verified in constant time before the body is parsed or anything is
+   * stored; every failure is the same 401 (no hint whether the Bot or trigger
+   * exists).
+   */
+  receiveWebhook(
+    botId: string,
+    name: string,
+    headers: Readonly<Record<string, string | undefined>>,
+    body: Buffer,
+  ): { accepted: true; runId: string | null } {
+    const refused = () => new OrbitError('unauthorized', 'Invalid webhook signature');
+    const bot = /^bot_[0-9A-Za-z]+$/.test(botId) ? this.bots.find(botId) : undefined;
+    const trigger = bot?.spec.triggers.find(
+      (t): t is Extract<TriggerSpec, { kind: 'webhook' }> =>
+        t.kind === 'webhook' && t.name === name,
+    );
+    const secret = bot && trigger ? this.vault.get(webhookSecretName(bot.id, name)) : undefined;
+    if (!bot || !trigger || !secret) throw refused();
+    const verdict = verifyWebhook({
+      style: trigger.style,
+      secret,
+      headers,
+      body,
+      nowMs: this.now().getTime(),
+      seen: (key) => {
+        const r = this.opts.db.sqlite
+          .prepare(
+            'INSERT OR IGNORE INTO webhook_deliveries (key, bot_id, received_at) VALUES (?, ?, ?)',
+          )
+          .run(key, bot.id, this.now().toISOString());
+        return r.changes === 0;
+      },
+    });
+    if (!verdict.ok) throw refused();
+    // Verified: only now is the body read as text (and only as data).
+    this.opts.db.sqlite
+      .prepare('DELETE FROM webhook_deliveries WHERE received_at < ?')
+      .run(new Date(this.now().getTime() - 86_400_000).toISOString());
+    if (!trigger.enabled) return { accepted: true, runId: null };
+    if (trigger.style === 'github' && trigger.events.length > 0) {
+      if (!verdict.event || !trigger.events.includes(verdict.event)) {
+        return { accepted: true, runId: null };
+      }
+    }
+    let text = body.toString('utf8');
+    try {
+      text = JSON.stringify(JSON.parse(text) as unknown, null, 1);
+    } catch {
+      // Not JSON: passed on as text.
+    }
+    const outcome = this.fireInbound(
+      bot,
+      trigger,
+      { kind: 'webhook', source: trigger.name },
+      {
+        source: `webhook:${trigger.name}`,
+        text: verdict.event ? `GitHub event: ${verdict.event}\n${text}` : text,
+      },
+    );
+    if (!outcome.fired)
+      this.log('info', `webhook ${name} of ${bot.spec.name} skipped: ${outcome.reason}`);
+    return { accepted: true, runId: outcome.fired ? outcome.runId : null };
+  }
+
+  /** Mint (or rotate) a webhook trigger's signing secret; returned once. */
+  webhookSecret(botRef: string, name: string) {
+    const bot = this.bots.get(botRef);
+    const trigger = bot.spec.triggers.find(
+      (t): t is Extract<TriggerSpec, { kind: 'webhook' }> =>
+        t.kind === 'webhook' && t.name === name,
+    );
+    if (!trigger) {
+      throw new OrbitError('not_found', `${bot.spec.name} has no webhook trigger named "${name}"`, {
+        hint: 'Add one to the Bot first: {"kind": "webhook", "name": "…"}',
+      });
+    }
+    const secret = randomBytes(32).toString('base64url');
+    this.vault.set(webhookSecretName(bot.id, name), secret);
+    this.redactor.addSecret(secret);
+    this.audit.append({
+      actor: OWNER,
+      action: 'webhook.secret_set',
+      subject: bot.id,
+      data: { trigger: name },
+    });
+    return {
+      secret,
+      path: `/hooks/${bot.id}/${name}`,
+      style: trigger.style,
+      headers:
+        trigger.style === 'github'
+          ? ['X-Hub-Signature-256', 'X-GitHub-Delivery', 'X-GitHub-Event']
+          : ['X-Orbit-Timestamp', 'X-Orbit-Signature'],
+    };
+  }
+
+  // ── plugins (owner actions) ───────────────────────────────────────────────
+
+  listPlugins(): PluginStatus[] {
+    return this.plugins.list();
+  }
+
+  setPluginSecret(id: string, name: string, value: string): PluginStatus {
+    this.plugins.setSecret(id, name, value, OWNER);
+    this.redactor.addSecret(value);
+    if (id === 'slack') this.triggers.restartSlack();
+    return this.plugins.get(id);
+  }
+
+  removePluginSecret(id: string, name: string): PluginStatus {
+    this.plugins.removeSecret(id, name, OWNER);
+    if (id === 'slack') this.triggers.restartSlack();
+    return this.plugins.get(id);
   }
 
   requireRun(runId: string): RunState {
@@ -1224,11 +1459,17 @@ export class OrbitService {
   // ── policy, audit, secrets, kill switch ──────────────────────────────────
 
   createRule(body: z.output<typeof CreateRuleBody>): Rule {
-    const tier = classifyTool(body.toolPattern, { shellContained: false })?.tier ?? null;
+    // Plugins' declared tiers count: no allow rule may cover a FINANCIAL plugin tool.
+    const tier =
+      classifyTool(body.toolPattern, {
+        shellContained: false,
+        overrides: [...ORBIT_TOOL_TIERS, ...this.plugins.toolTiers()],
+      })?.tier ?? null;
     const rule = this.rules.create(
       {
         botId: body.bot ? this.bots.get(body.bot).id : null,
         toolPattern: body.toolPattern,
+        inputMatch: body.inputMatch ?? null,
         effect: body.effect,
         reason: body.reason ?? null,
         createdBy: OWNER,

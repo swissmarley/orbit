@@ -9,6 +9,7 @@ import {
   Memory,
   MemoryHit,
   MemoryKind,
+  PluginStatus,
   RunEvent,
   RunState,
   RunStatus,
@@ -301,6 +302,8 @@ export const DecisionResult = z.object({
 export const CreateRuleBody = z.object({
   toolPattern: z.string().trim().min(1).max(200),
   effect: z.enum(['allow', 'deny']),
+  /** Top-level arguments that must match (one value per `*`), e.g. {"to": "*@example.com"}. */
+  inputMatch: z.record(z.string(), z.string()).nullable().optional(),
   bot: z.string().min(1).nullable().optional(),
   expiresAt: z.iso.datetime().nullable(),
   reason: z.string().max(2000).nullable().optional(),
@@ -313,6 +316,39 @@ export const SetSecretBody = z.object({
     .max(64 * 1024),
 });
 export const KillBody = z.object({ on: z.boolean() });
+
+export const AddPluginBody = z.object({
+  /** Absolute path of a directory with an orbit-plugin.json. */
+  dir: z.string().trim().min(1).max(1000),
+});
+export const SetPluginSettingBody = z.object({ value: z.string().max(2000).nullable() });
+
+export const InboundTrigger = z.object({
+  botId: z.string(),
+  botName: z.string(),
+  key: z.string(),
+  kind: z.enum(['webhook', 'slack', 'file', 'git']),
+  description: z.string(),
+  enabled: z.boolean(),
+  state: z.enum(['listening', 'connecting', 'needs_setup', 'error', 'off']),
+  detail: z.string().nullable(),
+  /** Webhooks: the path to POST to on orbitd's loopback port. */
+  path: z.string().nullable(),
+});
+
+export const WebhookSecret = z.object({
+  /** Shown once; Orbit keeps it in the vault. */
+  secret: z.string(),
+  path: z.string(),
+  style: z.enum(['orbit', 'github']),
+  /** What a sender must add. */
+  headers: z.array(z.string()),
+});
+
+export const WebhookAccepted = z.object({
+  accepted: z.literal(true),
+  runId: z.string().nullable(),
+});
 
 export const SessionInfo = z.object({
   /** How this request authenticated: the bearer token (CLI, TUI) or the App's cookie. */
@@ -763,6 +799,97 @@ export const routes = {
     tag: 'bots',
     body: ProposeBotBody,
     response: BotProposalResult,
+  },
+  listPlugins: {
+    method: 'GET',
+    path: '/v1/plugins',
+    summary:
+      'Plugins Orbit knows (reference plugins and ones you added) with their state, tools and tiers',
+    tag: 'plugins',
+    response: z.array(PluginStatus),
+  },
+  addPlugin: {
+    method: 'POST',
+    path: '/v1/plugins',
+    summary:
+      'Add a plugin from a directory with an orbit-plugin.json (disabled until you enable it)',
+    tag: 'plugins',
+    body: AddPluginBody,
+    status: 201,
+    response: PluginStatus,
+  },
+  getPlugin: {
+    method: 'GET',
+    path: '/v1/plugins/{plugin}',
+    summary: 'One plugin: manifest, state, tools with tiers, secrets (set or not), settings',
+    tag: 'plugins',
+    response: PluginStatus,
+  },
+  removePlugin: {
+    method: 'DELETE',
+    path: '/v1/plugins/{plugin}',
+    summary: 'Forget a plugin you added (and its secrets); reference plugins can only be disabled',
+    tag: 'plugins',
+    response: ok,
+  },
+  enablePlugin: {
+    method: 'POST',
+    path: '/v1/plugins/{plugin}/enable',
+    summary: 'Check the plugin (start it, list its tools) and offer it to the Bots that list it',
+    tag: 'plugins',
+    response: PluginStatus,
+  },
+  disablePlugin: {
+    method: 'POST',
+    path: '/v1/plugins/{plugin}/disable',
+    summary: 'Stop offering the plugin to Bots',
+    tag: 'plugins',
+    response: PluginStatus,
+  },
+  checkPlugin: {
+    method: 'POST',
+    path: '/v1/plugins/{plugin}/check',
+    summary: 'Start the plugin once and list its tools (does not enable it)',
+    tag: 'plugins',
+    response: PluginStatus,
+  },
+  setPluginSecret: {
+    method: 'PUT',
+    path: '/v1/plugins/{plugin}/secrets/{name}',
+    summary:
+      "Store one of the plugin's declared secrets in the vault (only that plugin receives it)",
+    tag: 'plugins',
+    body: SetSecretBody,
+    response: PluginStatus,
+  },
+  removePluginSecret: {
+    method: 'DELETE',
+    path: '/v1/plugins/{plugin}/secrets/{name}',
+    summary: "Remove one of the plugin's secrets",
+    tag: 'plugins',
+    response: PluginStatus,
+  },
+  setPluginSetting: {
+    method: 'PUT',
+    path: '/v1/plugins/{plugin}/settings/{name}',
+    summary: 'Set (or clear with null) a non-secret plugin setting',
+    tag: 'plugins',
+    body: SetPluginSettingBody,
+    response: PluginStatus,
+  },
+  listTriggers: {
+    method: 'GET',
+    path: '/v1/triggers',
+    summary: 'Inbound triggers (webhooks, Slack, files, git) and whether they are listening',
+    tag: 'plugins',
+    response: z.array(InboundTrigger),
+  },
+  webhookSecret: {
+    method: 'POST',
+    path: '/v1/bots/{bot}/webhooks/{trigger}/secret',
+    summary: "Mint (or rotate) a webhook trigger's signing secret; shown once",
+    tag: 'plugins',
+    response: WebhookSecret,
   },
   events: {
     method: 'GET',

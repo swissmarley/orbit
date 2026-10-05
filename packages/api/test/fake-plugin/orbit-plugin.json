@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "fake",
+  "name": "Fake",
+  "version": "1.0.0",
+  "description": "A test plugin: echoes text.",
+  "server": { "transport": "stdio", "command": "${node}", "args": ["${pluginDir}/server.mjs"] },
+  "tools": [
+    { "name": "echo", "tier": "READ" },
+    { "name": "send_message", "tier": "EXTERNAL" }
+  ],
+  "secrets": [{ "name": "FAKE_TOKEN" }]
+}

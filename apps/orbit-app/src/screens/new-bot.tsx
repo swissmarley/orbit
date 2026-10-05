@@ -170,7 +170,7 @@ export function NewBotScreen() {
       ...x,
       name: x.name || p.spec.name,
       tools: p.spec.tools ?? [],
-      schedule: t ? t.kind : 'manual',
+      schedule: t?.kind === 'cron' || t?.kind === 'interval' ? t.kind : 'manual',
       ...(t?.kind === 'cron' ? { cron: t.cron } : {}),
       ...(t?.kind === 'interval' ? { everyMinutes: t.everyMinutes } : {}),
     }));

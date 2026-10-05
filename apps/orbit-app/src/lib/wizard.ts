@@ -1,4 +1,4 @@
-import type { BotSpecInput, TriggerSpec } from '@orbit/core/browser';
+import type { BotSpecInput, ScheduledTrigger } from '@orbit/core/browser';
 
 /** Built-in engine tools a Bot can be given (the policy still decides every call). */
 export const ENGINE_TOOLS: readonly { name: string; tier: string; does: string }[] = [
@@ -35,7 +35,7 @@ export function nameFromGoal(goal: string): string {
 }
 
 /** A schedule the goal asks for, if any. */
-export function scheduleFromGoal(goal: string): TriggerSpec | null {
+export function scheduleFromGoal(goal: string): ScheduledTrigger | null {
   const at = /\bat (\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i.exec(goal);
   let hour = 9;
   let minute = 0;

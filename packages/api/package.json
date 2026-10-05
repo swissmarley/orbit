@@ -24,5 +24,9 @@
     "@orbit/store": "workspace:*",
     "hono": "4.13.13",
     "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.2",
+    "ws": "8.22.0"
   }
 }

@@ -1,5 +1,13 @@
 /** @jsxRuntime automatic @jsxImportSource react */
-import { BotSpec, type Bot, formatWhen, scrubControls } from '@orbit/core/browser';
+import {
+  BotSpec,
+  type Bot,
+  TRIGGER_KIND_WORD,
+  formatWhen,
+  scrubControls,
+  triggerDetail,
+  triggerLabel,
+} from '@orbit/core/browser';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { History, Pencil, Save } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -80,12 +88,9 @@ function Overview({ bot }: { bot: Bot }) {
           ) : (
             <ul className="flex flex-col gap-2">
               {s.triggers.map((t, i) => {
-                const what =
-                  t.kind === 'cron'
-                    ? `cron ${t.cron}${t.timezone ? ` (${t.timezone})` : ''}`
-                    : `every ${t.everyMinutes}m`;
+                const what = triggerDetail(t);
                 // The scheduler describes a trigger by its name, else by its definition.
-                const sched = mine.find((m) => m.description === (t.name ?? what));
+                const sched = mine.find((m) => m.description === triggerLabel(t));
                 return (
                   <li key={i} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                     <Badge tone={t.enabled ? 'info' : 'neutral'}>
@@ -93,9 +98,8 @@ function Overview({ bot }: { bot: Bot }) {
                       {t.enabled ? 'on' : 'off'}
                     </Badge>
                     {t.name ? <span className="text-fg">{scrubControls(t.name)}</span> : null}
-                    <span className="font-mono text-xs text-fg-muted">
-                      {t.kind === 'cron' ? what : `every ${t.everyMinutes} min`}
-                    </span>
+                    <span className="text-xs text-fg-muted">{TRIGGER_KIND_WORD[t.kind]}</span>
+                    <span className="font-mono text-xs text-fg-muted">{scrubControls(what)}</span>
                     {sched?.nextAt ? (
                       <span className="text-xs text-fg-muted">
                         · next <Time iso={sched.nextAt} />
