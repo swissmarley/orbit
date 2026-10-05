@@ -58,8 +58,12 @@ export async function rulesAdd(
   return 0;
 }
 
-export async function rulesRevoke(ctx: Context, id: string): Promise<number> {
+export async function rulesRevoke(
+  ctx: Context,
+  id: string,
+  o: { json?: boolean } = {},
+): Promise<number> {
   const rule = await (await ctx.client()).rules.revoke(id);
-  ctx.io.out(`Revoked ${rule.id}`);
+  ctx.io.out(o.json ? JSON.stringify(rule) : `Revoked ${rule.id}`);
   return 0;
 }

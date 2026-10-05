@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic @jsxImportSource react */
 import { render } from 'ink';
 import type { Context } from '../context';
 import { painter } from '../io';

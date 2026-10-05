@@ -7,7 +7,7 @@ import { painter } from '../io';
 export async function secretSet(
   ctx: Context,
   name: string,
-  o: { valueFile?: string; stdin?: () => string },
+  o: { valueFile?: string; stdin?: () => string; json?: boolean },
 ): Promise<number> {
   const raw = o.valueFile
     ? readFileSync(o.valueFile, 'utf8')
@@ -19,7 +19,11 @@ export async function secretSet(
     });
   // Sent to the local daemon over loopback (token-authenticated); stored encrypted there.
   const stored = await (await ctx.client()).secrets.set(name, value);
-  ctx.io.out(`${painter(ctx.io)('green', '✔')} Stored secret ${name} (${stored.keySource} key)`);
+  ctx.io.out(
+    o.json
+      ? JSON.stringify(stored)
+      : `${painter(ctx.io)('green', '✔')} Stored secret ${name} (${stored.keySource} key)`,
+  );
   return 0;
 }
 
@@ -33,8 +37,12 @@ export async function secretList(ctx: Context, o: { json?: boolean }): Promise<n
   return 0;
 }
 
-export async function secretRemove(ctx: Context, name: string): Promise<number> {
+export async function secretRemove(
+  ctx: Context,
+  name: string,
+  o: { json?: boolean } = {},
+): Promise<number> {
   await (await ctx.client()).secrets.remove(name);
-  ctx.io.out(`Removed secret ${name}`);
+  ctx.io.out(o.json ? JSON.stringify({ name, removed: true }) : `Removed secret ${name}`);
   return 0;
 }

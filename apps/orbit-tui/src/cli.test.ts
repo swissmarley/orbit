@@ -292,6 +292,107 @@ describe('orbit CLI', () => {
     expect(daemons).toHaveLength(0);
   });
 
+  describe('M4: tail, bot run/logs, --json, completions', () => {
+    it('tail replays a finished Run and exits with its outcome; bot logs shows the newest Run', async () => {
+      const h = harness(mockEnv());
+      await h.run('bot', 'create', '--name', 'Notes', '--goal', 'x', '--fixture', 'pong');
+      h.reset();
+      expect(await h.run('bot', 'run', 'notes', '--json')).toBe(0);
+      const runId = h.ndjson()[0]!.runId;
+      h.reset();
+      expect(await h.run('tail', runId)).toBe(ExitCode.ok);
+      expect(h.text()).toMatch(/already ended \(completed\)/);
+      expect(h.text()).toMatch(/✔ completed/);
+      h.reset();
+      expect(await h.run('bot', 'logs', 'notes', '--json')).toBe(0);
+      expect(h.ndjson().at(-1)?.runId).toBe(runId);
+    });
+
+    it('tail follows a parked Run to completion after an approval elsewhere', async () => {
+      const h = harness(mockEnv());
+      await h.run(
+        'bot',
+        'create',
+        '--file',
+        writeSpec(
+          home,
+          'm.yaml',
+          'name: Mailer\ngoal: x\nmock: { fixture: send-email }\napprovals: { parkWindowSeconds: 0 }\n',
+        ),
+      );
+      h.reset();
+      expect(await h.run('run', 'mailer', '--json')).toBe(ExitCode.waitingApproval);
+      const runId = h.ndjson()[0]!.runId;
+      h.reset();
+      expect(await h.run('tail', runId, '--segment')).toBe(ExitCode.waitingApproval);
+      h.reset();
+      const other = harness(mockEnv());
+      await other.run('approvals', '--json');
+      const [pending] = other.json<{ id: string }[]>();
+      const tailing = h.run('tail', runId, '--json');
+      await other.run('approve', pending!.id, '--no-resume');
+      await other.run('resume', runId, '--json');
+      expect(await tailing).toBe(ExitCode.ok);
+      expect(h.ndjson().at(-1)?.type).toBe('run.completed');
+    });
+
+    it('--json errors are machine-readable on stdout too', async () => {
+      const h = harness(mockEnv());
+      expect(await h.run('bot', 'list', '--json')).toBe(0);
+      h.reset();
+      expect(await h.run('logs', 'run_missing', '--json')).toBe(ExitCode.notFound);
+      expect(h.json<{ error: { code: string } }>().error.code).toBe('not_found');
+    });
+
+    it('every command that prints data takes --json', async () => {
+      const h = harness(mockEnv());
+      expect(await h.run('completion', 'bash')).toBe(0);
+      const cases = [...h.text().matchAll(/^\s+"([^"]*)"\) opts="([^"]*)"/gm)].map((m) => ({
+        path: m[1]!,
+        opts: m[2]!.split(' '),
+      }));
+      const leaves = cases.filter(
+        (c) => c.path !== '' && !cases.some((o) => o.path.startsWith(`${c.path} `)),
+      );
+      // Not data: the TUI itself, the completion script, JSONL export.
+      const exempt = new Set(['tui', 'completion', 'audit export']);
+      const missing = leaves.filter((c) => !exempt.has(c.path) && !c.opts.includes('--json'));
+      expect(leaves.length).toBeGreaterThan(25);
+      expect(missing.map((c) => c.path)).toEqual([]);
+    });
+
+    it('generates bash, zsh and fish completions; bash completes subcommands and options', async () => {
+      const h = harness(mockEnv());
+      expect(await h.run('completion', 'bash')).toBe(0);
+      const script = join(home, 'orbit.bash');
+      writeFileSync(script, h.text());
+      const complete = (...words: string[]) =>
+        spawnSync(
+          'bash',
+          [
+            '-c',
+            `source ${script}; COMP_WORDS=(orbit ${words.map((w) => `'${w}'`).join(' ')}); COMP_CWORD=${words.length}; _orbit_complete; printf '%s\\n' "\${COMPREPLY[@]}"`,
+          ],
+          { encoding: 'utf8' },
+        )
+          .stdout.trim()
+          .split('\n');
+      expect(complete('ta')).toEqual(['tail']);
+      expect(complete('bot', '')).toEqual(
+        expect.arrayContaining(['create', 'list', 'run', 'logs', 'pause']),
+      );
+      expect(complete('approve', 'apr_123', '--al')).toEqual(['--always']);
+      expect(complete('daemon', 'st')).toEqual(['start', 'stop', 'status']);
+      h.reset();
+      expect(await h.run('completion', 'zsh')).toBe(0);
+      expect(h.text()).toMatch(/^#compdef orbit/);
+      h.reset();
+      expect(await h.run('completion', 'fish')).toBe(0);
+      expect(h.text()).toMatch(/complete -c orbit -f -n '__fish_use_subcommand' -a 'tail'/);
+      expect(await h.run('completion', 'powershell')).toBe(ExitCode.usage);
+    });
+  });
+
   describe('M3: daemon, queue, schedules', () => {
     it('daemon status / stop / start, and the CLI reconnects to a fresh daemon', async () => {
       const h = harness(mockEnv());

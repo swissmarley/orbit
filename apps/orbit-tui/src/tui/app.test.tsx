@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic @jsxImportSource react */
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -137,6 +138,16 @@ describe('TUI actions', () => {
     const exited = t.instance.waitUntilExit();
     await t.press('q');
     await exited;
+  });
+});
+
+describe('runs outside Vitest', () => {
+  it('every TUI source file sets the JSX runtime itself (tsx run from the repo root ignores the package tsconfig)', () => {
+    const dir = import.meta.dirname;
+    const missing = readdirSync(dir)
+      .filter((f) => f.endsWith('.tsx') && !f.includes('.test.'))
+      .filter((f) => !readFileSync(join(dir, f), 'utf8').startsWith('/** @jsxRuntime automatic'));
+    expect(missing).toEqual([]);
   });
 });
 

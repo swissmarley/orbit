@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic @jsxImportSource react */
 import type { RunEvent, RunState } from '@orbit/core';
 import { Box, Text } from 'ink';
 import type { painter } from '../io';

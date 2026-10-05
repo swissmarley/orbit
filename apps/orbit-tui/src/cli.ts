@@ -8,7 +8,17 @@ import { auditExport, auditList, auditVerify } from './commands/audit';
 import { killSwitch, pauseBot, stopRun } from './commands/controls';
 import { daemonStart, daemonStatus, daemonStop } from './commands/daemon';
 import { rulesAdd, rulesList, rulesRevoke } from './commands/rules';
-import { logs, queueShow, resumeRun, runBot, runsList, schedulesShow } from './commands/run';
+import { completion } from './commands/completion';
+import {
+  botLogs,
+  logs,
+  queueShow,
+  resumeRun,
+  runBot,
+  runsList,
+  schedulesShow,
+  tail,
+} from './commands/run';
 import { secretList, secretRemove, secretSet } from './commands/secrets';
 import { Context } from './context';
 import { runTui } from './tui';
@@ -241,7 +251,8 @@ export async function main(argv: string[], io: Io): Promise<number> {
   rules
     .command('revoke')
     .argument('<id>', 'rule id')
-    .action((id: string) => set(rulesRevoke(context(), id)));
+    .option('--json', 'machine-readable output')
+    .action((id: string, o: { json?: boolean }) => set(rulesRevoke(context(), id, o)));
 
   const audit = program
     .command('audit')
@@ -270,7 +281,10 @@ export async function main(argv: string[], io: Io): Promise<number> {
     .command('set')
     .argument('<name>', 'env-style name, e.g. GITHUB_TOKEN')
     .option('--value-file <path>', 'read the value from a file (default: stdin)')
-    .action((name: string, o: { valueFile?: string }) => set(secretSet(context(), name, o)));
+    .option('--json', 'machine-readable output')
+    .action((name: string, o: { valueFile?: string; json?: boolean }) =>
+      set(secretSet(context(), name, o)),
+    );
   secret
     .command('list')
     .option('--json', 'machine-readable output')
@@ -278,7 +292,41 @@ export async function main(argv: string[], io: Io): Promise<number> {
   secret
     .command('rm')
     .argument('<name>')
-    .action((name: string) => set(secretRemove(context(), name)));
+    .option('--json', 'machine-readable output')
+    .action((name: string, o: { json?: boolean }) => set(secretRemove(context(), name, o)));
+
+  program
+    .command('tail')
+    .description('Follow a Run live until it ends (Ctrl-C detaches; the Run keeps going)')
+    .argument('<run>', 'run id')
+    .option('--segment', 'stop at the end of the current segment (park, usage limit)')
+    .option('--json', 'stream events as NDJSON')
+    .action((runId: string, o: { json?: boolean; segment?: boolean }) =>
+      set(tail(context(), runId, o)),
+    );
+
+  bot
+    .command('run')
+    .description('Run a Bot now and stream its events (same as `orbit run`)')
+    .argument('<bot>', 'bot name or id')
+    .option('-p, --prompt <text>', 'task for this run (default: the bot goal)')
+    .option('--fixture <name>', 'mock scenario (MockDriver only)')
+    .option('--json', 'stream events as NDJSON')
+    .action((botRef: string, o: { prompt?: string; fixture?: string; json?: boolean }) =>
+      set(runBot(context(), botRef, o)),
+    );
+  bot
+    .command('logs')
+    .description("Replay the Bot's newest Run")
+    .argument('<bot>', 'bot name or id')
+    .option('--json', 'NDJSON events')
+    .action((b: string, o: { json?: boolean }) => set(botLogs(context(), b, o)));
+
+  program
+    .command('completion')
+    .description('Shell completion script: orbit completion bash|zsh|fish')
+    .argument('<shell>', 'bash, zsh or fish')
+    .action((shell: string) => set(completion(io, program, shell)));
 
   try {
     // `orbit` alone in a terminal opens the TUI; elsewhere it prints help.
@@ -292,7 +340,12 @@ export async function main(argv: string[], io: Io): Promise<number> {
           : ExitCode.usage;
     } else if (err instanceof OrbitError) {
       const p = painter(io);
-      io.err(`${p('red', '✘')} ${defaultRedactor.redactString(err.message)}`);
+      const message = defaultRedactor.redactString(err.message);
+      // --json callers get a machine-readable error on stdout too.
+      if (argv.includes('--json')) {
+        io.out(JSON.stringify({ error: { code: err.code, message, hint: err.hint ?? null } }));
+      }
+      io.err(`${p('red', '✘')} ${message}`);
       if (err.hint) io.err(p('dim', err.hint));
       code = err.exitCode;
     } else {

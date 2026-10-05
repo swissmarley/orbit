@@ -207,3 +207,73 @@ export async function schedulesShow(
   }
   return 0;
 }
+
+const RUN_END = new Set<RunEvent['type']>(['run.completed', 'run.failed', 'run.cancelled']);
+
+/**
+ * Follow a Run live, from its first event, across parks and usage-limit
+ * pauses until it ends. Unlike `orbit run`, Ctrl-C only detaches: the Run
+ * keeps going in orbitd.
+ */
+export async function tail(
+  ctx: Context,
+  runId: string,
+  o: { json?: boolean; segment?: boolean },
+): Promise<number> {
+  const client = await ctx.client();
+  const run = await client.runs.get(runId);
+  const p = painter(ctx.io);
+  const controller = new AbortController();
+  const offInterrupt = ctx.io.onInterrupt(() => controller.abort());
+  let cwd: string | null = null;
+  const stopAt = o.segment ? SEGMENT_END : RUN_END;
+  try {
+    if (!o.json && RUN_END.has(lastType(run.status))) {
+      ctx.io.out(p('dim', `run ${runId} already ended (${run.status}); showing its log`));
+    }
+    for await (const e of client.events({ run: runId, after: 0, signal: controller.signal })) {
+      if (o.json) ctx.io.out(JSON.stringify(e));
+      else {
+        if (e.type === 'run.started') cwd = e.data.cwd;
+        if (e.type === 'run.queued')
+          ctx.io.out(`${p('bold', '▶')} ${p('dim', e.ts)} ${e.data.prompt}`);
+        const line = renderEvent(e, p, cwd);
+        if (line !== null) ctx.io.out(line);
+      }
+      if (stopAt.has(e.type)) break;
+      // Already-ended Runs: stop after replaying the log.
+      if (e.id >= run.lastEventId && RUN_END.has(lastType(run.status))) break;
+    }
+  } finally {
+    offInterrupt();
+  }
+  if (controller.signal.aborted) {
+    if (!o.json) ctx.io.out(p('dim', `  detached; run ${runId} continues in orbitd`));
+    return ExitCode.ok;
+  }
+  return exitCodeForRun(await client.runs.get(runId));
+}
+
+/** The terminal event type a final status came from (for "already ended" checks). */
+function lastType(status: RunState['status']): RunEvent['type'] {
+  return status === 'completed'
+    ? 'run.completed'
+    : status === 'failed'
+      ? 'run.failed'
+      : status === 'cancelled'
+        ? 'run.cancelled'
+        : 'run.started';
+}
+
+/** `orbit bot logs <bot>`: replay the Bot's newest Run. */
+export async function botLogs(
+  ctx: Context,
+  botRef: string,
+  o: { json?: boolean },
+): Promise<number> {
+  const client = await ctx.client();
+  const bot = await client.bots.get(botRef);
+  const [latest] = await client.runs.list({ bot: bot.id, limit: 1 });
+  if (!latest) throw new OrbitError('not_found', `Bot ${bot.spec.name} has no runs yet`);
+  return logs(ctx, latest.runId, o);
+}
