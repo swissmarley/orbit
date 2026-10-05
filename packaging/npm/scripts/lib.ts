@@ -118,7 +118,12 @@ export function scanBundle(path: string, text: string, buildRoot: string): Viola
   const absolute = new RegExp(`(^|[^\\w.~/-])${escaped}(?=$|[/\\\\'"\`\\s])`);
   text.split('\n').forEach((line, i) => {
     if (absolute.test(line)) {
-      violations.push({ rule: 'no-build-path', path, line: i + 1, text: line.trim().slice(0, 200) });
+      violations.push({
+        rule: 'no-build-path',
+        path,
+        line: i + 1,
+        text: line.trim().slice(0, 200),
+      });
     }
   });
   return violations;
