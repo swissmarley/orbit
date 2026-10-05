@@ -274,8 +274,10 @@ export function foldRun(prev: RunState | undefined, e: RunEvent): RunState {
       );
       const delegations = Array.isArray(e.data.delegations) ? e.data.delegations : [];
       s.pendingDelegations = delegations.filter((id) => !finished.has(id));
+      // Parked for delegations whose answers are all in: still `delegating`, so
+      // it resumes by itself whatever the Bot's approval settings (review M6 L9).
       s.status =
-        s.pendingApprovals.length === 0 && s.pendingDelegations.length > 0
+        s.pendingApprovals.length === 0 && delegations.length > 0
           ? 'delegating'
           : 'waiting_approval';
       s.sessionId = e.data.sessionId ?? s.sessionId;

@@ -247,7 +247,7 @@ export class OrbitToolset {
             memoryId: m.id,
             kind: m.kind,
             source: m.source,
-            title: m.title,
+
             tainted: m.taint.length > 0,
           }),
         );

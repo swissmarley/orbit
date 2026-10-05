@@ -3,6 +3,7 @@ import {
   RUN_STATUS,
   type RunEvent,
   type RunState,
+  formatCost,
   formatDuration as duration,
   formatLocalTime,
   formatTokens as tokens,
@@ -135,7 +136,7 @@ export function renderEvent(raw: RunEvent, paint: Paint, cwd: string | null): st
     case 'memory.written':
       return paint(
         'dim',
-        `  ✎ memory ${e.data.source === 'summarizer' ? 'summary' : 'note'} saved: ${oneLine(e.data.title, 70)}${e.data.tainted ? ' (untrusted)' : ''}`,
+        `  ✎ memory ${e.data.source === 'summarizer' ? 'summary' : 'note'} saved${e.data.tainted ? ' (untrusted)' : ''}`,
       );
     case 'memory.recalled':
       return e.data.via === 'context'
@@ -152,7 +153,7 @@ export function renderEvent(raw: RunEvent, paint: Paint, cwd: string | null): st
       return e.data.mode === 'triage'
         ? paint(
             'dim',
-            `  ✎ summarized by ${e.data.model ?? 'the triage model'} · ${tokens(e.data.inputTokens)} in / ${tokens(e.data.outputTokens)} out${e.data.costUsd !== null ? ` · ~$${e.data.costUsd.toFixed(4)}` : ''}`,
+            `  ✎ summarized by ${e.data.model ?? 'the triage model'} · ${tokens(e.data.inputTokens)} in / ${tokens(e.data.outputTokens)} out${e.data.costUsd !== null ? ` · ${formatCost(e.data.costUsd)}` : ''}`,
           )
         : null;
     case 'feedback.recorded':
@@ -195,7 +196,7 @@ export function renderEvent(raw: RunEvent, paint: Paint, cwd: string | null): st
         `  ↻ retrying API call${e.data.attempt ? ` (attempt ${e.data.attempt})` : ''}`,
       );
     case 'usage': {
-      const cost = e.data.costUsd !== null ? ` · ~$${e.data.costUsd.toFixed(3)}` : '';
+      const cost = e.data.costUsd !== null ? ` · ${formatCost(e.data.costUsd)}` : '';
       return paint(
         'dim',
         `  Σ ${e.data.numTurns} turn${e.data.numTurns === 1 ? '' : 's'} · ${tokens(e.data.inputTokens + e.data.cacheReadTokens + e.data.cacheCreationTokens)} in / ${tokens(e.data.outputTokens)} out${cost} · ${duration(e.data.durationMs)}`,

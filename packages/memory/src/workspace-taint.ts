@@ -1,4 +1,5 @@
-import { isAbsolute, relative, sep } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import type { OrbitDb } from '@orbit/store';
 import { mergeTaint } from './memory-store';
 
@@ -18,10 +19,30 @@ export interface TaintedPath {
  * Bots cannot write there).
  */
 export function workspaceRelative(workspace: string, path: string): string | null {
-  const abs = isAbsolute(path) ? path : `${workspace}${sep}${path}`;
-  const rel = relative(workspace, abs);
-  if (rel.startsWith('..') || isAbsolute(rel)) return null;
-  return rel.split(sep).join('/');
+  const root = canonical(workspace);
+  const rel = relative(root, canonical(isAbsolute(path) ? path : resolve(workspace, path)));
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return null;
+  const out = rel.split(sep).join('/');
+  // One file, one key: case-insensitive volumes (macOS, Windows) fold case (review M6 M2).
+  return CASE_INSENSITIVE ? out.toLowerCase() : out;
+}
+
+const CASE_INSENSITIVE = process.platform === 'darwin' || process.platform === 'win32';
+
+/**
+ * The real location of a path, symlinks resolved (like the policy's file
+ * checks): the path itself when it exists, else its nearest existing parent
+ * plus the remaining names. A symlink inside the workspace cannot give a
+ * marked file a second, clean name.
+ */
+export function canonical(path: string): string {
+  const abs = resolve(path);
+  try {
+    return realpathSync.native(abs);
+  } catch {
+    const parent = dirname(abs);
+    return parent === abs ? abs : resolve(canonical(parent), basename(abs));
+  }
 }
 
 /**

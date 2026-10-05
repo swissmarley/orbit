@@ -45,3 +45,21 @@ describe('WorkspaceTaint', () => {
     expect(t.list('bot_1')).toEqual([]);
   });
 });
+
+describe('workspace paths are canonical (review M6 M2)', () => {
+  it('a symlink inside the workspace resolves to the file it points to', async () => {
+    const { mkdtempSync, symlinkSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const ws = mkdtempSync(join(tmpdir(), 'orbit-ws-'));
+    writeFileSync(join(ws, 'notes.md'), 'x');
+    symlinkSync(join(ws, 'notes.md'), join(ws, 'alias.md'));
+    expect(workspaceRelative(ws, join(ws, 'alias.md'))).toBe('notes.md');
+    expect(workspaceRelative(ws, 'sub/../notes.md')).toBe('notes.md');
+    expect(workspaceRelative(ws, 'new/file.md')).toBe('new/file.md');
+    expect(workspaceRelative(ws, '..foo')).toBe('..foo');
+    const t = new WorkspaceTaint(openDatabase(':memory:'));
+    t.mark('bot_1', workspaceRelative(ws, 'notes.md') ?? '', ['WebFetch'], 'run_1');
+    expect(t.exposure('bot_1', workspaceRelative(ws, 'alias.md') ?? '')).toContain('WebFetch');
+  });
+});

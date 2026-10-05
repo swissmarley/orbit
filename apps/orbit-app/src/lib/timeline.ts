@@ -3,6 +3,7 @@ import {
   type RunEvent,
   type Tier,
   type Tone,
+  formatCost,
   formatDuration,
   formatLocalTime,
   formatTokens,
@@ -63,6 +64,8 @@ export type TimelineItem =
       approvalId?: string;
       /** A related Run (delegation child) to link to. */
       runId?: string;
+      /** Accessible name of that link ("Open Researcher's run"). */
+      runLabel?: string;
     };
 
 function oneLine(text: string, max = 100): string {
@@ -100,6 +103,7 @@ export function buildTimeline(events: readonly RunEvent[]): TimelineItem[] {
   const depthOf = new Map<string, number>();
   const subagents = new Map<string, Extract<TimelineItem, { kind: 'subagent' }>>();
   let cwd: string | null = null;
+  const childNames = new Map<string, string>();
   const depth = (parent: string | null | undefined) =>
     parent ? (depthOf.get(parent) ?? 0) + 1 : 0;
   const note = (
@@ -107,7 +111,7 @@ export function buildTimeline(events: readonly RunEvent[]): TimelineItem[] {
     mark: string,
     tone: Tone,
     text: string,
-    extra: { detail?: string; approvalId?: string; runId?: string } = {},
+    extra: { detail?: string; approvalId?: string; runId?: string; runLabel?: string } = {},
   ) =>
     items.push({
       kind: 'note',
@@ -120,6 +124,7 @@ export function buildTimeline(events: readonly RunEvent[]): TimelineItem[] {
       ...(extra.detail !== undefined ? { detail: scrubControls(extra.detail) } : {}),
       ...(extra.approvalId ? { approvalId: extra.approvalId } : {}),
       ...(extra.runId ? { runId: extra.runId } : {}),
+      ...(extra.runLabel ? { runLabel: scrubControls(extra.runLabel) } : {}),
     });
 
   for (const e of events) {
@@ -262,9 +267,11 @@ export function buildTimeline(events: readonly RunEvent[]): TimelineItem[] {
         }
         break;
       case 'delegation.started':
+        childNames.set(e.data.childRunId, e.data.childBotName);
         note(e, '⇢', 'info', `Delegated to ${e.data.childBotName}`, {
           detail: e.data.task,
           runId: e.data.childRunId,
+          runLabel: `Open ${e.data.childBotName}'s run`,
         });
         break;
       case 'delegation.finished':
@@ -273,7 +280,11 @@ export function buildTimeline(events: readonly RunEvent[]): TimelineItem[] {
           '⇠',
           e.data.status === 'completed' ? 'success' : 'warning',
           `Delegated Run ${e.data.status === 'completed' ? 'answered' : e.data.status} (untrusted data for this Run)`,
-          { detail: e.data.result, runId: e.data.childRunId },
+          {
+            detail: e.data.result,
+            runId: e.data.childRunId,
+            runLabel: `Open ${childNames.get(e.data.childRunId) ?? 'the delegated'}'s run`,
+          },
         );
         break;
       case 'memory.written':
@@ -281,7 +292,7 @@ export function buildTimeline(events: readonly RunEvent[]): TimelineItem[] {
           e,
           '✎',
           e.data.tainted ? 'warning' : 'neutral',
-          `${e.data.source === 'summarizer' ? 'Summary' : 'Memory note'} saved: ${e.data.title}${e.data.tainted ? ' (untrusted)' : ''}`,
+          `${e.data.source === 'summarizer' ? 'Run summary' : 'Memory note'} saved${e.data.tainted ? ' (untrusted)' : ''}`,
         );
         break;
       case 'memory.recalled':
@@ -301,7 +312,7 @@ export function buildTimeline(events: readonly RunEvent[]): TimelineItem[] {
             e,
             '✎',
             'neutral',
-            `Summarized by ${e.data.model ?? 'the triage model'} · ${formatTokens(e.data.inputTokens)} in / ${formatTokens(e.data.outputTokens)} out${e.data.costUsd !== null ? ` · ~$${e.data.costUsd.toFixed(4)}` : ''}`,
+            `Summarized by ${e.data.model ?? 'the triage model'} · ${formatTokens(e.data.inputTokens)} in / ${formatTokens(e.data.outputTokens)} out${e.data.costUsd !== null ? ` · ${formatCost(e.data.costUsd)}` : ''}`,
           );
         break;
       case 'feedback.recorded':
@@ -343,7 +354,7 @@ export function buildTimeline(events: readonly RunEvent[]): TimelineItem[] {
           e,
           'Σ',
           'neutral',
-          `${e.data.numTurns} turn${e.data.numTurns === 1 ? '' : 's'} · ${formatTokens(e.data.inputTokens + e.data.cacheReadTokens + e.data.cacheCreationTokens)} in / ${formatTokens(e.data.outputTokens)} out${e.data.costUsd !== null ? ` · ~$${e.data.costUsd.toFixed(3)}` : ''} · ${formatDuration(e.data.durationMs)}`,
+          `${e.data.numTurns} turn${e.data.numTurns === 1 ? '' : 's'} · ${formatTokens(e.data.inputTokens + e.data.cacheReadTokens + e.data.cacheCreationTokens)} in / ${formatTokens(e.data.outputTokens)} out${e.data.costUsd !== null ? ` · ${formatCost(e.data.costUsd)}` : ''} · ${formatDuration(e.data.durationMs)}`,
         );
         break;
       case 'diagnostic':

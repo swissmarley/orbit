@@ -168,7 +168,12 @@ function Row({ item }: { item: TimelineItem }) {
           {item.runId ? (
             <>
               {' '}
-              <Link to="/runs/$runId" params={{ runId: item.runId }} className="underline">
+              <Link
+                to="/runs/$runId"
+                params={{ runId: item.runId }}
+                className="underline"
+                {...(item.runLabel ? { 'aria-label': item.runLabel } : {})}
+              >
                 Open run
               </Link>
             </>

@@ -1,7 +1,7 @@
 /** @jsxRuntime automatic @jsxImportSource react */
 import { RUN_STATUS, scrubControls } from '@orbit/core/browser';
 import { useNavigate } from '@tanstack/react-router';
-import { Command } from 'cmdk';
+import { Command, useCommandState } from 'cmdk';
 import {
   Bot as BotIcon,
   Brain,
@@ -40,6 +40,27 @@ const item =
   'flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-fg aria-selected:bg-accent-subtle aria-selected:text-fg [&_svg]:size-4 [&_svg]:text-fg-muted';
 const group =
   '[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-fg-muted';
+
+/** Settings tabs, listed once the user types (so they never push "Needs you" down). */
+function SettingsGroup({ onSelect }: { onSelect: (tab: string) => void }) {
+  const searching = useCommandState((s) => s.search.trim().length > 0);
+  if (!searching) return null;
+  return (
+    <Command.Group heading="Settings" className={group}>
+      {SETTINGS_ENTRIES.map((s) => (
+        <Command.Item
+          key={s.tab}
+          value={`Settings ${s.label} ${s.keywords}`}
+          keywords={['settings', ...s.keywords.split(' ')]}
+          className={item}
+          onSelect={() => onSelect(s.tab)}
+        >
+          <Settings aria-hidden /> Settings: {s.label}
+        </Command.Item>
+      ))}
+    </Command.Group>
+  );
+}
 
 /** Cmd/Ctrl+K: go anywhere, find any Bot, Run or approval, act on it. */
 export function CommandPalette() {
@@ -105,19 +126,9 @@ export function CommandPalette() {
             <Settings aria-hidden /> Settings
           </Command.Item>
         </Command.Group>
-        <Command.Group heading="Settings" className={group}>
-          {SETTINGS_ENTRIES.map((s) => (
-            <Command.Item
-              key={s.tab}
-              value={`Settings ${s.label} ${s.keywords}`}
-              keywords={['settings', ...s.keywords.split(' ')]}
-              className={item}
-              onSelect={run(() => navigate({ to: '/settings', search: { tab: s.tab } }))}
-            >
-              <Settings aria-hidden /> Settings: {s.label}
-            </Command.Item>
-          ))}
-        </Command.Group>
+        <SettingsGroup
+          onSelect={(tab) => run(() => navigate({ to: '/settings', search: { tab } }))()}
+        />
         {approvals.data && approvals.data.length > 0 ? (
           <Command.Group heading="Needs you" className={group}>
             {approvals.data.map((a) => (

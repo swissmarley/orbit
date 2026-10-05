@@ -169,15 +169,52 @@ export function spentSoFar(state: RunState): {
   };
 }
 
-/** What a delegating Run may still spend: the ceiling of its child. */
-export function remainingBudget(bot: Bot, state: RunState): BudgetCap {
+/**
+ * What a Run may still spend, less the ceilings already handed to children
+ * that have not finished (`reserved`): a child's spend is only known when it
+ * ends, so its whole ceiling stays reserved until then.
+ */
+export function remainingBudget(
+  bot: Bot,
+  state: RunState,
+  reserved: readonly BudgetCap[] = [],
+): BudgetCap {
   const b = effectiveBudgets(bot, state.budgetCap);
   const spent = spentSoFar(state);
+  const live =
+    state.status === 'running' && state.liveUsage
+      ? state.liveUsage.inputTokens + state.liveUsage.outputTokens
+      : 0;
+  const sum = (pick: (c: BudgetCap) => number | null) =>
+    reserved.reduce((n, c) => n + (pick(c) ?? 0), 0);
   return {
-    toolCalls: Math.max(0, b.maxToolCallsPerRun - spent.toolCalls),
-    tokens: b.maxTokensPerRun === null ? null : Math.max(0, b.maxTokensPerRun - spent.tokens),
-    costUsd: b.maxCostUsdPerRun === null ? null : Math.max(0, b.maxCostUsdPerRun - spent.costUsd),
-    wallClockMinutes: b.maxWallClockMinutes,
+    toolCalls: Math.max(0, b.maxToolCallsPerRun - spent.toolCalls - sum((c) => c.toolCalls)),
+    tokens:
+      b.maxTokensPerRun === null
+        ? null
+        : Math.max(0, b.maxTokensPerRun - spent.tokens - live - sum((c) => c.tokens)),
+    costUsd:
+      b.maxCostUsdPerRun === null
+        ? null
+        : Math.max(0, b.maxCostUsdPerRun - spent.costUsd - sum((c) => c.costUsd)),
+    wallClockMinutes: Math.max(0, b.maxWallClockMinutes - state.totals.activeMs / 60_000),
+  };
+}
+
+/**
+ * The ceiling of a new child: half of what the parent has left (after the
+ * ceilings of its unfinished children), so the parent and its other children
+ * keep the rest. Parallel delegations can therefore never add up to more than
+ * the parent's own budget.
+ */
+export function childBudget(left: BudgetCap): BudgetCap {
+  const half = (n: number | null, whole = false) =>
+    n === null ? null : whole ? Math.floor(n / 2) : n / 2;
+  return {
+    toolCalls: Math.floor(left.toolCalls / 2),
+    tokens: half(left.tokens, true),
+    costUsd: half(left.costUsd),
+    wallClockMinutes: left.wallClockMinutes,
   };
 }
 
@@ -320,6 +357,28 @@ export class Orchestrator {
     }
     const bot = this.deps.bots.get(queued.botId);
     this.assertMayStart(bot);
+    // A delegated Run whose parent has ended has nobody to answer to (review M6 M1).
+    const parent = queued.parentRunId ? this.deps.store.getRun(queued.parentRunId) : undefined;
+    if (
+      queued.parentRunId &&
+      (!parent ||
+        parent.status === 'completed' ||
+        parent.status === 'failed' ||
+        parent.status === 'cancelled')
+    ) {
+      this.deps.store.append(
+        runId,
+        bot.id,
+        [
+          event('run.cancelled', {
+            reason: 'The Run that delegated this one has ended',
+            sessionId: null,
+          }),
+        ],
+        { expectSeq: queued.lastSeq },
+      );
+      return this.state(runId);
+    }
     const off = this.observe(() => runId, options.onEvent);
     try {
       const daily = this.checkDailyBudgets(bot);
@@ -877,7 +936,15 @@ export class Orchestrator {
     });
 
     // Orbit's own tools (memory, delegation) for this segment: one session, one token.
-    const orbit = this.openOrbitSession(bot, runId, prior.depth, driver.kind, taint, addTaint);
+    const orbit = this.openOrbitSession(
+      bot,
+      runId,
+      prior.depth,
+      prior.memoryWrites,
+      driver.kind,
+      taint,
+      addTaint,
+    );
     const session = orbit?.session ?? null;
     let delegationsSeen = 0;
 
@@ -1125,21 +1192,23 @@ export class Orchestrator {
       if (session) this.deps.orbitSessions?.close(session);
       throw err;
     }
-    const context = this.memoryContext(bot, seg.prompt, orbit !== null);
-    if (context.recalled.length > 0 && !seg.resumeSessionId) {
-      append([
-        event('memory.recalled', { memoryIds: context.recalled, via: 'context', tainted: false }),
-      ]);
-    }
 
     let terminal: RunEventBody | null = null;
     try {
+      // Memory goes with the first prompt (stdin), never on a command line
+      // (review M6 M3); a resumed session already has it.
+      const context = this.memoryContext(bot, seg.prompt, orbit !== null, !seg.resumeSessionId);
+      if (context.recalled.length > 0) {
+        append([
+          event('memory.recalled', { memoryIds: context.recalled, via: 'context', tainted: false }),
+        ]);
+      }
       for await (const body of driver.run({
         runId,
-        prompt: seg.prompt,
+        prompt: context.memory ? `${context.memory}\n\n## Your task\n\n${seg.prompt}` : seg.prompt,
         cwd: ws.path,
         model,
-        appendSystemPrompt: composeBotSystemPrompt(bot) + context.text,
+        appendSystemPrompt: composeBotSystemPrompt(bot) + context.tools,
         tools: bot.spec.tools ?? null,
         maxTurns: bot.spec.maxTurns ?? null,
         resumeSessionId: seg.resumeSessionId,
@@ -1265,6 +1334,7 @@ export class Orchestrator {
     bot: Bot,
     runId: string,
     depth: number,
+    memoryWrites: number,
     driver: DriverKind,
     taint: Set<string>,
     addTaint: (sources: readonly string[]) => void,
@@ -1280,6 +1350,7 @@ export class Orchestrator {
       runId,
       bot,
       depth,
+      memoryWrites,
       taint: () => [...taint],
       addTaint,
     });
@@ -1303,15 +1374,21 @@ export class Orchestrator {
     bot: Bot,
     prompt: string,
     tools: boolean,
-  ): { text: string; recalled: string[] } {
+    withMemory: boolean,
+  ): { tools: string; memory: string; recalled: string[] } {
     const { memory } = this.deps;
     const delegates = tools ? bot.spec.delegation.allowedBots : [];
     const toolText = toolsSection({
       memory: tools && bot.spec.memory.tools,
       delegates: this.deps.orbitTools?.delegationAvailable ? delegates : [],
     });
-    if (!memory || !bot.spec.memory.inject || bot.spec.memory.maxContextChars === 0) {
-      return { text: toolText, recalled: [] };
+    if (
+      !withMemory ||
+      !memory ||
+      !bot.spec.memory.inject ||
+      bot.spec.memory.maxContextChars === 0
+    ) {
+      return { tools: toolText, memory: '', recalled: [] };
     }
     const trusted = memory.list({ botId: bot.id, trustedOnly: true, limit: 200 });
     const chosen = selectContext(
@@ -1333,7 +1410,7 @@ export class Orchestrator {
       { memories: chosen, untrustedAvailable: memory.countUntrusted(bot.id) },
       tools && bot.spec.memory.tools,
     );
-    return { text: toolText + section, recalled: chosen.map((m) => m.id) };
+    return { tools: toolText, memory: section.trim(), recalled: chosen.map((m) => m.id) };
   }
 
   /**
@@ -1374,9 +1451,17 @@ export class Orchestrator {
       // A shell's own output already taints its Run; it marks the workspace
       // when it can bring outside content in (no containment) or when
       // something untrusted was already in the Run.
-      if (taintBefore > 0 || !ws.shellContained)
+      if (taintBefore > 0 || !ws.shellContained) {
         wt.mark(bot.id, WHOLE_WORKSPACE, [...taint], runId);
-      else expose(wt.exposure(bot.id, ''));
+        return;
+      }
+      // A contained shell can read (and copy) any marked file: it is exposed
+      // to all of them, and what it writes is marked too (review M6 L7).
+      const exposure = wt.exposure(bot.id, '', { directory: true });
+      if (exposure.length > 0) {
+        expose(exposure);
+        wt.mark(bot.id, WHOLE_WORKSPACE, [...taint], runId);
+      }
     }
   }
 

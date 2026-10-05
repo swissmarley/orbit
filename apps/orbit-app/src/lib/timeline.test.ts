@@ -138,7 +138,7 @@ describe('M6 events in the timeline', () => {
         'Delegated to Researcher',
         'Paused until the delegated Run answers; it resumes by itself',
         'Delegated Run answered (untrusted data for this Run)',
-        'Memory note saved: Launch owner (untrusted)',
+        'Memory note saved (untrusted)',
         'Summarized by haiku · 1.8k in / 90 out · ~$0.0021',
       ]),
     );

@@ -129,11 +129,18 @@ describe('MemoryStore', () => {
     expect(store.list({ kind: 'summary' }).map((m) => m.id)).toEqual([t.id]);
   });
 
-  it('stays bounded: evicts the oldest memory nobody chose to keep', () => {
+  it('stays bounded: evicts the oldest Bot note or summary, never your feedback', () => {
     const { store } = setup();
     const owner = store.create({ ...base, source: 'owner', kind: 'fact', title: 'mine', body: '' });
+    const feedback = store.create({
+      ...base,
+      source: 'feedback',
+      kind: 'feedback',
+      title: 'denied',
+      body: '',
+    });
     const first = store.create({ ...base, title: 'first', body: '' });
-    for (let i = 0; i < MEMORY_LIMITS.perBot - 2; i++) {
+    for (let i = 0; i < MEMORY_LIMITS.perBot - 3; i++) {
       store.create({ ...base, title: `n${i}`, body: '' });
     }
     expect(store.count('bot_1')).toBe(MEMORY_LIMITS.perBot);
@@ -141,6 +148,14 @@ describe('MemoryStore', () => {
     expect(store.count('bot_1')).toBe(MEMORY_LIMITS.perBot);
     expect(store.find(first.id)).toBeUndefined();
     expect(store.find(owner.id)).toBeDefined();
+    expect(store.find(feedback.id)).toBeDefined();
+  });
+
+  it('strips control characters (a NUL would break every engine spawn)', () => {
+    const { store } = setup();
+    const m = store.create({ ...base, title: 'a\u0000b', body: 'x\u0000y\u001b[31m\tz\nw' });
+    expect(m.title).toBe('ab');
+    expect(m.body).toBe('xy[31m\tz\nw');
   });
 
   it('merges taint sources without duplicates and with a bound', () => {

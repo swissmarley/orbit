@@ -168,7 +168,6 @@ export const teamEvents: RunEvent[] = [
     memoryId: 'mem_c',
     kind: 'note',
     source: 'bot',
-    title: 'Launch owner',
     tainted: true,
   }),
   ev('run.completed', {

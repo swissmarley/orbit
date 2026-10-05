@@ -205,11 +205,11 @@ export const RunEventBody = z.discriminatedUnion('type', [
   }),
   ev('usage', UsageTotals.shape),
   // ── memory, feedback, delegation (M6) ──────────────────────────────────
+  /** No text: the event log is append-only, and a deleted memory must leave nothing behind. */
   ev('memory.written', {
     memoryId: z.string(),
     kind: MemoryKind,
     source: MemorySource,
-    title: z.string(),
     tainted: z.boolean(),
   }),
   /** Memories that entered the Run's context (offered at start, or found/read by a tool). */

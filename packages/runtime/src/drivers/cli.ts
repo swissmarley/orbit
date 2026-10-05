@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -254,12 +254,28 @@ export class CliDriver implements AgentDriver {
       mcp?.path ?? null,
     );
     // Own process group, so stopping a Run also stops tool grandchildren.
-    const child = spawn(this.opts.claudePath, args, {
-      cwd: req.cwd,
-      env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      detached: process.platform !== 'win32',
-    });
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = spawn(this.opts.claudePath, args, {
+        cwd: req.cwd,
+        env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        detached: process.platform !== 'win32',
+      });
+    } catch (err) {
+      // spawn throws synchronously on bad arguments (e.g. a NUL byte): clean up (review M6 M3).
+      registration.dispose();
+      mcp?.dispose();
+      finish(
+        event('run.failed', {
+          code: 'engine_spawn_failed',
+          message: `Could not start claude: ${err instanceof Error ? err.message : String(err)}`,
+          retryable: false,
+          sessionId: req.resumeSessionId ?? req.sessionId,
+        }),
+      );
+      return out;
+    }
     const killTree = (signal: NodeJS.Signals) => {
       try {
         if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, signal);

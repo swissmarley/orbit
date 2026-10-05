@@ -12,6 +12,8 @@ export interface OrbitSessionOptions {
   taint: () => readonly string[];
   /** Taint the Run (appends run.tainted for new sources). */
   addTaint: (sources: readonly string[]) => void;
+  /** Memories the Run already wrote in earlier segments (the per-Run limit, review M6 L4). */
+  memoryWrites?: number;
 }
 
 /**
@@ -37,6 +39,7 @@ export class OrbitRunSession {
     this.runId = opts.runId;
     this.bot = opts.bot;
     this.depth = opts.depth;
+    this.memoryWrites = opts.memoryWrites ?? 0;
   }
 
   get botId(): string {

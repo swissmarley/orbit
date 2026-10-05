@@ -68,6 +68,7 @@ import {
   createSandboxManager,
   driverTriage,
   mockTriage,
+  childBudget,
   remainingBudget,
   resolveAuth,
   TriagePath,
@@ -329,6 +330,8 @@ export class OrbitService {
           sessionId: run.sessionId,
         }),
       ]);
+      // Its delegations have nobody to answer to any more (review M6 M1).
+      this.orchestrator.stopDescendants(run.runId, 'system');
     }
     for (const run of this.store.listRuns({ status: ['queued'], limit: 1000 }).reverse()) {
       this.queue.push({
@@ -745,8 +748,12 @@ export class OrbitService {
         `This Run already delegated ${parent.children.length} tasks (limit ${parentBot.spec.delegation.maxChildrenPerRun})`,
       );
     }
-    const cap = remainingBudget(parentBot, parent);
-    if (cap.toolCalls <= 0 || cap.tokens === 0 || cap.costUsd === 0) {
+    // Unfinished children keep their whole ceiling reserved (review M6 H1).
+    const reserved = parent.children
+      .filter((c) => c.status === 'running')
+      .flatMap((c) => this.store.getRun(c.runId)?.budgetCap ?? []);
+    const cap = childBudget(remainingBudget(parentBot, parent, reserved));
+    if (cap.toolCalls < 1 || cap.tokens === 0 || cap.costUsd === 0 || cap.wallClockMinutes <= 0) {
       throw new OrbitError('blocked', 'Not enough budget left in this Run to delegate');
     }
     // The child is enqueued with this Run's taint and what is left of its budget.
@@ -806,6 +813,14 @@ export class OrbitService {
         ? []
         : [event('run.tainted', { source, toolUseId: null })]),
     ]);
+    if (!parent.taintSources.includes(source)) {
+      this.audit.append({
+        actor: `bot:${parent.botId}`,
+        action: 'run.tainted',
+        subject: parent.runId,
+        data: { sources: [source], childRunId: child.runId },
+      });
+    }
     this.maybeAutoResume(parent.runId);
   }
 
@@ -969,6 +984,9 @@ export class OrbitService {
         runId: approval.runId,
         approvalId: approval.id,
         signal: text.signal,
+        // Edited values may still carry text the model wrote in a tainted Run (review M6 L2).
+        taint:
+          text.signal === 'edited' ? (this.store.getRun(approval.runId)?.taintSources ?? []) : [],
         createdBy: OWNER,
       });
       this.store.append(approval.runId, approval.botId, [
@@ -1043,7 +1061,7 @@ export class OrbitService {
           memoryId: m.id,
           kind: m.kind,
           source: m.source,
-          title: m.title,
+
           tainted: m.taint.length > 0,
         }),
         event('memory.summarized', {
@@ -1073,7 +1091,7 @@ export class OrbitService {
           memoryId: m.id,
           kind: m.kind,
           source: m.source,
-          title: m.title,
+
           tainted: m.taint.length > 0,
         }),
         event('memory.summarized', {

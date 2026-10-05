@@ -300,7 +300,6 @@ describe('resume scheduling and older projections', () => {
             memoryId: 'mem_2',
             kind: 'summary',
             source: 'summarizer',
-            title: 't',
             tainted: false,
           },
         }),

@@ -111,6 +111,16 @@ export function ftsQuery(text: string, match: 'all' | 'any' = 'all'): string | n
   return [...new Set(words)].map((w) => `"${w}"*`).join(match === 'all' ? ' AND ' : ' OR ');
 }
 
+/**
+ * C0 controls but tab and newline, and DEL: memory text reaches prompts and
+ * terminals, and a NUL would make every later spawn of the engine fail
+ * (review M6 M3).
+ */
+export function stripControls(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '');
+}
+
 function clip(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
 }
@@ -185,10 +195,14 @@ export class MemoryStore {
   }
 
   private clean(title: string, body: string): { title: string; body: string } {
-    const t = this.redactor.redactString(title.replace(/[\r\n]+/g, ' ').trim());
+    const t = this.redactor.redactString(
+      stripControls(title)
+        .replace(/[\r\n]+/g, ' ')
+        .trim(),
+    );
     return {
       title: clip(t || 'Untitled', MEMORY_LIMITS.titleChars),
-      body: clip(this.redactor.redactString(body), MEMORY_LIMITS.bodyChars),
+      body: clip(this.redactor.redactString(stripControls(body)), MEMORY_LIMITS.bodyChars),
     };
   }
 
@@ -233,20 +247,21 @@ export class MemoryStore {
     };
     const evicted: Memory[] = [];
     this.db.sqlite.transaction(() => {
-      // Keep the store bounded: make room by dropping the oldest memory
-      // nobody chose to keep (never the owner's own, never a pinned one).
+      // Keep the store bounded: make room by dropping the oldest Bot note or
+      // summary, untrusted ones first. Never the owner's facts or feedback,
+      // never a pinned memory (review M6 M4).
       let over = this.count(m.botId) - MEMORY_LIMITS.perBot + 1;
       while (over > 0) {
         const old = this.db.sqlite
           .prepare(
-            `SELECT * FROM memories WHERE bot_id = ? AND source != 'owner' AND pinned = 0
-             ORDER BY seq ASC LIMIT 1`,
+            `SELECT * FROM memories WHERE bot_id = ? AND source IN ('bot', 'summarizer') AND pinned = 0
+             ORDER BY (taint = '[]') ASC, seq ASC LIMIT 1`,
           )
           .get(m.botId) as Row | undefined;
         if (!old) {
           throw new OrbitError(
             'blocked',
-            `This Bot already keeps ${MEMORY_LIMITS.perBot} memories you wrote or pinned`,
+            `This Bot keeps ${MEMORY_LIMITS.perBot} memories and none of them can be dropped automatically (yours, your feedback, pinned)`,
             { hint: 'Delete some in the memory browser.' },
           );
         }

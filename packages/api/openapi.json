@@ -9518,9 +9518,6 @@
                                   "feedback"
                                 ]
                               },
-                              "title": {
-                                "type": "string"
-                              },
                               "tainted": {
                                 "type": "boolean"
                               }
@@ -9529,7 +9526,6 @@
                               "memoryId",
                               "kind",
                               "source",
-                              "title",
                               "tainted"
                             ],
                             "additionalProperties": false

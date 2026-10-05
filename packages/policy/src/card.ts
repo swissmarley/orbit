@@ -118,9 +118,7 @@ export function buildApprovalCard(args: {
     runId: args.runId,
     untrusted: [...args.untrusted],
     risk:
-      RISK[args.tier] +
-      (args.untrusted.length ? ' Untrusted content influenced this Run.' : '') +
-      (args.delegatedBy ? ` Another Bot delegated this Run (${args.delegatedBy}).` : ''),
+      RISK[args.tier] + (args.untrusted.length ? ' Untrusted content influenced this Run.' : ''),
     delegatedBy: args.delegatedBy ?? null,
   };
 }

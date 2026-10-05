@@ -339,7 +339,6 @@ describe('peer-Bot delegation', () => {
     const pending = (await h.json<Approval[]>('GET', '/v1/approvals')).body;
     expect(pending).toHaveLength(1);
     expect(pending[0]?.card.delegatedBy).toBe('Lead');
-    expect(pending[0]?.card.risk).toContain('Another Bot delegated this Run');
 
     // Kill switches carry across delegation: stopping the parent stops the child.
     await h.json('POST', `/v1/runs/${parent.runId}/stop`);
@@ -566,5 +565,169 @@ describe('post-run summaries and the triage path', () => {
     });
     expect(r.status).toBe(409);
     expect(r.body.error.message).toContain('kill switch');
+  });
+});
+
+describe('safety review fixes (M6 gate)', () => {
+  it('H1: parallel delegations never add up to more than the parent budget', async () => {
+    start();
+    await createBot({ name: 'Researcher', mock: { fixture: 'pong' } });
+    const lead = await createBot({
+      name: 'Lead',
+      budgets: { maxToolCallsPerRun: 10, maxCostUsdPerRun: 1 },
+      delegation: { allowedBots: ['Researcher'], maxChildrenPerRun: 5 },
+    });
+    const parent = h.service.orchestrator.enqueue(lead.id, {});
+    const session = h.service.orbitSessions.open({
+      runId: parent.runId,
+      bot: h.service.bots.get(lead.id),
+      depth: 0,
+      taint: () => [],
+      addTaint: () => undefined,
+    });
+    h.service.queue.freeze();
+    const caps: number[] = [];
+    let costs = 0;
+    for (let i = 0; i < 5; i++) {
+      const args = { bot: 'Researcher', task: `Task ${i}` };
+      session.authorize('mcp__orbit__delegate_to_bot', args);
+      const r = await h.service.orbitTools.call(session, 'delegate_to_bot', args);
+      if (r.isError) break;
+      const childId = session.delegations.at(-1) ?? '';
+      const cap = h.service.store.getRun(childId)?.budgetCap;
+      caps.push(cap?.toolCalls ?? 0);
+      costs += cap?.costUsd ?? 0;
+    }
+    expect(caps).toEqual([5, 2, 1, 1]);
+    expect(caps.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(10);
+    expect(costs).toBeLessThanOrEqual(1);
+  });
+
+  it('M1: a delegated Run whose parent ended does not start', async () => {
+    start();
+    await createBot({ name: 'Researcher', mock: { fixture: 'pong' } });
+    const lead = await createBot({ name: 'Lead', delegation: { allowedBots: ['Researcher'] } });
+    const parent = h.service.orchestrator.enqueue(lead.id, {});
+    const session = h.service.orbitSessions.open({
+      runId: parent.runId,
+      bot: h.service.bots.get(lead.id),
+      depth: 0,
+      taint: () => [],
+      addTaint: () => undefined,
+    });
+    h.service.queue.freeze();
+    const args = { bot: 'Researcher', task: 'Find it' };
+    session.authorize('mcp__orbit__delegate_to_bot', args);
+    await h.service.orbitTools.call(session, 'delegate_to_bot', args);
+    const childId = session.delegations[0] ?? '';
+    h.service.queue.remove(parent.runId);
+    h.service.orchestrator.cancelQueued(parent.runId, 'owner');
+    const child = await h.service.orchestrator.execute(childId);
+    expect(child.status).toBe('cancelled');
+    const ev = await events(childId);
+    expect(ev.some((e) => e.type === 'run.started')).toBe(false);
+  });
+
+  it('M3: memory reaches the engine with the first prompt, not on the command line', async () => {
+    start();
+    const bot = await createBot({ name: 'Notes', mock: { fixture: 'pong' } });
+    await h.json('POST', '/v1/bots/notes/memory', { title: 'Style', body: 'Short answers.' });
+    await h.service.ensureEngine();
+    const seen: { prompt: string; system: string | null }[] = [];
+    const { MockDriver } = await import('@orbit/runtime');
+    const mock = new MockDriver();
+    h.service.orchestrator.setDriver({
+      kind: 'mock',
+      authMethod: 'mock',
+      run: (req) => {
+        seen.push({ prompt: req.prompt, system: req.appendSystemPrompt });
+        return mock.run(req);
+      },
+    });
+    await runBot(bot.id, { prompt: 'Say hi' });
+    expect(seen[0]?.prompt).toContain('Short answers.');
+    expect(seen[0]?.prompt).toMatch(/## Your task\s+Say hi$/);
+    expect(seen[0]?.system).not.toContain('Short answers.');
+  });
+});
+
+describe('safety review test gaps (M6 gate)', () => {
+  it('/mcp/orbit keeps the Host guard and the body limit', async () => {
+    start();
+    const { createApp } = await import('./app');
+    const app = createApp({
+      service: h.service,
+      token: 'x'.repeat(40),
+      allowedHosts: ['127.0.0.1:7420'],
+    });
+    const res = await app.request('http://evil.example/mcp/orbit', {
+      method: 'POST',
+      headers: { host: 'evil.example', 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(res.status).toBe(403);
+    const big = await app.request('http://127.0.0.1:7420/mcp/orbit', {
+      method: 'POST',
+      headers: { host: '127.0.0.1:7420', 'content-type': 'application/json' },
+      body: JSON.stringify({ pad: 'x'.repeat(2 * 1024 * 1024) }),
+    });
+    expect(big.status).toBe(413);
+  });
+
+  it('the global kill switch stops delegated Runs too', async () => {
+    start();
+    await createBot({
+      name: 'Researcher',
+      mock: { fixture: 'send-email' },
+      approvals: { parkWindowSeconds: 0 },
+    });
+    await createBot({
+      name: 'Lead',
+      mock: { fixture: 'delegate-to-peer' },
+      delegation: { allowedBots: ['Researcher'] },
+    });
+    const parent = await runBot('lead');
+    const childId = parent.children[0]?.runId ?? '';
+    expect((await h.json<RunState>('GET', `/v1/runs/${childId}`)).body.status).toBe(
+      'waiting_approval',
+    );
+    await h.json('POST', '/v1/kill', { on: true });
+    await settle();
+    expect((await h.json<RunState>('GET', `/v1/runs/${childId}`)).body.status).toBe('cancelled');
+    expect((await h.json<RunState>('GET', `/v1/runs/${parent.runId}`)).body.status).toBe(
+      'cancelled',
+    );
+  });
+
+  it('refuses delegation cycles and chains deeper than delegation.maxDepth', async () => {
+    start({ config: { delegation: { maxDepth: 1 } } });
+    await createBot({ name: 'Researcher', delegation: { allowedBots: ['Lead', 'Writer'] } });
+    await createBot({ name: 'Writer' });
+    const lead = await createBot({ name: 'Lead', delegation: { allowedBots: ['Researcher'] } });
+    const parent = h.service.orchestrator.enqueue(lead.id, {});
+    h.service.queue.freeze();
+    const open = (runId: string, botId: string) =>
+      h.service.orbitSessions.open({
+        runId,
+        bot: h.service.bots.get(botId),
+        depth: h.service.store.getRun(runId)?.depth ?? 0,
+        taint: () => [],
+        addTaint: () => undefined,
+      });
+    const call = async (s: ReturnType<typeof open>, bot: string) => {
+      const args = { bot, task: 't' };
+      s.authorize('mcp__orbit__delegate_to_bot', args);
+      return h.service.orbitTools.call(s, 'delegate_to_bot', args);
+    };
+    const top = open(parent.runId, lead.id);
+    expect((await call(top, 'Researcher')).isError).toBe(false);
+    const childId = top.delegations[0] ?? '';
+    const child = open(childId, h.service.store.getRun(childId)?.botId ?? '');
+    const cycle = await call(child, 'Lead');
+    expect(cycle.isError).toBe(true);
+    expect(cycle.text).toContain('already working on this chain');
+    const deep = await call(child, 'Writer');
+    expect(deep.isError).toBe(true);
+    expect(deep.text).toContain('depth limit');
   });
 });

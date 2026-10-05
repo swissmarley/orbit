@@ -1,9 +1,11 @@
 /** @jsxRuntime automatic @jsxImportSource react */
 import {
+  MEMORY_KIND_WORD,
   RUN_STATUS,
   TERMINAL_RUN_STATUSES,
   type RunEvent,
   type RunState,
+  formatCost,
   formatDuration,
   formatFull,
   formatLocalTime,
@@ -127,9 +129,14 @@ function Controls({ run }: { run: RunState }) {
 
 const n = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
 
+/** The smaller of a Bot budget and a ceiling inherited from a delegating parent. */
+const capped = (own: number | null, cap: number | null): number | null =>
+  own === null ? cap : cap === null ? own : Math.min(own, cap);
+
 function Meters({ run, held }: { run: RunState; held: number }) {
   const bot = useBot(run.botId);
   const b = bot.data?.spec.budgets;
+  const cap = run.budgetCap;
   const tokens =
     run.totals.tokens +
     (run.liveUsage && run.status === 'running'
@@ -144,30 +151,35 @@ function Meters({ run, held }: { run: RunState; held: number }) {
         <Meter
           label={run.delegated.tokens > 0 ? 'Tokens (incl. delegated)' : 'Tokens'}
           value={tokens + run.delegated.tokens}
-          max={b?.maxTokensPerRun ?? null}
+          max={capped(b?.maxTokensPerRun ?? null, cap?.tokens ?? null)}
           format={formatTokens}
         />
         <Meter
           label={run.delegated.toolCalls > 0 ? 'Tool calls (incl. delegated)' : 'Tool calls'}
           value={run.counts.toolCalls + run.delegated.toolCalls}
-          max={
-            run.budgetCap
-              ? Math.min(run.budgetCap.toolCalls, b?.maxToolCallsPerRun ?? Infinity)
-              : (b?.maxToolCallsPerRun ?? null)
-          }
+          max={capped(b?.maxToolCallsPerRun ?? null, cap?.toolCalls ?? null)}
         />
         <Meter
-          label="Cost (engine estimate)"
-          value={run.totals.costUsd}
-          max={b?.maxCostUsdPerRun ?? null}
-          format={(n) => `$${n.toFixed(3)}`}
+          label={
+            run.delegated.costUsd > 0
+              ? 'Cost (engine estimate, incl. delegated)'
+              : 'Cost (engine estimate)'
+          }
+          value={run.totals.costUsd + run.delegated.costUsd}
+          max={capped(b?.maxCostUsdPerRun ?? null, cap?.costUsd ?? null)}
+          format={(n) => formatCost(n, false)}
         />
         <Meter
           label="Active time"
           value={run.totals.activeMs}
-          max={b ? b.maxWallClockMinutes * 60_000 : null}
+          max={
+            b ? (capped(b.maxWallClockMinutes, cap?.wallClockMinutes ?? null) ?? 0) * 60_000 : null
+          }
           format={formatDuration}
         />
+        {cap ? (
+          <p className="text-xs text-fg-muted">Limits include what the delegating Run had left.</p>
+        ) : null}
         <p className="text-xs text-fg-muted">
           {[
             n(run.totals.turns, 'turn'),
@@ -271,7 +283,6 @@ function Feedback({ run }: { run: RunState }) {
   const [comment, setComment] = useState('');
   const [busy, setBusy] = useState(false);
   if (!TERMINAL_RUN_STATUSES.includes(run.status)) return null;
-  const choose = rating ?? run.rating;
   return (
     <Card>
       <CardHeader>
@@ -279,18 +290,21 @@ function Feedback({ run }: { run: RunState }) {
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
         <div className="flex gap-2" role="group" aria-label="Rate this run">
+          {/* Pressed shows only what is saved; a choice is pending until you save it. */}
           <Button
             size="sm"
-            aria-pressed={choose === 'up'}
-            variant={choose === 'up' ? 'primary' : 'secondary'}
+            aria-pressed={run.rating === 'up'}
+            variant={run.rating === 'up' ? 'primary' : 'secondary'}
+            className={rating === 'up' ? 'ring-2 ring-ring' : undefined}
             onClick={() => setRating('up')}
           >
             <ThumbsUp aria-hidden /> Good
           </Button>
           <Button
             size="sm"
-            aria-pressed={choose === 'down'}
-            variant={choose === 'down' ? 'primary' : 'secondary'}
+            aria-pressed={run.rating === 'down'}
+            variant={run.rating === 'down' ? 'primary' : 'secondary'}
+            className={rating === 'down' ? 'ring-2 ring-ring' : undefined}
             onClick={() => setRating('down')}
           >
             <ThumbsDown aria-hidden /> Not good
@@ -312,6 +326,10 @@ function Feedback({ run }: { run: RunState }) {
                 .finally(() => setBusy(false));
             }}
           >
+            <p className="text-xs text-fg-muted" role="status">
+              Selected: {rating === 'up' ? 'good' : 'not good'} — not saved yet. Add a comment if
+              you like, then save.
+            </p>
             <Textarea
               aria-label="What was good or bad (optional)"
               placeholder="What was good or bad? (optional)"
@@ -327,7 +345,7 @@ function Feedback({ run }: { run: RunState }) {
         ) : (
           <p className="text-xs text-fg-muted">
             {run.rating
-              ? `You rated it ${run.rating === 'up' ? 'good' : 'not good'}. Rate again to add more.`
+              ? `Saved: you rated it ${run.rating === 'up' ? 'good' : 'not good'}. Rating again adds another note.`
               : 'The Bot sees your rating and comment as context in future Runs.'}
           </p>
         )}
@@ -351,7 +369,7 @@ function RunMemory({ run }: { run: RunState }) {
             <li key={m.id} className="flex flex-col gap-0.5">
               <span className="flex items-center gap-2">
                 <TrustBadge memory={m} />
-                <span className="text-xs text-fg-muted">{m.kind}</span>
+                <span className="text-xs text-fg-muted">{MEMORY_KIND_WORD[m.kind]}</span>
               </span>
               <Link
                 to="/memory"
@@ -487,6 +505,8 @@ export function RunScreen() {
   const events = useRunEvents(runId);
   const approvals = usePendingApprovals();
   const bot = useBot(run.data?.botId ?? '');
+  const parentRun = useRun(run.data?.parentRunId ?? '');
+  const parentBot = useBot(parentRun.data?.botId ?? '').data;
   const [pos, setPos] = useState<number | null>(null);
   const all = events.data ?? [];
   const shown = pos === null ? all : all.slice(0, pos);
@@ -526,7 +546,8 @@ export function RunScreen() {
                   params={{ runId: r.parentRunId }}
                   className="text-accent hover:underline"
                 >
-                  run …{r.parentRunId.slice(-8)}
+                  {parentBot ? scrubControls(parentBot.spec.name) : 'a Bot'} (run …
+                  {r.parentRunId.slice(-8)})
                 </Link>
               </span>
             ) : (

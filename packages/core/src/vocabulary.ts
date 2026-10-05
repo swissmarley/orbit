@@ -195,6 +195,15 @@ export function formatDuration(ms: number): string {
   return m % 60 === 0 ? `${m / 60}h` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
+/**
+ * Engine-estimated cost: "$0.004", "$0.0021", "$1.25" (enough digits to see a
+ * small triage call, never more than four decimals); "~" marks an estimate.
+ */
+export function formatCost(usd: number, estimate = true): string {
+  const digits = usd === 0 ? 2 : usd < 0.01 ? 4 : usd < 1 ? 3 : 2;
+  return `${estimate ? '~' : ''}$${usd.toFixed(digits)}`;
+}
+
 /** "950", "12.3k", "1.2M". */
 export function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;

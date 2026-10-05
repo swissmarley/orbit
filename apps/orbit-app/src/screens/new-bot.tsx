@@ -5,6 +5,7 @@ import {
   type BotSpecInput,
   type SubagentSpec,
   TriggerSpec,
+  formatCost,
   formatTokens,
 } from '@orbit/core/browser';
 import { useNavigate } from '@tanstack/react-router';
@@ -134,7 +135,7 @@ export function NewBotScreen() {
       setD((x) => applyProposal(x, r.proposal));
       setReasons([
         ...r.proposal.rationale,
-        `Proposed by ${r.model} · ${formatTokens(r.inputTokens)} in / ${formatTokens(r.outputTokens)} out${r.costUsd !== null ? ` · ~$${r.costUsd.toFixed(4)}` : ''} · ${r.usage.callsToday} of ${r.usage.limit} triage calls used today. Review every field.`,
+        `Proposed by ${r.model} · ${formatTokens(r.inputTokens)} in / ${formatTokens(r.outputTokens)} out${r.costUsd !== null ? ` · ${formatCost(r.costUsd)}` : ''} · ${r.usage.callsToday} of ${r.usage.limit} triage calls used today. Review every field.`,
       ]);
       void triage.refetch();
       setStep(1);

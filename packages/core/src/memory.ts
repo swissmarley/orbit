@@ -91,10 +91,27 @@ export const FeedbackBody = z.object({
   comment: z.string().trim().max(2000).optional(),
 });
 
-/** Who wrote a memory, in one word, for every client. */
+/** Who wrote a memory, for every client ("by …"). */
 export const MEMORY_SOURCE_WORD: Readonly<Record<MemorySource, string>> = {
   owner: 'you',
-  bot: 'Bot',
-  summarizer: 'summary',
-  feedback: 'feedback',
+  bot: 'the Bot',
+  summarizer: 'Orbit (run summary)',
+  feedback: 'Orbit (your feedback)',
+};
+
+/** What kind of memory it is, in the words every client uses (filters, rows, cards). */
+export const MEMORY_KIND_WORD: Readonly<Record<MemoryKind, string>> = {
+  note: 'Bot note',
+  summary: 'run summary',
+  feedback: 'your feedback',
+  fact: 'your fact',
+};
+
+/** A feedback signal in words. */
+export const FEEDBACK_SIGNAL_WORD: Readonly<Record<FeedbackSignal, string>> = {
+  thumbs_up: 'rated good',
+  thumbs_down: 'rated not good',
+  edited: 'edited before approving',
+  approved: 'approved',
+  denied: 'denied',
 };

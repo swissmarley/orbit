@@ -5,6 +5,7 @@ import {
   OrbitError,
   RUN_STATUS,
   type RunState,
+  formatCost,
   formatTokens,
   formatWhen,
   memoryTrust,
@@ -206,7 +207,7 @@ export async function triageCmd(ctx: Context, o: { json?: boolean }): Promise<nu
   }
   const p = painter(ctx.io);
   ctx.io.out(
-    `${p('bold', 'Triage calls today:')} ${u.callsToday} of ${u.limit} · ${formatTokens(u.inputTokensToday)} in / ${formatTokens(u.outputTokensToday)} out · ~$${u.costUsdToday.toFixed(4)}`,
+    `${p('bold', 'Triage calls today:')} ${u.callsToday} of ${u.limit} · ${formatTokens(u.inputTokensToday)} in / ${formatTokens(u.outputTokensToday)} out · ${formatCost(u.costUsdToday)}`,
   );
   ctx.io.out(
     p(
