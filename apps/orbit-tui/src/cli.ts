@@ -22,7 +22,7 @@ import {
   triageCmd,
 } from './commands/memory';
 import { rulesAdd, rulesList, rulesRevoke } from './commands/rules';
-import { completion } from './commands/completion';
+import { completeNames, completion } from './commands/completion';
 import {
   botLogs,
   logs,
@@ -358,18 +358,18 @@ export async function main(argv: string[], io: Io): Promise<number> {
   plugin
     .command('enable')
     .description('Start it once to list its tools, then offer it to the Bots that list it')
-    .argument('<id>')
+    .argument('<id>', 'plugin id')
     .option('--json', 'machine-readable output')
     .action((id: string, o: { json?: boolean }) => set(pluginEnable(context(), id, o)));
   plugin
     .command('disable')
-    .argument('<id>')
+    .argument('<id>', 'plugin id')
     .option('--json', 'machine-readable output')
     .action((id: string, o: { json?: boolean }) => set(pluginDisable(context(), id, o)));
   plugin
     .command('check')
     .description('Start it once and list its tools (does not enable it)')
-    .argument('<id>')
+    .argument('<id>', 'plugin id')
     .option('--json', 'machine-readable output')
     .action((id: string, o: { json?: boolean }) => set(pluginCheck(context(), id, o)));
   plugin
@@ -383,13 +383,13 @@ export async function main(argv: string[], io: Io): Promise<number> {
   plugin
     .command('rm')
     .description('Forget a plugin you added, and its secrets')
-    .argument('<id>')
+    .argument('<id>', 'plugin id')
     .option('--json', 'machine-readable output')
     .action((id: string, o: { json?: boolean }) => set(pluginRemove(context(), id, o)));
   plugin
     .command('secret')
     .description("Store one of the plugin's secrets (value from --value-file or stdin, never argv)")
-    .argument('<id>')
+    .argument('<id>', 'plugin id')
     .argument('<name>', 'the secret name the plugin declares, e.g. GITHUB_TOKEN')
     .option('--value-file <path>', 'read the value from a file (default: stdin)')
     .option('--remove', 'remove it instead')
@@ -401,7 +401,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
   plugin
     .command('setting')
     .description('Set a non-secret plugin setting (e.g. FS_ROOTS, BROWSER_ALLOWED_DOMAINS)')
-    .argument('<id>')
+    .argument('<id>', 'plugin id')
     .argument('<name>')
     .argument('[value]')
     .option('--clear', 'clear it')
@@ -569,6 +569,13 @@ export async function main(argv: string[], io: Io): Promise<number> {
     .description('Shell completion script: orbit completion bash|zsh|fish')
     .argument('<shell>', 'bash, zsh or fish')
     .action((shell: string) => set(completion(io, program, shell)));
+  // Called by the completion scripts: names from a running orbitd, never started for it.
+  program
+    .command('__complete', { hidden: true })
+    .argument('[kind]')
+    .allowExcessArguments()
+    .allowUnknownOption()
+    .action((kind: string | undefined) => set(completeNames(io, kind)));
 
   try {
     // `orbit` alone in a terminal opens the TUI; elsewhere it prints help.

@@ -512,6 +512,25 @@ describe('orbit CLI', () => {
       expect(missing.map((c) => c.path)).toEqual([]);
     });
 
+    it('__complete lists names and ids from the running daemon (M8)', async () => {
+      const h = harness(mockEnv());
+      await h.run('bot', 'create', '--name', 'Inbox Triage', '--goal', 'x');
+      await h.run('run', 'inbox-triage', '--json');
+      h.reset();
+      expect(await h.run('__complete', 'bots')).toBe(0);
+      expect(h.out).toEqual(['inbox-triage']);
+      h.reset();
+      expect(await h.run('__complete', 'runs')).toBe(0);
+      expect(h.out).toHaveLength(1);
+      expect(h.out[0]).toMatch(/^run_/);
+      h.reset();
+      expect(await h.run('__complete', 'plugins')).toBe(0);
+      expect(h.out).toEqual(expect.arrayContaining(['github', 'filesystem']));
+      h.reset();
+      expect(await h.run('__complete', 'approvals')).toBe(0);
+      expect(h.out).toEqual([]);
+    });
+
     it('generates bash, zsh and fish completions; bash completes subcommands and options', async () => {
       const h = harness(mockEnv());
       expect(await h.run('completion', 'bash')).toBe(0);
