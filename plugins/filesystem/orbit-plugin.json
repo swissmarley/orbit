@@ -10,7 +10,11 @@
     "args": ["--import", "${tsx}", "${pluginDir}/src/server.ts"]
   },
   "tools": [
-    { "name": "list_directory", "tier": "READ", "description": "List a folder" },
+    {
+      "name": "list_directory",
+      "tier": "READ",
+      "description": "List a folder"
+    },
     {
       "name": "read_file",
       "tier": "READ",
@@ -33,5 +37,15 @@
       "description": "Folders the plugin may use: absolute paths separated by ':' (';' on Windows). Nothing outside them is reachable.",
       "required": true
     }
-  ]
+  ],
+  "sandbox": {
+    "workspace": "none",
+    "network": false,
+    "paths": [
+      {
+        "name": "FS_ROOTS",
+        "access": "write"
+      }
+    ]
+  }
 }

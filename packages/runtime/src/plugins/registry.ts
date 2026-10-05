@@ -1,10 +1,13 @@
-import { mkdirSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import {
   type Bot,
+  DEFAULT_SANDBOX_NEEDS,
   OrbitError,
   type PluginManifest,
+  type PluginSandboxStatus,
+  type PluginSource,
   type PluginState,
   type PluginStatus,
   errorMessage,
@@ -26,6 +29,14 @@ import {
   loadManifest,
   resolveHeaders,
 } from './manifest';
+import {
+  type PluginSandboxConfig,
+  hiddenFolders,
+  prepareSandboxedCommand,
+  requestedFolders,
+  sandboxStatus,
+} from './sandbox';
+import { INSTALL_RECORD, PACKAGE_DIR, readInstallRecord } from './store';
 
 /**
  * The reference plugins shipped with Orbit: `plugins/*` in the repository,
@@ -105,6 +116,13 @@ export interface PluginRegistryDeps {
   paths?: { node: string; tsx: string };
   /** Paths plugins refuse on a Bot's behalf; default: credential stores and $ORBIT_HOME. */
   deniedPaths?: readonly string[];
+  /** The OS sandbox for stdio servers (ADR-019): `plugins.sandbox` and what this host can do. */
+  sandbox: PluginSandboxConfig;
+  /**
+   * Where packages installed from the catalog or npm live (ADR-019); plugins
+   * there are `npm` plugins, and no plugin may see the folder.
+   */
+  storeDir?: string | null;
   /** Tests: a fake server instead of a process. */
   clientFactory?: (spec: ClientSpec, defaultClient: () => McpClient) => McpClient;
 }
@@ -256,8 +274,36 @@ export class PluginRegistry {
     if (row?.enabled !== 1) return 'disabled';
     if (row.manifest_hash !== loaded.hash) return 'changed';
     if (this.missing(loaded.manifest, row).length > 0) return 'needs_setup';
-    if (row.error) return 'error';
+    if (row.error || this.sandboxOf(loaded.manifest).state === 'refused') return 'error';
     return 'ready';
+  }
+
+  /** How the plugin's server runs here (ADR-019). */
+  private sandboxOf(manifest: PluginManifest): PluginSandboxStatus {
+    const { mode, support } = this.deps.sandbox;
+    return sandboxStatus(manifest, mode, mode === 'off' ? null : support());
+  }
+
+  /** The plugin store, if one is configured. */
+  private store(): string | null {
+    return this.deps.storeDir ? realOrSelf(this.deps.storeDir) : null;
+  }
+
+  /** Where a plugin came from: shipped, a folder the owner added, or an npm install. */
+  private sourceOf(dir: string, builtIn: boolean): PluginSource {
+    const none = { package: null, version: null, integrity: null };
+    if (builtIn) return { kind: 'builtin', ...none };
+    const store = this.store();
+    if (store && isWithin(dir, store) && dir !== store) {
+      const meta = readInstallRecord(dir);
+      return {
+        kind: 'npm',
+        package: meta?.package ?? null,
+        version: meta?.version ?? null,
+        integrity: meta?.integrity ?? null,
+      };
+    }
+    return { kind: 'folder', ...none };
   }
 
   list(): PluginStatus[] {
@@ -290,6 +336,7 @@ export class PluginRegistry {
         description: '',
         homepage: null,
         builtIn: k.builtIn,
+        source: this.sourceOf(k.dir, k.builtIn),
         dir: k.dir,
         enabled: row?.enabled === 1,
         state: 'error',
@@ -298,6 +345,12 @@ export class PluginRegistry {
         secrets: [],
         settings: [],
         env: [],
+        sandbox: {
+          state: this.deps.sandbox.mode === 'off' ? 'off' : 'unsandboxed',
+          engine: null,
+          reason: null,
+          needs: DEFAULT_SANDBOX_NEEDS,
+        },
         undeclaredTools: [],
         bots: using,
         warnings: [],
@@ -340,6 +393,23 @@ export class PluginRegistry {
       );
     }
     if (missing.length > 0) warnings.push(`Needs ${missing.join(', ')}.`);
+    const sandbox = this.sandboxOf(m);
+    if (sandbox.state === 'refused') {
+      warnings.push(`It does not start: ${sandbox.reason ?? 'it cannot be sandboxed here'}.`);
+    } else if (sandbox.state === 'unsandboxed') {
+      warnings.push(`It runs without an OS sandbox: ${sandbox.reason ?? 'unknown reason'}.`);
+    }
+    if (sandbox.state === 'sandboxed') {
+      const home = this.deps.env.HOME ?? homedir();
+      for (const h of hiddenFolders(
+        requestedFolders(m, { settings, env: this.deps.env }, home),
+        this.sandboxDenied(),
+      )) {
+        warnings.push(
+          `${h.from}: ${h.path} stays out of its sandbox (it overlaps ${h.overlaps}, which plugins never see).`,
+        );
+      }
+    }
     return {
       id: m.id,
       name: m.name,
@@ -347,6 +417,7 @@ export class PluginRegistry {
       description: m.description,
       homepage: m.homepage ?? null,
       builtIn: k.builtIn,
+      source: this.sourceOf(k.dir, k.builtIn),
       dir: k.dir,
       enabled: row?.enabled === 1,
       state,
@@ -367,10 +438,12 @@ export class PluginRegistry {
         default: s.default ?? null,
       })),
       env: m.env,
+      sandbox,
       undeclaredTools: row?.undeclared ? (JSON.parse(row.undeclared) as string[]) : [],
       bots: using,
       warnings,
-      error: row?.error ?? null,
+      error:
+        row?.error ?? (row?.enabled === 1 && sandbox.state === 'refused' ? sandbox.reason : null),
       checkedAt: row?.checked_at ?? null,
       enabledAt: row?.enabled_at ?? null,
     };
@@ -408,6 +481,25 @@ export class PluginRegistry {
 
   /** Add a plugin from a directory with an `orbit-plugin.json` (disabled until enabled). */
   install(dir: string, by: string): PluginStatus {
+    const store = this.store();
+    if (store && isWithin(realOrSelf(dir), store)) {
+      throw new OrbitError('invalid_input', `${dir} is inside Orbit's plugin store`, {
+        hint: 'Packages there are installed with `orbit plugin install`.',
+      });
+    }
+    return this.register(dir, by, 'plugin.added');
+  }
+
+  /** Register a package the installer just put in the store (ADR-019). */
+  registerInstalled(dir: string, by: string): PluginStatus {
+    const store = this.store();
+    if (!store || !isWithin(realOrSelf(dir), store)) {
+      throw new OrbitError('internal', `${dir} is not in the plugin store`);
+    }
+    return this.register(dir, by, null);
+  }
+
+  private register(dir: string, by: string, auditAction: string | null): PluginStatus {
     const loaded = loadManifest(dir);
     const id = loaded.manifest.id;
     // Bot workspaces live under $ORBIT_HOME: a plugin there could be rewritten by a Bot (review L1).
@@ -422,12 +514,14 @@ export class PluginRegistry {
       throw new OrbitError('conflict', `A plugin named "${id}" is already known`);
     }
     this.upsert(id, loaded.dir, false, {});
-    this.deps.audit?.append({
-      actor: by,
-      action: 'plugin.added',
-      subject: id,
-      data: { dir: loaded.dir, hash: loaded.hash },
-    });
+    if (auditAction) {
+      this.deps.audit?.append({
+        actor: by,
+        action: auditAction,
+        subject: id,
+        data: { dir: loaded.dir, hash: loaded.hash },
+      });
+    }
     return this.get(id);
   }
 
@@ -439,7 +533,31 @@ export class PluginRegistry {
     }
     for (const s of loaded.manifest.secrets) this.deps.vault.remove(pluginSecretKey(id, s.name));
     this.deps.db.sqlite.prepare('DELETE FROM plugins WHERE id = ?').run(id);
-    this.deps.audit?.append({ actor: by, action: 'plugin.removed', subject: id, data: {} });
+    // An installed package's files go too; a folder the owner added stays where it is.
+    const installed = this.sourceOf(loaded.dir, false).kind === 'npm';
+    if (installed) this.removeStoredFiles(loaded.dir);
+    this.deps.audit?.append({
+      actor: by,
+      action: 'plugin.removed',
+      subject: id,
+      data: installed ? { files: 'removed' } : {},
+    });
+  }
+
+  /** `<store>/<id>@<version>` of an installed package, only ever inside the store. */
+  private removeStoredFiles(pluginDir: string): void {
+    const store = this.store();
+    const installDir = dirname(pluginDir);
+    if (
+      !store ||
+      basename(pluginDir) !== PACKAGE_DIR ||
+      !isWithin(installDir, store) ||
+      installDir === store ||
+      !existsSync(join(installDir, INSTALL_RECORD))
+    ) {
+      return;
+    }
+    rmSync(installDir, { recursive: true, force: true });
   }
 
   /** Start the server once, list its tools and keep the declared ones' schemas. */
@@ -462,9 +580,10 @@ export class PluginRegistry {
     }
     const scratch = join(this.deps.home, 'plugins', id);
     mkdirSync(scratch, { recursive: true, mode: 0o700 });
-    const client = this.client({ manifest: m, dir: loaded.dir, cwd: scratch, workspace: null });
+    let client: McpClient | undefined;
     let patch: Partial<Row>;
     try {
+      client = this.client({ manifest: m, dir: loaded.dir, cwd: scratch, workspace: null });
       const offered = await client.listTools();
       const declared = new Set(m.tools.map((t) => t.name));
       patch = {
@@ -479,7 +598,7 @@ export class PluginRegistry {
         checked_at: this.now().toISOString(),
       };
     } finally {
-      await client.close();
+      await client?.close();
     }
     this.upsert(id, loaded.dir, builtIn, patch);
     this.deps.audit?.append({
@@ -622,6 +741,10 @@ export class PluginRegistry {
         needs_setup: 'needs setup (a secret or setting is missing)',
         error: 'failed its last check',
       };
+      const sandbox = this.sandboxOf(k.loaded.manifest);
+      if (state === 'error' && sandbox.state === 'refused') {
+        return { reason: `plugin ${id} cannot be sandboxed here (${sandbox.reason ?? 'unknown'})` };
+      }
       return { reason: `plugin ${id} ${why[state]}` };
     }
     const declared = new Map(k.loaded.manifest.tools.map((t) => [t.name, t.description]));
@@ -638,14 +761,25 @@ export class PluginRegistry {
   }
 
   private deniedPaths(): readonly string[] {
+    const store = this.store();
     return (
       this.deps.deniedPaths ??
       pluginDeniedPaths({
         home: this.deps.env.HOME ?? homedir(),
         orbitHome: this.deps.home,
-        extraDenied: this.deps.env.CLAUDE_CONFIG_DIR ? [this.deps.env.CLAUDE_CONFIG_DIR] : [],
+        extraDenied: [
+          ...(this.deps.env.CLAUDE_CONFIG_DIR ? [this.deps.env.CLAUDE_CONFIG_DIR] : []),
+          // Installed packages: no plugin may rewrite another one's code (ADR-019).
+          ...(store ? [store] : []),
+        ],
       })
     );
+  }
+
+  /** What a sandboxed plugin never sees: the denied paths, plus the store. */
+  private sandboxDenied(): string[] {
+    const store = this.store();
+    return [...new Set([...this.deniedPaths(), ...(store ? [store] : [])])];
   }
 
   /** A client for a plugin server: a child process with the plugin's own env, or HTTP. */
@@ -659,20 +793,38 @@ export class PluginRegistry {
           headers: resolveHeaders(manifest, secret),
         });
       }
-      const cmd = expandCommand(manifest.server, spec.dir, this.deps.paths ?? defaultPluginPaths());
+      const paths = this.deps.paths ?? defaultPluginPaths();
+      const settings = this.settingsOf(this.row(manifest.id));
+      // The OS sandbox (ADR-019): wrapper arguments only; the env stays buildPluginEnv.
+      const cmd = prepareSandboxedCommand(this.deps.sandbox, {
+        manifest,
+        dir: spec.dir,
+        command: expandCommand(manifest.server, spec.dir, paths),
+        settings,
+        env: this.deps.env,
+        home: this.deps.env.HOME ?? homedir(),
+        orbitHome: this.deps.home,
+        denied: this.sandboxDenied(),
+        workspace: spec.workspace,
+        git: spec.git,
+        paths,
+      });
       return new StdioMcpClient({
-        ...cmd,
+        command: cmd.command,
+        args: cmd.args,
         cwd: spec.cwd,
         env: buildPluginEnv({
           manifest,
           source: this.deps.env,
-          settings: this.settingsOf(this.row(manifest.id)),
+          settings,
           secret,
           workspace: spec.workspace,
           git: spec.git,
           deniedPaths: this.deniedPaths(),
+          ...(cmd.envPaths ? { sandboxPaths: cmd.envPaths } : {}),
         }),
         ...(this.deps.redact ? { redact: this.deps.redact } : {}),
+        ...(cmd.cleanup ? { onExit: cmd.cleanup } : {}),
       });
     };
     return this.deps.clientFactory ? this.deps.clientFactory(spec, make) : make();

@@ -46,6 +46,7 @@ const EXPECTED: Record<RouteName, PrincipalRole | 'public'> = {
   listPlugins: 'viewer',
   getPlugin: 'viewer',
   listTriggers: 'viewer',
+  pluginCatalog: 'viewer',
   events: 'viewer',
   // Anyone signed in may sign out.
   deleteSession: 'viewer',
@@ -78,6 +79,7 @@ const EXPECTED: Record<RouteName, PrincipalRole | 'public'> = {
   verifyAuditCheckpoint: 'owner',
   importMemory: 'owner',
   sweepMemory: 'owner',
+  installPlugin: 'owner',
   createRule: 'owner',
   revokeRule: 'owner',
   setSecret: 'owner',

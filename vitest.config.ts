@@ -7,8 +7,10 @@ export default defineConfig({
     projects: [
       'packages/*',
       'apps/*',
+      // plugins/catalog.json is the plugin catalog (ADR-019), not a project.
       'plugins/*',
       'packaging/*',
+      '!plugins/catalog.json',
       {
         test: {
           name: 'repo',

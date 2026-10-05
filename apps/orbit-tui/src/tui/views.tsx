@@ -2,6 +2,7 @@
 import {
   MEMORY_KIND_WORD,
   MEMORY_SOURCE_WORD,
+  PLUGIN_SANDBOX_STATE,
   PLUGIN_STATE,
   type PluginStatus,
   RUN_STATUS,
@@ -21,6 +22,7 @@ import {
 import { Box, Text } from 'ink';
 import type { painter } from '../io';
 import { clean } from '../commands/approvals';
+import { sandboxNeeds } from '../commands/plugins';
 import { renderDiff, renderEvent, scrubControls } from '../render';
 import type { Approval } from '@orbit/sdk-client';
 import {
@@ -805,8 +807,13 @@ export function pluginDetailLines(
   if (pl.error) out.push({ text: `✘ ${pl.error}`, color: 'red' });
   for (const w of pl.warnings) out.push({ text: `⚠ ${w}`, color: 'yellow' });
   if (pl.description) out.push({ text: pl.description });
+  const sb = PLUGIN_SANDBOX_STATE[pl.sandbox.state];
   out.push(
     { text: `server ${pl.server}`, color: 'gray' },
+    {
+      text: `${sb.mark} ${sb.label}${pl.sandbox.engine ? ` (${pl.sandbox.engine})` : ''}${pl.sandbox.state === 'remote' ? '' : ` · gets ${sandboxNeeds(pl.sandbox.needs)}`}`,
+      color: TONE_COLOR[sb.tone],
+    },
     { text: '' },
     { text: 'Tools', bold: true },
   );

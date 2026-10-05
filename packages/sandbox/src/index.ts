@@ -30,6 +30,24 @@ export {
   type EngineSandboxOptions,
 } from './engine-sandbox';
 export {
+  bwrapArgs,
+  detectPluginSandbox,
+  LINUX_SYSTEM_PATHS,
+  pluginSandboxSpec,
+  sbplString,
+  seatbeltProfile,
+  wrapPluginCommand,
+  type DetectPluginSandboxOptions,
+  type HostPath,
+  type PluginSandboxEngine,
+  type PluginSandboxInput,
+  type PluginSandboxSpec,
+  type PluginSandboxSupport,
+  type SandboxBind,
+  type SystemPath,
+  type WrappedCommand,
+} from './plugin-sandbox';
+export {
   API_KEY_PLACEHOLDER,
   BOT_LABEL,
   CONFIG_LABEL,

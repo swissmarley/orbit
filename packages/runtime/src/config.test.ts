@@ -328,8 +328,56 @@ describe('loadConfig: invalid environment values', () => {
       vars: { ORBIT_MAX_CONCURRENT_RUNS: '0' },
       message: /Invalid configuration/,
     },
+    {
+      scenario: 'ORBIT_PLUGIN_SANDBOX=strict',
+      vars: { ORBIT_PLUGIN_SANDBOX: 'strict' },
+      message: /ORBIT_PLUGIN_SANDBOX must be auto, required or off \(got "strict"\)/,
+    },
+    {
+      scenario: 'ORBIT_PLUGIN_CATALOG_URL over plain http to another host',
+      vars: { ORBIT_PLUGIN_CATALOG_URL: 'http://catalog.example.com/catalog.json' },
+      message: /Invalid configuration/,
+    },
+    {
+      scenario: 'ORBIT_NPM_REGISTRY with credentials in the URL',
+      vars: { ORBIT_NPM_REGISTRY: 'https://user:pw@registry.example.com' },
+      message: /Invalid configuration/,
+    },
+    {
+      scenario: 'ORBIT_NPM_REGISTRY as a file',
+      vars: { ORBIT_NPM_REGISTRY: 'file:///srv/npm' },
+      message: /Invalid configuration/,
+    },
   ])('$scenario → invalid_config', ({ vars, message }) => {
     expectInvalid(() => loadConfig(env(vars)), message);
+  });
+});
+
+describe('loadConfig: plugins (ADR-019)', () => {
+  it('sandboxes plugins when it can, uses the published catalog and npm by default', () => {
+    expect(loadConfig(env()).plugins).toEqual({
+      sandbox: 'auto',
+      catalogUrl: 'https://raw.githubusercontent.com/swissmarley/orbit/main/plugins/catalog.json',
+      npmRegistry: 'https://registry.npmjs.org',
+      storeDir: null,
+    });
+  });
+
+  it('takes the sandbox mode, catalog, registry and store from the environment', () => {
+    const c = loadConfig(
+      env({
+        ORBIT_PLUGIN_SANDBOX: 'required',
+        ORBIT_PLUGIN_CATALOG_URL: 'file:///srv/orbit/catalog.json',
+        ORBIT_NPM_REGISTRY: 'http://127.0.0.1:4873',
+        ORBIT_PLUGIN_STORE: 'relative/store',
+      }),
+    );
+    expect(c.plugins).toMatchObject({
+      sandbox: 'required',
+      catalogUrl: 'file:///srv/orbit/catalog.json',
+      npmRegistry: 'http://127.0.0.1:4873',
+    });
+    expect(c.plugins.storeDir).toMatch(/^\/.*relative\/store$/);
   });
 });
 

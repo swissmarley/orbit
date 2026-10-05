@@ -336,6 +336,34 @@ export function useActions() {
         toast.success(value === null ? `Cleared ${name}` : `Saved ${name}`);
       },
 
+      /** Download and verify a catalog package without keeping it: what it would install. */
+      async previewPluginInstall(id: string) {
+        const r = await c.plugins
+          .install({ source: 'catalog', id, dryRun: true })
+          .catch(fail(`Could not check ${id}`));
+        return r.preview;
+      },
+
+      async installPlugin(id: string) {
+        const r = await c.plugins
+          .install({ source: 'catalog', id })
+          .catch(fail(`Could not install ${id}`));
+        void refresh(keys.plugins, keys.pluginCatalog, keys.audit);
+        toast.success(`Installed ${r.preview.name}`, {
+          description: 'It stays off until you enable it.',
+        });
+        return r.plugin;
+      },
+
+      async removePlugin(p: PluginStatus): Promise<void> {
+        await c.plugins.remove(p.id).catch(fail(`Could not remove ${p.name}`));
+        void refresh(keys.plugins, keys.pluginCatalog, keys.audit);
+        toast.success(`Removed ${p.name}`, {
+          description:
+            p.source.kind === 'npm' ? 'Its files and secrets are gone.' : 'Its secrets are gone.',
+        });
+      },
+
       async addPlugin(dir: string): Promise<PluginStatus> {
         const p = await c.plugins.add(dir).catch(fail('Could not add the plugin'));
         void refresh(keys.plugins);

@@ -99,6 +99,18 @@ export async function doctor(ctx: Context, opts: { json?: boolean }): Promise<nu
           : ''),
     );
   }
+  const ps = r.sandbox.plugins;
+  row(
+    'Plugins',
+    ps.mode === 'off'
+      ? p('yellow', 'OS sandbox off (plugins.sandbox) — plugins run as your user')
+      : ps.available
+        ? p('green', `OS sandbox ${ps.engine ?? ''} (${ps.mode})`.replace('  ', ' '))
+        : p(
+            ps.mode === 'required' ? 'red' : 'yellow',
+            `no OS sandbox: ${ps.reason ?? 'unavailable'} — ${ps.mode === 'required' ? 'plugins do not start' : 'plugins run as your user'}`,
+          ),
+  );
   row(
     'Daemon',
     `orbitd ${r.daemon.url} · pid ${r.daemon.pid} · up since ${formatWhen(r.daemon.startedAt)} · ${r.daemon.concurrency} concurrent run${r.daemon.concurrency === 1 ? '' : 's'}`,

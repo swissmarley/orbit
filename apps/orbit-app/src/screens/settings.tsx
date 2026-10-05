@@ -232,6 +232,13 @@ function Engine() {
                 ? 'available'
                 : `unavailable (missing ${d.sandbox.engineSandbox.missing.join(', ') || '?'})`}
             </Row>
+            <Row term="Plugin sandbox">
+              {d.sandbox.plugins.mode === 'off'
+                ? 'off (plugins.sandbox): plugins run as your user'
+                : d.sandbox.plugins.available
+                  ? `${d.sandbox.plugins.engine ?? 'available'} (${d.sandbox.plugins.mode})`
+                  : `unavailable: ${d.sandbox.plugins.reason ?? '?'}${d.sandbox.plugins.mode === 'required' ? ' — plugins do not start' : ' — plugins run as your user'}`}
+            </Row>
             <Row term="Docker">
               {d.sandbox.docker.available
                 ? `available ${d.sandbox.docker.version ?? ''}`

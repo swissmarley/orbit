@@ -33,6 +33,8 @@ export const keys = {
   botTaint: (id: string) => ['orbit', 'memory', 'taint', id] as const,
   triage: ['orbit', 'triage'] as const,
   plugins: ['orbit', 'plugins'] as const,
+  /** Not under `plugins`: reading the catalog is a request to its host. */
+  pluginCatalog: ['orbit', 'plugin-catalog'] as const,
   inbound: ['orbit', 'inbound'] as const,
 };
 
@@ -40,6 +42,16 @@ export const keys = {
 export function usePlugins() {
   const c = useClient();
   return useQuery({ queryKey: keys.plugins, queryFn: () => c.plugins.list() });
+}
+
+/** The plugin catalog (ADR-019), with what is already installed. */
+export function usePluginCatalog() {
+  const c = useClient();
+  return useQuery({
+    queryKey: keys.pluginCatalog,
+    queryFn: () => c.plugins.catalog(),
+    staleTime: 5 * 60_000,
+  });
 }
 
 /** Inbound triggers; listeners change state on their own (Slack connecting), so poll gently. */

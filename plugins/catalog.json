@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "description": "Plugins Orbit can install from npm (ADR-019). Each entry pins an exact version, the tarball's sha512 integrity and the manifest's hash. No third-party plugin has been reviewed and published yet; the reference plugins ship with Orbit itself and need no install.",
+  "plugins": []
+}

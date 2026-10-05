@@ -15,8 +15,16 @@
       "tier": "READ",
       "description": "Search mail: sender, subject, date, snippet (up to 25)"
     },
-    { "name": "get_message", "tier": "READ", "description": "Read one message's headers and text" },
-    { "name": "list_drafts", "tier": "READ", "description": "List draft messages" },
+    {
+      "name": "get_message",
+      "tier": "READ",
+      "description": "Read one message's headers and text"
+    },
+    {
+      "name": "list_drafts",
+      "tier": "READ",
+      "description": "List draft messages"
+    },
     {
       "name": "create_draft",
       "tier": "WRITE_LOCAL",
@@ -63,5 +71,9 @@
       "required": false
     }
   ],
-  "env": ["GOOGLE_API_URL", "GOOGLE_TOKEN_URL"]
+  "env": ["GOOGLE_API_URL", "GOOGLE_TOKEN_URL"],
+  "sandbox": {
+    "workspace": "none",
+    "network": true
+  }
 }

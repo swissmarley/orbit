@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { DriverKind, OrbitMode } from './enums';
+import { PluginSandboxMode } from './plugin';
 
 /**
  * What a principal may do through the API (ADR-015): `viewer` reads,
@@ -155,6 +156,34 @@ export function isAllowedAppOrigin(origin: string): boolean {
   return isLoopbackHost(u.hostname);
 }
 
+/** The catalog the repository publishes (`plugins/catalog.json` on the main branch). */
+export const DEFAULT_PLUGIN_CATALOG_URL =
+  'https://raw.githubusercontent.com/swissmarley/orbit/main/plugins/catalog.json';
+
+/** An npm registry: https, or http on a loopback host (a local mirror or a test). */
+export function isAllowedRegistryUrl(url: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (u.username || u.password || u.search || u.hash) return false;
+  if (u.protocol === 'https:') return true;
+  return u.protocol === 'http:' && isLoopbackHost(u.hostname);
+}
+
+/** A catalog: what a registry may be, or a local `file:` index. */
+export function isAllowedCatalogUrl(url: string): boolean {
+  if (isAllowedRegistryUrl(url)) return true;
+  try {
+    const u = new URL(url);
+    return u.protocol === 'file:' && !u.search && !u.hash;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Fully resolved orbitd / CLI configuration. Loaded from
  * `$ORBIT_HOME/config.json` with environment overrides (see
@@ -238,6 +267,33 @@ export const OrbitConfig = z.object({
     .object({
       /** Longest chain of delegated Runs (A → B → C is depth 2). */
       maxDepth: z.int().min(1).max(5).default(3),
+    })
+    .prefault({}),
+  /** Plugins (ADR-014, ADR-019). */
+  plugins: z
+    .object({
+      /**
+       * OS sandbox for stdio plugin servers (`ORBIT_PLUGIN_SANDBOX`): `auto`
+       * sandboxes when the host can, `required` refuses to start a plugin it
+       * cannot sandbox, `off` never sandboxes (doctor warns).
+       */
+      sandbox: PluginSandboxMode.default('auto'),
+      /** The catalog index (`ORBIT_PLUGIN_CATALOG_URL`): https, http on loopback, or file:. */
+      catalogUrl: z
+        .string()
+        .refine(isAllowedCatalogUrl, 'must be https, http on a loopback host, or file:')
+        .default(DEFAULT_PLUGIN_CATALOG_URL),
+      /** npm registry for tarballs (`ORBIT_NPM_REGISTRY`): https, or http on loopback. */
+      npmRegistry: z
+        .string()
+        .refine(isAllowedRegistryUrl, 'must be https, or http on a loopback host')
+        .default('https://registry.npmjs.org'),
+      /**
+       * Where installed packages live (`ORBIT_PLUGIN_STORE`); null = the
+       * platform's data folder (`$XDG_DATA_HOME/orbit/plugins`). Never inside
+       * `$ORBIT_HOME`, where Bots can write.
+       */
+      storeDir: z.string().min(1).nullable().default(null),
     })
     .prefault({}),
   limits: z

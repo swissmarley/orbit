@@ -1,3 +1,4 @@
+import { createInterface } from 'node:readline/promises';
 import { styleText } from 'node:util';
 
 type Style = Parameters<typeof styleText>[0];
@@ -24,6 +25,8 @@ export interface Io {
    * exit code. Default: spawn it on this terminal. Tests inject a fake.
    */
   spawnShell?: (o: { shell: string; cwd: string; env: Record<string, string> }) => Promise<number>;
+  /** Ask a question on the terminal and resolve with the answer (`plugin install`). */
+  ask?: (question: string) => Promise<string>;
 }
 
 export function processIo(): Io {
@@ -41,6 +44,14 @@ export function processIo(): Io {
     env,
     color,
     interactive: process.stdin.isTTY && process.stdout.isTTY,
+    async ask(question) {
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      try {
+        return await rl.question(question);
+      } finally {
+        rl.close();
+      }
+    },
     onInterrupt(handler) {
       process.on('SIGINT', handler);
       return () => process.off('SIGINT', handler);

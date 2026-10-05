@@ -34,6 +34,10 @@ jobs:
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
+      # Plugin servers run in bubblewrap (ADR-019): its real-sandbox tests skip without it.
+      # Ubuntu 24 runners need unprivileged user namespaces for bwrap (as for Chromium).
+      - run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends bubblewrap
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: pnpm test
 
   app-e2e:
@@ -59,6 +63,9 @@ jobs:
       # Chromium keeps its sandbox: Ubuntu 24 runners need unprivileged user namespaces for it.
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: pnpm vitest run --project @orbit/plugin-browser
+      # The plugin sandbox with a real Chromium inside it, as a non-root user (ADR-019).
+      - run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends bubblewrap
+      - run: pnpm vitest run packages/runtime/src/plugins/sandbox.test.ts
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

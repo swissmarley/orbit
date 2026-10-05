@@ -36,9 +36,11 @@ import {
 } from './commands/run';
 import {
   pluginAdd,
+  pluginCatalog,
   pluginCheck,
   pluginDisable,
   pluginEnable,
+  pluginInstall,
   pluginRemove,
   pluginSecret,
   pluginSetting,
@@ -398,8 +400,29 @@ export async function main(argv: string[], io: Io): Promise<number> {
     .option('--json', 'machine-readable output')
     .action((dir: string, o: { json?: boolean }) => set(pluginAdd(context(), dir, o)));
   plugin
+    .command('catalog')
+    .description('Plugins the catalog lists (plugins.catalogUrl), and which are installed')
+    .option('--json', 'machine-readable output')
+    .action((o: { json?: boolean }) => set(pluginCatalog(context(), o)));
+  plugin
+    .command('install')
+    .description(
+      'Install from the catalog (<id>) or npm (npm:<package>@<version> --integrity sha512-…): verified, nothing runs, off until enabled',
+    )
+    .argument('<spec>', 'a catalog id, or npm:<package>@<exact version>')
+    .option('--integrity <sri>', "the npm package's sha512 integrity (required for npm:)")
+    .option('--dry-run', 'download and verify only; show what it would install')
+    .option('-y, --yes', 'install without asking')
+    .option('--json', 'machine-readable output')
+    .action(
+      (spec: string, o: { integrity?: string; dryRun?: boolean; yes?: boolean; json?: boolean }) =>
+        set(pluginInstall(context(), spec, o)),
+    );
+  plugin
     .command('rm')
-    .description('Forget a plugin you added, and its secrets')
+    .description(
+      'Forget a plugin you added or installed (an installed one’s files too), and its secrets',
+    )
     .argument('<id>', 'plugin id')
     .option('--json', 'machine-readable output')
     .action((id: string, o: { json?: boolean }) => set(pluginRemove(context(), id, o)));

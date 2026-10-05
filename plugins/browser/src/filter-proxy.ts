@@ -1,5 +1,12 @@
-import { type IncomingHttpHeaders, createServer, request as httpRequest } from 'node:http';
-import { type Socket, connect } from 'node:net';
+import { lookup } from 'node:dns/promises';
+import {
+  type IncomingHttpHeaders,
+  type IncomingMessage,
+  type ServerResponse,
+  createServer,
+  request as httpRequest,
+} from 'node:http';
+import { type LookupFunction, type Socket, connect, isIP } from 'node:net';
 
 /**
  * The browser's only way out: a loopback HTTP proxy in the plugin process that
@@ -9,13 +16,27 @@ import { type Socket, connect } from 'node:net';
  * requests and anything else Playwright's request routing does not see are
  * checked as well. An owner proxy from the environment (HTTPS_PROXY, …) is
  * chained behind it.
+ *
+ * Names are resolved here, once (ADR-019): every address an allowed name
+ * resolves to must pass `addressAllowed` (no private, loopback, link-local or
+ * metadata answers unless the owner says so), and the connection goes to
+ * exactly the addresses that were checked — never a second lookup, so a DNS
+ * rebinding answer cannot slip in between check and connect.
  */
+
+/** A resolver: every address of a name (injectable for tests). */
+export type Resolver = (host: string) => Promise<{ address: string; family: number }[]>;
+
+export const systemResolver: Resolver = (host) => lookup(host, { all: true, verbatim: true });
 
 export interface FilterProxyOptions {
   /** May the browser reach this URL (http://host:port/… or https://host:port/ for a tunnel)? */
   allowed(url: string): boolean;
-  /** Called with the host of each refused request. */
-  onBlocked(host: string): void;
+  /** Called with the host of each refused request (and why, when its address was refused). */
+  onBlocked(host: string, reason?: string): void;
+  /** Null when the browser may reach `address` for `host`, else why not. */
+  addressAllowed?: (address: string, host: string) => string | null;
+  resolve?: Resolver;
   /** The owner's proxy, if any. */
   upstream?: { server: string; bypass?: string } | undefined;
 }
@@ -77,6 +98,64 @@ function forwardHeaders(headers: IncomingHttpHeaders): IncomingHttpHeaders {
   return out;
 }
 
+/** A `lookup` that answers with the addresses already checked (no second resolution). */
+export function pinnedLookup(
+  addresses: readonly { address: string; family: number }[],
+): LookupFunction {
+  return (_host, options, callback) => {
+    const first = addresses[0];
+    if (!first) {
+      callback(Object.assign(new Error('no address'), { code: 'ENOTFOUND' }), '', 0);
+      return;
+    }
+    if (options.all)
+      callback(
+        null,
+        addresses.map((a) => ({ address: a.address, family: a.family })),
+      );
+    else callback(null, first.address, first.family);
+  };
+}
+
+type Checked =
+  | { ok: true; addresses: { address: string; family: number }[] | null }
+  | { ok: false; reason: string };
+
+/**
+ * Resolve `host` and check every answer. Direct connections need answers;
+ * through the owner's upstream proxy (which resolves for itself) a name that
+ * does not resolve here is passed on, but a private answer is still refused.
+ */
+export async function checkHost(
+  host: string,
+  opts: Pick<FilterProxyOptions, 'addressAllowed' | 'resolve'>,
+  viaUpstream: boolean,
+): Promise<Checked> {
+  const allowed = opts.addressAllowed ?? (() => null);
+  if (isIP(host)) {
+    const why = allowed(host, host);
+    return why === null
+      ? { ok: true, addresses: [{ address: host, family: isIP(host) }] }
+      : { ok: false, reason: why };
+  }
+  let answers: { address: string; family: number }[];
+  try {
+    answers = await (opts.resolve ?? systemResolver)(host);
+  } catch {
+    answers = [];
+  }
+  if (answers.length === 0) {
+    return viaUpstream
+      ? { ok: true, addresses: null }
+      : { ok: false, reason: `${host} does not resolve` };
+  }
+  for (const a of answers) {
+    const why = allowed(a.address, host);
+    if (why !== null) return { ok: false, reason: why };
+  }
+  return { ok: true, addresses: answers };
+}
+
 export async function startFilterProxy(opts: FilterProxyOptions): Promise<FilterProxy> {
   const upstream = opts.upstream ? upstreamOf(opts.upstream.server) : undefined;
   const viaUpstream = (host: string) =>
@@ -101,7 +180,18 @@ export async function startFilterProxy(opts: FilterProxyOptions): Promise<Filter
       req.socket.destroy();
       return;
     }
+    req.pause();
+    void forward(req, res, target);
+  });
+
+  const forward = async (req: IncomingMessage, res: ServerResponse, target: URL) => {
     const host = hostOf(target);
+    const checked = await checkHost(host, opts, viaUpstream(host));
+    if (!checked.ok) {
+      opts.onBlocked(target.hostname, checked.reason);
+      req.socket.destroy();
+      return;
+    }
     const headers = forwardHeaders(req.headers);
     const proxied = viaUpstream(host) && upstream;
     if (proxied && upstream.auth) headers['proxy-authorization'] = upstream.auth;
@@ -120,6 +210,8 @@ export async function startFilterProxy(opts: FilterProxyOptions): Promise<Filter
             path: `${target.pathname}${target.search}`,
             method: req.method,
             headers,
+            // Exactly the addresses that were checked.
+            ...(checked.addresses ? { lookup: pinnedLookup(checked.addresses) } : {}),
           },
       (upRes) => {
         res.writeHead(upRes.statusCode ?? 502, forwardHeaders(upRes.headers));
@@ -131,7 +223,8 @@ export async function startFilterProxy(opts: FilterProxyOptions): Promise<Filter
       res.end();
     });
     req.pipe(out);
-  });
+    req.resume();
+  };
 
   server.on('connection', track);
 
@@ -149,10 +242,28 @@ export async function startFilterProxy(opts: FilterProxyOptions): Promise<Filter
       socket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
       return;
     }
+    socket.pause();
+    void tunnel(socket, head, authority, target);
+  });
+
+  const tunnel = async (socket: Socket, head: Buffer, authority: string, target: URL) => {
     const host = hostOf(target);
     const port = Number(target.port || 443);
+    const checked = await checkHost(host, opts, viaUpstream(host));
+    if (!checked.ok) {
+      opts.onBlocked(target.hostname, checked.reason);
+      socket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
+      return;
+    }
     const proxied = viaUpstream(host) && upstream;
-    const out = proxied ? connect(upstream.port, upstream.host) : connect(port, host);
+    const out = proxied
+      ? connect(upstream.port, upstream.host)
+      : connect({
+          host,
+          port,
+          // Exactly the addresses that were checked.
+          ...(checked.addresses ? { lookup: pinnedLookup(checked.addresses) } : {}),
+        });
     track(out);
     out.once('connect', () => {
       if (proxied) {
@@ -165,10 +276,11 @@ export async function startFilterProxy(opts: FilterProxyOptions): Promise<Filter
       if (head.length) out.write(head);
       out.pipe(socket);
       socket.pipe(out);
+      socket.resume();
     });
     out.on('error', () => socket.destroy());
     socket.on('error', () => out.destroy());
-  });
+  };
 
   // A plain ws:// upgrade through the proxy: WebSockets are blocked (see browser.ts).
   server.on('upgrade', (req, socket: Socket) => {

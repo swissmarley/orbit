@@ -8,7 +8,8 @@ export const DARWIN_SANDBOX_EXEC = '/usr/bin/sandbox-exec';
 /** Tools Claude Code's Linux sandbox needs on PATH. */
 export const LINUX_SANDBOX_TOOLS: readonly string[] = ['bwrap', 'socat'];
 
-function isExecutableFile(path: string): boolean {
+/** An executable regular file (sandbox tool probes). */
+export function isExecutableFile(path: string): boolean {
   try {
     if (!statSync(path).isFile()) return false;
     accessSync(path, constants.X_OK);

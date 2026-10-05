@@ -93,6 +93,8 @@ export interface StdioClientOptions {
   timeoutMs?: number;
   /** Redacts stderr before it is quoted in an error. */
   redact?: (s: string) => string;
+  /** Called once when the process has exited (removes a sandbox's private folder). */
+  onExit?: () => void;
 }
 
 /** A plugin server as a child process speaking MCP on stdin/stdout. */
@@ -118,6 +120,7 @@ export class StdioMcpClient implements McpClient {
           detached: process.platform !== 'win32',
         });
       } catch (err) {
+        this.runOnExit();
         throw new OrbitError(
           'driver_unavailable',
           `Could not start the plugin server: ${err instanceof Error ? err.message : String(err)}`,
@@ -141,13 +144,26 @@ export class StdioMcpClient implements McpClient {
         }
       };
       child.on('error', (err) => fail(`The plugin server failed to start: ${err.message}`));
-      child.on('close', (code, sig) =>
-        fail(`The plugin server exited (${sig ?? `code ${code ?? 'unknown'}`})`),
-      );
+      child.on('close', (code, sig) => {
+        fail(`The plugin server exited (${sig ?? `code ${code ?? 'unknown'}`})`);
+        this.runOnExit();
+      });
       await this.request('initialize', INIT_PARAMS, 20_000);
       this.notify('notifications/initialized');
     })();
     return this.ready;
+  }
+
+  private exitHandled = false;
+
+  private runOnExit(): void {
+    if (this.exitHandled) return;
+    this.exitHandled = true;
+    try {
+      this.opts.onExit?.();
+    } catch {
+      // Best effort: a leftover private folder is not worth failing a Run.
+    }
   }
 
   private withStderr(message: string): string {
@@ -230,6 +246,7 @@ export class StdioMcpClient implements McpClient {
   close(): Promise<void> {
     const child = this.child;
     this.child = null;
+    if (!child) this.runOnExit(); // never started
     if (child?.exitCode !== null || child.signalCode !== null) return Promise.resolve();
     return new Promise((resolve) => {
       const kill = (sig: NodeJS.Signals) => {
