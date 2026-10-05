@@ -231,9 +231,124 @@ proxy counters.
   for plugins is a follow-up.
 - Found while verifying: Claude Code 2.1.289 refuses to start with
   `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` when bubblewrap is missing. The SDK
-  engine on the host (directory/worktree Bots in API-key mode) sets it
-  (ADR-005), so SDK Runs on a host without bubblewrap fail with an engine
-  error. Out of scope here; recorded for the lead.
+  engine on the host (directory/worktree Bots in API-key mode) set it
+  (ADR-005), so SDK Runs on a host without bubblewrap failed. Resolved by the
+  amendment below: host engines now sit behind the key proxy too.
 - CI's `check` job runs the Docker integration tests (the runner has Docker):
   they build a small `node:22-bookworm-slim` + socat image tagged by its
   Dockerfile's hash, not the full sandbox image.
+
+## Amendment (M8): host SDK engines behind the key proxy
+
+### Context
+
+After this ADR the SDK engine on the host (directory and worktree Bots in
+API-key mode) still received the real `ANTHROPIC_API_KEY` and relied on
+`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` to keep it from its children. On Linux
+Claude Code enforces that scrub with bubblewrap and refuses to start without
+it, so SDK Runs failed on hosts without bwrap (commit `6182e8a` made that an
+early `engine_sandbox_missing` failure) — and the `docker compose` deployment
+(orbitd in an unprivileged container, where bwrap cannot create namespaces)
+could never run a Bot.
+
+### Decision
+
+**API keys and apiKeyHelper output never enter an engine process.** Host
+engines with `api_key` / `api_key_helper` reach the API through orbitd's
+`HostKeyProxy` (`@orbit/sandbox/src/proxy/host-key-proxy.ts`):
+
+- **One loopback TCP listener per daemon** (`127.0.0.1`, random port, started
+  with the first segment, `unref`'d), with a **per-segment credential in the
+  path**: each Run segment's lease is a random 32-byte base64url token, and
+  the engine gets `ANTHROPIC_BASE_URL=http://127.0.0.1:<port>/<token>`. One
+  listener rather than one per segment: the token, not the port, is what
+  keeps other local users and processes out (ports on loopback are easy to
+  scan), ending a lease is synchronous and immediate (no `server.close`
+  race), the port does not churn, and doctor has one set of counters.
+  Requests without a live token — none, malformed, unknown, of an ended
+  segment, or another segment's — are refused with an API-shaped 403 before
+  anything is read upstream. Live leases are looked up by the token's
+  SHA-256, so the secret is never compared directly. Requests carrying an
+  `Origin` header (a browser) are refused, CONNECT and upgrades are refused.
+- Everything after the token goes through the same forwarder as the Docker
+  proxy (`createApiForwarder`, factored out of `createApiProxy`): only
+  `API_ROUTES`, an allowlist of request headers, the real key injected as
+  `x-api-key`, the token stripped from the forwarded path (a gateway prefix of
+  orbitd's `ANTHROPIC_BASE_URL` is kept), streaming responses, bodies bounded,
+  `mcp_servers` and URL content sources refused. The server-side web tools
+  are **allowed** for host engines: the engine has the host's network anyway,
+  so refusing them would only take WebSearch away without closing any path.
+  Refusals are counted and logged by route and reason — never the token, a
+  query string or a header.
+- The token is registered with the redactor (like per-Run hook tokens) and
+  never appears in events, logs or doctor.
+- **The lease is the SdkDriver's, per segment** (`EngineKeyProxy.open()` in
+  `run()`): it closes when the driver finishes, in its `finally`, and the
+  moment the Run's abort signal fires — stop, kill switches, budgets,
+  pause-now and shutdown all abort that signal — and a close cuts the
+  segment's in-flight requests (upstream and client). Putting the lease in
+  the driver (not the workspace provider) also covers the triage path, which
+  calls `driver.run` outside the orchestrator. The orchestrator now releases a
+  Docker Bot's lease at abort time as well, not only when the segment ends.
+- The engine env is `proxiedEngineEnv`: the `tool` allowlist (no API or cloud
+  credential, no provider switch, not the host's `ANTHROPIC_BASE_URL`), plus
+  `ANTHROPIC_API_KEY=orbit-key-proxy-placeholder`, the proxy URL, and
+  `NO_PROXY`/`no_proxy` extended with `127.0.0.1,localhost` so a host
+  `HTTPS_PROXY` never sees the engine's API traffic. `assertProxiedEngineEnv`
+  checks it (only the placeholder key, no credential or provider switch, a
+  loopback `http://127.0.0.1` base URL) and has positive controls.
+- **Scrub by capability:** with no secret left in the engine's env,
+  `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` is `1` where Claude Code can enforce it
+  (macOS; Linux with `bwrap` on orbitd's PATH) as defence in depth, and `0`
+  where it cannot (Linux without bwrap — e.g. the docker compose image).
+- `apiKeyHelper` runs inside orbitd (`keyProxyCredential`, one key source and
+  one helper cache shared by the host and Docker proxies) and is never put in
+  a proxied engine's settings. The engine reports `ANTHROPIC_API_KEY` as its
+  source; `checkAuthSource` expects exactly that for every proxied engine (an
+  engine that found an `apiKeyHelper` of its own is stopped).
+- `SdkDriver` refuses to be constructed for `api_key` / `api_key_helper`
+  without a key proxy, so no code path hands a key to an engine any more.
+- **Bedrock and Vertex** cannot be proxied: unchanged — the cloud credentials
+  go to the engine (`sdk-engine` allowlist), scrub `1`, and on Linux without
+  bwrap the Run fails before the engine starts (`engine_sandbox_missing`).
+- **Doctor**: `engineKey` (`delivery: proxied | in_engine`,
+  `subprocessScrub`, a detail line, and the host proxy's port, live segments
+  and counters once the engine started); `sdk_needs_bubblewrap` now fires only
+  for Bedrock/Vertex; `key_proxy_upstream` warns when orbitd's
+  `ANTHROPIC_BASE_URL` is plain `http` to another machine (the proxy sends the
+  key only over https or to a loopback gateway; before, the engine would have
+  sent it in clear text).
+
+**Verified, not guessed** (Claude Code 2.1.289 / Agent SDK 0.3.289, engine
+binary from `@anthropic-ai/claude-agent-sdk-linux-x64`, `env -i`, scratch
+HOME, a recording upstream on loopback): the engine keeps a base-URL path
+prefix for every request, including its warm-up (`HEAD /<token>/api/hello`,
+answered by the forwarder) and `POST /<token>/v1/messages?beta=true`; it
+accepts the placeholder with `--bare` and sends it as `x-api-key`; with scrub
+`1` and no bwrap on PATH it refuses to start, with scrub `0` the turn
+completes. `packages/runtime/test/sdk.key-proxy.test.ts` runs this in CI when
+the binary is installed: the real SdkDriver, the real `query()` and the real
+`HostKeyProxy` against a fake upstream, once with an empty PATH and scrub `0`,
+once with scrub `1` when bwrap works — asserting the upstream got the real key
+on token-free paths and that the engine process's `/proc/<pid>/environ` and
+`cmdline` held the placeholder and never the key.
+
+### Consequences
+
+- The docker compose deployment and Linux hosts without bubblewrap run
+  API-key Bots; the key exists only in orbitd.
+- While a segment runs, anything the engine starts (Bash included) inherits
+  the base URL with the token and the placeholder when the scrub is off, so it
+  can make API calls with the owner's key through the proxy — the same
+  exposure as code in a Docker Bot's container: bounded by the segment
+  (wall-clock budget, kill switches, stop), by the forwarder's routes and
+  body rules, counted in doctor, not metered in Orbit's token/cost budgets
+  (only the engine's reported usage is). Before, the same child could read
+  the key itself when the scrub was off, or the Run could not start at all.
+- A process of the same OS user can read the token from the engine's
+  `/proc/<pid>/environ` during a segment; such a process could read orbitd's
+  environment (the key) anyway. Other users cannot.
+- The key proxy connects to the upstream directly; orbitd's `HTTPS_PROXY` is
+  not chained (as for Docker Bots). Hosts that reach the API only through an
+  outbound proxy can no longer run API-key SDK Bots; chaining CONNECT through
+  `HTTPS_PROXY` in the forwarder is the follow-up.
