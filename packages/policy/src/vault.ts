@@ -223,7 +223,7 @@ export class SecretVault {
   set(name: string, value: string): SecretMeta {
     assertName(name);
     // Anything shorter could not be redacted without mangling ordinary text (review L10).
-    if (value.length < MIN_SHORT_SECRET_LENGTH) {
+    if (value.trim().length < MIN_SHORT_SECRET_LENGTH) {
       throw new OrbitError(
         'invalid_input',
         `A secret must be at least ${MIN_SHORT_SECRET_LENGTH} characters`,

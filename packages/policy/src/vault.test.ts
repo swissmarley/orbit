@@ -89,6 +89,8 @@ describe('SecretVault basics', () => {
     // Too short to redact (review L10): refused instead of stored.
     expect(() => v.set('EMPTY', '')).toThrow(/at least 4 characters/);
     expect(() => v.set('PIN', '123')).toThrow(/at least 4 characters/);
+    // Whitespace does not count: ' ab ' would be redacted as 'ab' (review L4).
+    expect(() => v.set('PADDED', '  ab \n')).toThrow(/at least 4 characters/);
     v.set('PIN', '1234');
     expect(v.get('PIN')).toBe('1234');
     v.set('UNICODE', 'pässwörd ✓ 🔑');

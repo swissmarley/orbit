@@ -157,6 +157,8 @@ describe('PluginRegistry', () => {
       'env_names',
       'send_message',
     ]);
+    // The engine gets the manifest's descriptions (none here), not the server's (review L2).
+    expect('tools' in ready && ready.tools.map((t) => t.description)).toEqual(['', '', '']);
   });
 
   it('holds back a plugin whose manifest changed after it was enabled', async () => {
@@ -312,5 +314,16 @@ describe('PluginSegment', () => {
     expect(env?.text).not.toMatch(/ANTHROPIC|CLAUDE_CODE_OAUTH|ORBIT_HOOK|UNRELATED|AWS_SECRET/);
     await segments.close(seg, 'run_1');
     expect(await binding?.call('echo', { text: 'hi' })).toMatchObject({ isError: true });
+  });
+});
+
+describe('adding plugins (review L1)', () => {
+  it("refuses a plugin folder inside Orbit's data folder, where Bots can write", () => {
+    const inside = join(root, 'home', 'workspaces', 'bot_1', 'evil-plugin');
+    writePlugin(inside, { id: 'evil' });
+    expect(() => registry.install(inside, 'owner')).toThrow(/inside Orbit's data folder/);
+    // Positive control: the same plugin from outside is added.
+    writePlugin(pluginDir(), { id: 'evil' });
+    expect(registry.install(pluginDir(), 'owner').id).toBe('evil');
   });
 });

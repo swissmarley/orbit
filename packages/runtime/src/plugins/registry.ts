@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, statSync } from 'node:fs';
+import { mkdirSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +13,7 @@ import {
   pluginToolName,
 } from '@orbit/core';
 import { type AuditSink, type ToolTierOverride, effectivePluginTier } from '@orbit/policy';
-import { pluginDeniedPaths } from '@orbit/sandbox';
+import { isWithin, pluginDeniedPaths } from '@orbit/sandbox';
 import type { OrbitDb } from '@orbit/store';
 import type { Env } from '../env';
 import { HttpMcpClient, type McpClient, type McpToolDef, StdioMcpClient } from './client';
@@ -68,6 +68,14 @@ export interface SecretStore {
   has(name: string): boolean;
   set(name: string, value: string): unknown;
   remove(name: string): boolean;
+}
+
+function realOrSelf(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
 }
 
 export interface ClientSpec {
@@ -401,6 +409,14 @@ export class PluginRegistry {
   install(dir: string, by: string): PluginStatus {
     const loaded = loadManifest(dir);
     const id = loaded.manifest.id;
+    // Bot workspaces live under $ORBIT_HOME: a plugin there could be rewritten by a Bot (review L1).
+    if (isWithin(realOrSelf(loaded.dir), realOrSelf(this.deps.home))) {
+      throw new OrbitError(
+        'invalid_input',
+        `${loaded.dir} is inside Orbit's data folder, where Bots can write`,
+        { hint: 'Keep plugins in a folder of your own outside $ORBIT_HOME and add it from there.' },
+      );
+    }
     if (this.known().has(id)) {
       throw new OrbitError('conflict', `A plugin named "${id}" is already known`);
     }
@@ -607,10 +623,16 @@ export class PluginRegistry {
       };
       return { reason: `plugin ${id} ${why[state]}` };
     }
+    const declared = new Map(k.loaded.manifest.tools.map((t) => [t.name, t.description]));
     return {
       manifest: k.loaded.manifest,
       dir: k.loaded.dir,
-      tools: row?.tools ? (JSON.parse(row.tools) as McpToolDef[]) : [],
+      // The engine sees the description the owner enabled (the manifest, pinned by
+      // its hash), never text the server makes up at run time (review L2).
+      tools: (row?.tools ? (JSON.parse(row.tools) as McpToolDef[]) : []).map((t) => ({
+        ...t,
+        description: declared.get(t.name) ?? '',
+      })),
     };
   }
 

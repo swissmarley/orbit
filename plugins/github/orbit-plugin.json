@@ -53,7 +53,7 @@
     {
       "name": "git_push",
       "tier": "EXTERNAL",
-      "description": "Push the Bot's own orbit/<bot> branch, never forced (asks you)"
+      "description": "Push the Bot's own orbit/<bot> branch at the commit sha git_log shows (name both), never forced (asks you)"
     }
   ],
   "secrets": [

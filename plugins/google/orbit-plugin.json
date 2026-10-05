@@ -22,7 +22,11 @@
       "tier": "WRITE_LOCAL",
       "description": "Create a draft or a draft reply (nothing is sent)"
     },
-    { "name": "send_draft", "tier": "EXTERNAL", "description": "Send a draft (asks you)" },
+    {
+      "name": "send_draft",
+      "tier": "EXTERNAL",
+      "description": "Send a draft: repeat its draftId, recipients (to, cc) and subject as create_draft or list_drafts showed them; a draft that does not match is not sent (asks you)"
+    },
     {
       "name": "list_events",
       "tier": "READ",

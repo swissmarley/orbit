@@ -46,6 +46,22 @@ type Json = Record<string, unknown>;
 const isObj = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v);
 const str = (v: unknown) => (typeof v === 'string' ? v : null);
 
+const SLACK_CHANNEL = /^[CGD][A-Z0-9]{2,20}$/;
+const SLACK_USER = /^[UW][A-Z0-9]{2,20}$/;
+const SLACK_TS = /^\d{1,12}\.\d{1,8}$/;
+
+/** Socket Mode URLs: wss only (ws only to a loopback test server). */
+export function slackSocketUrlOk(url: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (u.protocol === 'wss:') return true;
+  return u.protocol === 'ws:' && ['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname);
+}
+
 /** A Slack event payload → a message Orbit starts Runs from, or null (bots, edits, joins…). */
 export function slackMessageOf(payload: unknown): SlackMessage | null {
   if (!isObj(payload) || !isObj(payload.event)) return null;
@@ -54,17 +70,22 @@ export function slackMessageOf(payload: unknown): SlackMessage | null {
   if (type !== 'message' && type !== 'app_mention') return null;
   // Edits, deletions, joins and bot posts (including Orbit's own) never start Runs.
   if (e.subtype !== undefined || e.bot_id !== undefined) return null;
+  // Ids and timestamps go into the Run's context line: only Slack's own shapes (review L3).
   const channel = str(e.channel);
   const user = str(e.user);
   const ts = str(e.ts);
-  if (!channel || !user || !ts) return null;
+  const threadTs = str(e.thread_ts);
+  if (!channel || !SLACK_CHANNEL.test(channel)) return null;
+  if (!user || !SLACK_USER.test(user)) return null;
+  if (!ts || !SLACK_TS.test(ts)) return null;
+  if (threadTs !== null && !SLACK_TS.test(threadTs)) return null;
   return {
     type,
     channel,
     user,
     text: (str(e.text) ?? '').slice(0, 8000),
     ts,
-    threadTs: str(e.thread_ts),
+    threadTs,
   };
 }
 
@@ -161,7 +182,7 @@ export class SlackSocket {
         return;
       }
       url = body.url;
-      if (!/^wss?:\/\//.test(url)) {
+      if (!slackSocketUrlOk(url)) {
         this.schedule('Slack returned an unexpected socket URL');
         return;
       }
