@@ -7,6 +7,8 @@ export interface Io {
   err(text: string): void;
   env: Record<string, string | undefined>;
   color: boolean;
+  /** stdin and stdout are a terminal: `orbit` alone opens the TUI. */
+  interactive?: boolean;
   /** Register a Ctrl-C handler; returns an unregister function. */
   onInterrupt(handler: () => void): () => void;
   /**
@@ -31,6 +33,7 @@ export function processIo(): Io {
     err: (t) => process.stderr.write(t.endsWith('\n') ? t : `${t}\n`),
     env,
     color,
+    interactive: process.stdin.isTTY && process.stdout.isTTY,
     onInterrupt(handler) {
       process.on('SIGINT', handler);
       return () => process.off('SIGINT', handler);

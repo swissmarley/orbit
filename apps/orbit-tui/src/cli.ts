@@ -11,6 +11,7 @@ import { rulesAdd, rulesList, rulesRevoke } from './commands/rules';
 import { logs, queueShow, resumeRun, runBot, runsList, schedulesShow } from './commands/run';
 import { secretList, secretRemove, secretSet } from './commands/secrets';
 import { Context } from './context';
+import { runTui } from './tui';
 import { type Io, painter } from './io';
 
 export const VERSION = '0.1.0';
@@ -33,6 +34,11 @@ export async function main(argv: string[], io: Io): Promise<number> {
     .enablePositionalOptions()
     .configureOutput({ writeOut: (s) => io.out(s.trimEnd()), writeErr: (s) => io.err(s.trimEnd()) })
     .showHelpAfterError();
+
+  program
+    .command('tui', { isDefault: false })
+    .description('Full-screen terminal UI: Bots, live timeline, approvals (also `orbit` alone)')
+    .action(() => set(runTui(context())));
 
   program
     .command('doctor')
@@ -275,6 +281,8 @@ export async function main(argv: string[], io: Io): Promise<number> {
     .action((name: string) => set(secretRemove(context(), name)));
 
   try {
+    // `orbit` alone in a terminal opens the TUI; elsewhere it prints help.
+    if (argv.length === 0 && io.interactive) argv = ['tui'];
     await program.parseAsync(argv, { from: 'user' });
   } catch (err) {
     if (err instanceof CommanderError) {

@@ -1,0 +1,96 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`TUI actions > d asks for a reason, then denies with it 1`] = `
+"orbit │ mock · Demo mode │ ● live │ 0/2 running                                                                   ? help
+╭─────────────────────────────╮╭───────────────────────────────────────────────╮╭──────────────────────────────────────╮
+│ Bots                        ││ Timeline                                      ││ Approvals 1 pending                  │
+│ ▸ ◆ Mailer ◆1               ││ run_a2 · needs you                            ││ ▸ send email (gmail) → ada@example.… │
+│   ✔ Notes                   ││ ▶ Reply to Ada                                ││                                      │
+│   ⏸ Digest                  ││   driver mock · mock · model opus             ││ What send email (gmail) → ada@examp… │
+│                             ││   ✦ I drafted the reply to Ada.               ││ Why  I drafted the reply to Ada and… │
+│ runs [ ]                    ││   ⚙ mcp__gmail__send_email → ada@example.com  ││ Bot  Mailer EXTERNAL                 │
+│ › ◆ needs you  09:15        ││   ⚑ approval needed send email (gmail) → ada… ││ {                                    │
+│   ✔ done       09:15        ││ ⏸ waiting for your approval (apr_1)           ││   "to": "ada@example.com",           │
+│                             ││                                               ││   "subject": "Tuesday"               │
+│                             ││                                               ││ }                                    │
+│                             ││                                               ││ a approve · A always · d deny        │
+│                             ││                                               ││                                      │
+│                             ││                                               ││                                      │
+│                             ││                                               ││                                      │
+│                             ││                                               ││                                      │
+╰─────────────────────────────╯╰───────────────────────────────────────────────╯╰──────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Deny — reason the Bot will see (Enter sends, Esc cancels):                                                           │
+│ › wrong tone                                                                                                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯"
+`;
+
+exports[`TUI rendering > help overlay lists every binding 1`] = `
+"orbit │ mock · Demo mode │ ● live │ 0/2 running                                                                   ? help
+╔════════════════════════════════════════════════════════════════════════════════════════╗
+║  Keys                                                                                  ║
+║  Tab / Shift-Tab, h l, 1 2 3 move between Bots, Timeline and Approvals                 ║
+║  j k / ↓ ↑                   move the selection (Timeline: scroll)                     ║
+║  [ ]                         older / newer Run of the selected Bot                     ║
+║  r                           run the selected Bot now                                  ║
+║  p                           pause / resume the selected Bot                           ║
+║  s                           stop the selected Run (Timeline)                          ║
+║  u                           resume a parked or rate-limited Run (Timeline)            ║
+║  g G                         Timeline top / follow live                                ║
+║  a                           approve the selected card                                 ║
+║  A                           approve and always allow this tool for the Bot (7 days)   ║
+║  d                           deny, with a reason the Bot will see                      ║
+║  K                           global kill switch (asks first)                           ║
+║  R                           refresh                                                   ║
+║  ?                           this help                                                 ║
+║  q                           quit (Bots keep running in orbitd)                        ║
+║  Edit-then-approve: orbit approve <id> --edit … · ? or Esc closes                      ║
+╚════════════════════════════════════════════════════════════════════════════════════════╝
+Tab/h/l panes · j/k move · r run · a/d approve/deny · K kill · ? help · q quit"
+`;
+
+exports[`TUI rendering > narrow: one pane at a time with a tab bar 1`] = `
+"orbit │ mock · Demo mode │ ● live │ 0/2 running                   ? help
+ 1 Bots  2 Timeline  3 Approvals
+╭──────────────────────────────────────────────────────────────────────╮
+│ Approvals 1 pending                                                  │
+│ ▸ send email (gmail) → ada@example.com                               │
+│                                                                      │
+│ What send email (gmail) → ada@example.com                            │
+│ Why  I drafted the reply to Ada and will send it now.                │
+│ Bot  Mailer EXTERNAL                                                 │
+│ {                                                                    │
+│   "to": "ada@example.com",                                           │
+│   "subject": "Tuesday"                                               │
+│ }                                                                    │
+│ a approve · A always · d deny                                        │
+│                                                                      │
+│                                                                      │
+╰──────────────────────────────────────────────────────────────────────╯
+Tab/h/l panes · j/k move · r run · a/d approve/deny · K kill · ? help ·…"
+`;
+
+exports[`TUI rendering > wide: three panes, status bar, the parked Run and its approval card 1`] = `
+"orbit │ mock · Demo mode │ ● live │ 0/2 running                                                                   ? help
+╭─────────────────────────────╮╭───────────────────────────────────────────────╮╭──────────────────────────────────────╮
+│ Bots                        ││ Timeline                                      ││ Approvals 1 pending                  │
+│ ▸ ◆ Mailer ◆1               ││ run_a2 · needs you                            ││ ▸ send email (gmail) → ada@example.… │
+│   ✔ Notes                   ││ ▶ Reply to Ada                                ││                                      │
+│   ⏸ Digest                  ││   driver mock · mock · model opus             ││ What send email (gmail) → ada@examp… │
+│                             ││   ✦ I drafted the reply to Ada.               ││ Why  I drafted the reply to Ada and… │
+│ runs [ ]                    ││   ⚙ mcp__gmail__send_email → ada@example.com  ││ Bot  Mailer EXTERNAL                 │
+│ › ◆ needs you  09:15        ││   ⚑ approval needed send email (gmail) → ada… ││ {                                    │
+│   ✔ done       09:15        ││ ⏸ waiting for your approval (apr_1)           ││   "to": "ada@example.com",           │
+│                             ││                                               ││   "subject": "Tuesday"               │
+│                             ││                                               ││ }                                    │
+│                             ││                                               ││                                      │
+│                             ││                                               ││                                      │
+│                             ││                                               ││                                      │
+│                             ││                                               ││                                      │
+│                             ││                                               ││                                      │
+│                             ││                                               ││                                      │
+│                             ││                                               ││                                      │
+│                             ││                                               ││                                      │
+╰─────────────────────────────╯╰───────────────────────────────────────────────╯╰──────────────────────────────────────╯
+Tab/h/l panes · j/k move · r run · a/d approve/deny · K kill · ? help · q quit"
+`;
