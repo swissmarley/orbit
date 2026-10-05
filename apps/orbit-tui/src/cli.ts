@@ -1,5 +1,6 @@
 import { Command, CommanderError } from 'commander';
 import { ExitCode, OrbitError, defaultRedactor, errorMessage } from '@orbit/core';
+import { openApp } from './commands/app';
 import { botCreate, botList } from './commands/bot';
 import { doctor } from './commands/doctor';
 import { loginHelp } from './commands/login-help';
@@ -325,6 +326,14 @@ export async function main(argv: string[], io: Io): Promise<number> {
     .argument('<bot>', 'bot name or id')
     .option('--json', 'NDJSON events')
     .action((b: string, o: { json?: boolean }) => set(botLogs(context(), b, o)));
+
+  program
+    .command('app')
+    .description('Open the Orbit App in your browser (one-time sign-in link)')
+    .option('--origin <url>', 'App origin when not served by orbitd (e.g. the Vite dev server)')
+    .option('--no-open', 'print the link instead of opening a browser')
+    .option('--json', 'machine-readable output ({ url, expiresAt })')
+    .action((o: { origin?: string; open?: boolean; json?: boolean }) => set(openApp(context(), o)));
 
   program
     .command('completion')

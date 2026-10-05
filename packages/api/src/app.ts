@@ -1,7 +1,10 @@
 import { timingSafeEqual } from 'node:crypto';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { extname, resolve, sep } from 'node:path';
 import { OrbitError, type RunEvent, errorMessage } from '@orbit/core';
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { streamSSE } from 'hono/streaming';
 import { ZodError, z } from 'zod';
 import {
@@ -15,6 +18,7 @@ import {
 } from './contract';
 import { buildOpenApi } from './openapi';
 import type { OrbitService } from './service';
+import { SessionStore } from './session';
 
 export interface AppOptions {
   service: OrbitService;
@@ -25,6 +29,15 @@ export interface AppOptions {
    * naming any other host are refused (DNS-rebinding guard). Empty = any.
    */
   allowedHosts?: readonly string[] | (() => readonly string[]);
+  /**
+   * Browser origins allowed besides orbitd's own (ADR-011): loopback dev
+   * servers and the desktop shell, from `api.allowedOrigins`.
+   */
+  allowedOrigins?: readonly string[] | (() => readonly string[]);
+  /** App sessions (one-time tickets → cookies); created when omitted. */
+  sessions?: SessionStore;
+  /** Directory of the built App served at `/` (same origin as the API); null/omitted = not served. */
+  appRoot?: string | null;
   /** SSE heartbeat comment interval. Default 15 s. */
   heartbeatMs?: number;
   /** Validate every JSON response against its contract schema (tests). */
@@ -49,6 +62,58 @@ function param(params: Record<string, string>, name: string): string {
 }
 
 const MAX_BODY_BYTES = 1024 * 1024;
+
+/** Header every cookie-authenticated request must carry (a page on another origin cannot set it without our CORS consent). */
+export const CSRF_HEADER = 'x-orbit-csrf';
+
+/** Per-port cookie name: cookies ignore ports, and two daemons may share 127.0.0.1. */
+export function sessionCookieName(url: string): string {
+  const u = new URL(url);
+  return `orbit_session_${u.port || (u.protocol === 'https:' ? '443' : '80')}`;
+}
+
+/** One cookie from a Cookie header (no decoding: session ids are base64url). */
+function cookieValue(header: string | undefined, name: string): string | undefined {
+  for (const part of (header ?? '').split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0 && part.slice(0, i).trim() === name) return part.slice(i + 1).trim();
+  }
+  return undefined;
+}
+
+/** The App's page policy: nothing but its own files and its own API. */
+export const APP_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  // Radix positions popovers with inline style attributes.
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "font-src 'self'",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+
+const CONTENT_TYPES: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8',
+  '.webmanifest': 'application/manifest+json',
+};
+
+const APP_NOT_BUILT = `<!doctype html><meta charset="utf-8"><title>Orbit</title>
+<body style="font-family:system-ui;max-width:40rem;margin:4rem auto;padding:0 1rem">
+<h1>The Orbit App is not built</h1>
+<p>Build it once with <code>pnpm --filter @orbit/app build</code>, then run <code>orbit app</code> again.
+The CLI (<code>orbit</code>) and the TUI work without it.</p></body>`;
 
 function tokenMatches(header: string | undefined, token: string): boolean {
   const presented = /^Bearer (\S+)$/.exec(header ?? '')?.[1];
@@ -85,6 +150,27 @@ export function createApp(opts: AppOptions): Hono {
     return new Set((list ?? []).map((h) => h.toLowerCase()));
   };
   const publicPaths = new Set(['/openapi.json', routes.health.path]);
+  const sessions = opts.sessions ?? new SessionStore();
+  /** How each request authenticated (set by the auth middleware). */
+  const via = new WeakMap<Request, 'token' | 'session'>();
+  const extraOrigins = () => {
+    const list =
+      typeof opts.allowedOrigins === 'function' ? opts.allowedOrigins() : opts.allowedOrigins;
+    return new Set((list ?? []).map((o) => o.toLowerCase().replace(/\/+$/, '')));
+  };
+  /** orbitd's own origin (the Host header is already checked against allowedHosts). */
+  const ownOrigin = (host: string | undefined) => `http://${(host ?? '').toLowerCase()}`;
+  const originAllowed = (host: string | undefined, origin: string) => {
+    const o = origin.toLowerCase();
+    return o === ownOrigin(host) || extraOrigins().has(o);
+  };
+  const appRoot = opts.appRoot ? resolve(opts.appRoot) : null;
+  const isAppPath = (method: string, path: string) =>
+    appRoot !== null &&
+    (method === 'GET' || method === 'HEAD') &&
+    !path.startsWith('/v1/') &&
+    path !== '/v1' &&
+    path !== '/openapi.json';
 
   app.onError((err, c) => {
     if (err instanceof OrbitError) {
@@ -106,7 +192,8 @@ export function createApp(opts: AppOptions): Hono {
     c.json(errorBody('not_found', `No route ${c.req.method} ${c.req.path}`), 404),
   );
 
-  // DNS rebinding and browser guards: only our own host names, no cross-origin callers.
+  // DNS rebinding and browser guards: only our own host names, and only
+  // allowlisted origins (orbitd's own, which serves the App, plus api.allowedOrigins).
   app.use('*', async (c, next) => {
     const allowed = allowedHosts();
     // Both the request URL (absolute-form targets) and the Host header (review L4).
@@ -116,27 +203,64 @@ export function createApp(opts: AppOptions): Hono {
         return c.json(errorBody('forbidden', `Host ${h} is not served here`), 403);
       }
     }
-    // Browsers always send Origin on cross-site requests; Orbit's clients never do.
-    // (The M5 app gets an explicit origin allowlist.)
-    if (c.req.header('origin') !== undefined || c.req.header('sec-fetch-site') === 'cross-site') {
+    const origin = c.req.header('origin');
+    const okOrigin = origin !== undefined && originAllowed(c.req.header('host'), origin);
+    if (origin !== undefined && !okOrigin) {
       return c.json(errorBody('forbidden', 'Cross-origin requests are not allowed'), 403);
     }
-    return next();
+    // A cross-site request without an Origin we know (old browsers, odd fetch modes).
+    if (c.req.header('sec-fetch-site') === 'cross-site' && !okOrigin) {
+      return c.json(errorBody('forbidden', 'Cross-origin requests are not allowed'), 403);
+    }
+    const cors = okOrigin && origin.toLowerCase() !== ownOrigin(c.req.header('host'));
+    if (c.req.method === 'OPTIONS') {
+      if (!cors)
+        return c.json(errorBody('forbidden', 'Cross-origin requests are not allowed'), 403);
+      return c.body(null, 204, {
+        'access-control-allow-origin': origin,
+        'access-control-allow-credentials': 'true',
+        'access-control-allow-methods': 'GET, POST, PUT, DELETE',
+        'access-control-allow-headers': `authorization, content-type, last-event-id, ${CSRF_HEADER}`,
+        'access-control-max-age': '600',
+        vary: 'Origin',
+      });
+    }
+    await next();
+    c.res.headers.set('x-content-type-options', 'nosniff');
+    c.res.headers.set('referrer-policy', 'no-referrer');
+    if (cors) {
+      c.res.headers.set('access-control-allow-origin', origin);
+      c.res.headers.set('access-control-allow-credentials', 'true');
+      c.res.headers.append('vary', 'Origin');
+    }
+    return undefined;
   });
 
   app.use('*', async (c, next) => {
-    if (publicPaths.has(c.req.path)) return next();
-    if (!tokenMatches(c.req.header('authorization'), opts.token)) {
-      return c.json(
-        errorBody(
-          'unauthorized',
-          'Missing or wrong API token',
-          'The CLI reads it from $ORBIT_HOME/daemon.token.',
-        ),
-        401,
-      );
+    if (publicPaths.has(c.req.path) || isAppPath(c.req.method, c.req.path)) return next();
+    if (c.req.method === 'POST' && c.req.path === routes.createSession.path) return next();
+    if (tokenMatches(c.req.header('authorization'), opts.token)) {
+      via.set(c.req.raw, 'token');
+      return next();
     }
-    return next();
+    const cookie = cookieValue(c.req.header('cookie'), sessionCookieName(c.req.url));
+    if (cookie !== undefined && sessions.check(cookie)) {
+      // The cookie rides along on any same-site request; the header proves
+      // the App (same origin or CORS-approved) sent it.
+      if (c.req.header(CSRF_HEADER) !== '1') {
+        return c.json(errorBody('forbidden', `Missing the ${CSRF_HEADER} header`), 403);
+      }
+      via.set(c.req.raw, 'session');
+      return next();
+    }
+    return c.json(
+      errorBody(
+        'unauthorized',
+        'Missing or wrong API token',
+        'The CLI reads it from $ORBIT_HOME/daemon.token; the App signs in with `orbit app`.',
+      ),
+      401,
+    );
   });
 
   app.use(
@@ -148,6 +272,12 @@ export function createApp(opts: AppOptions): Hono {
   );
 
   app.get('/openapi.json', (c) => c.json(buildOpenApi()));
+
+  const requireVia = (c: Context) => {
+    const v = via.get(c.req.raw);
+    if (!v) throw new OrbitError('unauthorized', 'Not signed in');
+    return v;
+  };
 
   const handlers: Partial<Record<RouteName, Handler>> = {
     health: () => ({
@@ -161,6 +291,38 @@ export function createApp(opts: AppOptions): Hono {
     stopDaemon: () => {
       // Answer first, then stop.
       setTimeout(() => opts.onStop?.(), 10).unref();
+      return { ok: true };
+    },
+    getSession: (_i, c) => ({ via: requireVia(c) }),
+    createLoginTicket: (_i, c) => {
+      if (requireVia(c) !== 'token') {
+        throw new OrbitError('forbidden', 'Only the bearer token (the CLI) can mint login tickets');
+      }
+      return sessions.mintTicket();
+    },
+    createSession: ({ body }, c) => {
+      if (c.req.header(CSRF_HEADER) !== '1') {
+        throw new OrbitError('forbidden', `Missing the ${CSRF_HEADER} header`);
+      }
+      const redeemed = sessions.redeem((body as z.output<typeof routes.createSession.body>).ticket);
+      if (!redeemed) {
+        throw new OrbitError('unauthorized', 'This sign-in link was already used or has expired', {
+          hint: 'Run `orbit app` again for a fresh link.',
+        });
+      }
+      setCookie(c, sessionCookieName(c.req.url), redeemed.session, {
+        path: '/',
+        httpOnly: true,
+        sameSite: 'Strict',
+        maxAge: redeemed.maxAgeSeconds,
+      });
+      return { ok: true };
+    },
+    deleteSession: (_i, c) => {
+      const name = sessionCookieName(c.req.url);
+      const cookie = getCookie(c, name);
+      if (cookie !== undefined) sessions.revoke(cookie);
+      deleteCookie(c, name, { path: '/' });
       return { ok: true };
     },
     listBots: () => service.bots.list(),
@@ -310,6 +472,46 @@ export function createApp(opts: AppOptions): Hono {
       if (result instanceof Response) return result;
       if (opts.validateResponses && def.response) def.response.parse(result);
       return c.json(result as object, (def.status ?? 200) as 200);
+    });
+  }
+  if (appRoot !== null) {
+    const serveFile = (c: Context, file: string) => {
+      const type = CONTENT_TYPES[extname(file)] ?? 'application/octet-stream';
+      const html = type.startsWith('text/html');
+      return c.body(readFileSync(file), 200, {
+        'content-type': type,
+        // Hashed asset names never change; the page itself always revalidates.
+        'cache-control': file.includes(`${sep}assets${sep}`)
+          ? 'public, max-age=31536000, immutable'
+          : 'no-cache',
+        ...(html ? { 'content-security-policy': APP_CSP, 'x-frame-options': 'DENY' } : {}),
+      });
+    };
+    app.get('*', (c) => {
+      if (!isAppPath(c.req.method, c.req.path)) {
+        return c.json(errorBody('not_found', `No route ${c.req.method} ${c.req.path}`), 404);
+      }
+      let path: string;
+      try {
+        path = decodeURIComponent(c.req.path);
+      } catch {
+        return c.json(errorBody('not_found', 'Bad path'), 404);
+      }
+      const file = resolve(appRoot, `.${path}`);
+      if (path.includes('\0') || (file !== appRoot && !file.startsWith(appRoot + sep))) {
+        return c.json(errorBody('not_found', 'Bad path'), 404);
+      }
+      if (file !== appRoot && existsSync(file) && statSync(file).isFile())
+        return serveFile(c, file);
+      if (extname(path) !== '') {
+        return c.json(errorBody('not_found', `No file ${path}`), 404);
+      }
+      // Client-side routes (/bots/x, /runs/y) all load the App's page.
+      const index = resolve(appRoot, 'index.html');
+      if (!existsSync(index)) {
+        return c.html(APP_NOT_BUILT, 503, { 'content-security-policy': APP_CSP });
+      }
+      return serveFile(c, index);
     });
   }
   return app;

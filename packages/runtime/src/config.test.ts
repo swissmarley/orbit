@@ -47,7 +47,7 @@ describe('loadConfig: defaults', () => {
     expect(c).toMatchObject({
       home,
       mode: 'local',
-      api: { host: '127.0.0.1', port: 7420 },
+      api: { host: '127.0.0.1', port: 7420, allowedOrigins: [] },
       driver: null,
       models: { default: 'opus', triage: 'haiku' },
       claudePath: null,
@@ -87,7 +87,7 @@ describe('loadConfig: config.json', () => {
     });
     const c = loadConfig(env());
     expect(c.mode).toBe('hosted');
-    expect(c.api).toEqual({ host: '127.0.0.1', port: 8080 });
+    expect(c.api).toEqual({ host: '127.0.0.1', port: 8080, allowedOrigins: [] });
     expect(c.models).toEqual({ default: 'sonnet', triage: 'haiku' });
     expect(c.sdk).toEqual({ bare: true, apiKeyHelper: '/usr/local/bin/key' });
     expect(c.claudePath).toBe('/opt/claude');
@@ -153,13 +153,13 @@ describe('loadConfig: environment overrides beat config.json', () => {
       scenario: 'ORBIT_HOST',
       vars: { ORBIT_HOST: '0.0.0.0' },
       check: (c) => c.api,
-      want: { host: '0.0.0.0', port: 8080 },
+      want: { host: '0.0.0.0', port: 8080, allowedOrigins: [] },
     },
     {
       scenario: 'ORBIT_PORT',
       vars: { ORBIT_PORT: '9999' },
       check: (c) => c.api,
-      want: { host: '127.0.0.1', port: 9999 },
+      want: { host: '127.0.0.1', port: 9999, allowedOrigins: [] },
     },
     {
       scenario: 'ORBIT_DRIVER',
@@ -240,7 +240,7 @@ describe('loadConfig: environment overrides beat config.json', () => {
     const c = loadConfig(env(vars));
     expect(c.driver).toBe('cli');
     expect(c.mode).toBe('local');
-    expect(c.api).toEqual({ host: '127.0.0.1', port: 8080 });
+    expect(c.api).toEqual({ host: '127.0.0.1', port: 8080, allowedOrigins: [] });
     expect(c.sdk.bare).toBe(true);
     expect(c.limits.maxConcurrentRuns.cli).toBe(1);
   });
@@ -250,6 +250,33 @@ describe('loadConfig: environment overrides beat config.json', () => {
   it('whitespace-only ORBIT_PORT is treated as unset, not as port 0', () => {
     const c = loadConfig(env({ ORBIT_PORT: '  ' }));
     expect(c.api.port).toBe(8080);
+  });
+});
+
+describe('loadConfig: App origins (ADR-011)', () => {
+  it('ORBIT_ALLOWED_ORIGINS adds loopback and desktop origins, normalised', () => {
+    const c = loadConfig(
+      env({
+        ORBIT_ALLOWED_ORIGINS: ' http://localhost:5173/ , HTTP://127.0.0.1:4173,tauri://localhost',
+      }),
+    );
+    expect(c.api.allowedOrigins).toEqual([
+      'http://localhost:5173',
+      'http://127.0.0.1:4173',
+      'tauri://localhost',
+    ]);
+  });
+
+  it.each([
+    'https://evil.example',
+    'http://192.168.1.10:5173',
+    'http://localhost:5173/path',
+    'http://user@localhost:5173',
+    'file://',
+    'null',
+    '*',
+  ])('refuses %s', (origin) => {
+    expect(() => loadConfig(env({ ORBIT_ALLOWED_ORIGINS: origin }))).toThrow(/allowedOrigins/);
   });
 });
 

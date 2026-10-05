@@ -1,8 +1,15 @@
-import { ExitCode, OrbitError, type RunEvent, type RunState } from '@orbit/core';
+import {
+  ExitCode,
+  OrbitError,
+  type RunEvent,
+  type RunState,
+  formatLocalTime,
+  formatWhen,
+} from '@orbit/core';
 import type { OrbitClient } from '@orbit/sdk-client';
 import type { Context } from '../context';
 import { painter } from '../io';
-import { formatLocalTime, renderEvent, renderRunRow, scrubControls } from '../render';
+import { renderEvent, renderRunRow, scrubControls } from '../render';
 
 export function exitCodeForRun(run: RunState): number {
   switch (run.status) {
@@ -149,7 +156,7 @@ export async function logs(ctx: Context, runId: string, o: { json?: boolean }): 
     }
     if (e.type === 'run.started') cwd = e.data.cwd;
     if (e.type === 'run.queued')
-      ctx.io.out(`${p('bold', '▶')} ${p('dim', e.ts)} ${scrubControls(e.data.prompt)}`);
+      ctx.io.out(`${p('bold', '▶')} ${p('dim', formatWhen(e.ts))} ${scrubControls(e.data.prompt)}`);
     const line = renderEvent(e, p, cwd);
     if (line !== null) ctx.io.out(line);
   }
@@ -237,7 +244,9 @@ export async function tail(
       else {
         if (e.type === 'run.started') cwd = e.data.cwd;
         if (e.type === 'run.queued')
-          ctx.io.out(`${p('bold', '▶')} ${p('dim', e.ts)} ${scrubControls(e.data.prompt)}`);
+          ctx.io.out(
+            `${p('bold', '▶')} ${p('dim', formatWhen(e.ts))} ${scrubControls(e.data.prompt)}`,
+          );
         const line = renderEvent(e, p, cwd);
         if (line !== null) ctx.io.out(line);
       }

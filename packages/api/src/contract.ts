@@ -7,7 +7,7 @@ import {
   RunState,
   RunStatus,
   Tier,
-} from '@orbit/core';
+} from '@orbit/core/browser';
 import { z } from 'zod';
 
 /**
@@ -273,6 +273,13 @@ export const SetSecretBody = z.object({
 });
 export const KillBody = z.object({ on: z.boolean() });
 
+export const SessionInfo = z.object({
+  /** How this request authenticated: the bearer token (CLI, TUI) or the App's cookie. */
+  via: z.enum(['token', 'session']),
+});
+export const LoginTicket = z.object({ ticket: z.string(), expiresAt: z.string() });
+export const CreateSessionBody = z.object({ ticket: z.string().min(16).max(128) });
+
 const boolQuery = z
   .enum(['true', 'false', '1', '0'])
   .transform((v) => v === 'true' || v === '1')
@@ -350,6 +357,38 @@ export const routes = {
     summary: 'Gracefully stop orbitd (executing Runs end as interrupted)',
     tag: 'daemon',
     status: 202,
+    response: ok,
+  },
+  getSession: {
+    method: 'GET',
+    path: '/v1/session',
+    summary: 'How the caller is signed in (token or App session)',
+    tag: 'session',
+    response: SessionInfo,
+  },
+  createLoginTicket: {
+    method: 'POST',
+    path: '/v1/session/tickets',
+    summary: 'One-time App login ticket (bearer token only; `orbit app` opens it)',
+    tag: 'session',
+    status: 201,
+    response: LoginTicket,
+  },
+  createSession: {
+    method: 'POST',
+    path: '/v1/session',
+    summary: 'Redeem a login ticket for an HttpOnly App session cookie',
+    tag: 'session',
+    auth: false,
+    body: CreateSessionBody,
+    status: 201,
+    response: ok,
+  },
+  deleteSession: {
+    method: 'DELETE',
+    path: '/v1/session',
+    summary: 'Sign this App session out',
+    tag: 'session',
     response: ok,
   },
   listBots: {

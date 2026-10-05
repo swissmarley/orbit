@@ -34,8 +34,8 @@ exports[`TUI actions > d asks for a reason, then denies with it 1`] = `
 │   ⏸ Digest                  ││   driver mock · mock · model opus             │┃ What send email (gmail) → ada@examp… ┃
 │                             ││   ✦ I drafted the reply to Ada.               │┃ Why  I drafted the reply to Ada and… ┃
 │ Runs [ older ] newer        ││   ⚙ mcp__gmail__send_email → ada@example.com  │┃ Bot  Mailer EXTERNAL                 ┃
-│ › ◆ needs you  09:15        ││   ⚑ approval needed send email (gmail) → ada… │┃ {                                    ┃
-│   ✔ done       09:15        ││ ⏸ waiting for your approval (apr_1)           │┃   "to": "ada@example.com",           ┃
+│ › ◆ needs you  09:15 AM     ││   ⚑ approval needed send email (gmail) → ada… │┃ {                                    ┃
+│   ✔ done       09:15 AM     ││ ⏸ waiting for your approval (apr_1)           │┃   "to": "ada@example.com",           ┃
 │                             ││                                               │┃   "subject": "Tuesday"               ┃
 │                             ││                                               │┃ }                                    ┃
 │                             ││                                               │┃ Enter/a open card to approve · d de… ┃
@@ -105,8 +105,8 @@ exports[`TUI rendering > wide: three panes, status bar, the parked Run and its a
 ┃   ⏸ Digest                  ┃│   driver mock · mock · model opus             ││ What send email (gmail) → ada@examp… │
 ┃                             ┃│   ✦ I drafted the reply to Ada.               ││ Why  I drafted the reply to Ada and… │
 ┃ Runs [ older ] newer        ┃│   ⚙ mcp__gmail__send_email → ada@example.com  ││ Bot  Mailer EXTERNAL                 │
-┃ › ◆ needs you  09:15        ┃│   ⚑ approval needed send email (gmail) → ada… ││ {                                    │
-┃   ✔ done       09:15        ┃│ ⏸ waiting for your approval (apr_1)           ││   "to": "ada@example.com",           │
+┃ › ◆ needs you  09:15 AM     ┃│   ⚑ approval needed send email (gmail) → ada… ││ {                                    │
+┃   ✔ done       09:15 AM     ┃│ ⏸ waiting for your approval (apr_1)           ││   "to": "ada@example.com",           │
 ┃                             ┃│                                               ││   "subject": "Tuesday"               │
 ┃                             ┃│                                               ││ }                                    │
 ┃                             ┃│                                               ││                                      │

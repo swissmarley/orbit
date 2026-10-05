@@ -4,7 +4,7 @@ import {
   type OrbitErrorCode,
   RunEvent,
   errorMessage,
-} from '@orbit/core';
+} from '@orbit/core/browser';
 import {
   type RouteBody,
   type RouteDef,
@@ -19,10 +19,17 @@ import {
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 export interface ClientOptions {
-  /** e.g. http://127.0.0.1:7420 */
+  /** e.g. http://127.0.0.1:7420; '' = the page's own origin (the App served by orbitd). */
   baseUrl: string;
-  /** Contents of $ORBIT_HOME/daemon.token. */
-  token: string;
+  /**
+   * Contents of $ORBIT_HOME/daemon.token (CLI, TUI). Omitted in the browser,
+   * where the App authenticates with its HttpOnly session cookie (ADR-011).
+   */
+  token?: string;
+  /** fetch credentials mode; the App uses 'same-origin' so the session cookie is sent. */
+  credentials?: 'omit' | 'same-origin' | 'include';
+  /** Extra headers on every request (the App sends its CSRF marker). */
+  headers?: Record<string, string>;
   fetch?: FetchLike;
   /** Per-request timeout for JSON calls (not streams). Default 30 s. */
   timeoutMs?: number;
@@ -116,19 +123,27 @@ const sleep = (ms: number, signal?: AbortSignal) =>
  */
 export class OrbitClient {
   readonly baseUrl: string;
-  private readonly token: string;
+  private readonly token: string | undefined;
+  private readonly credentials: 'omit' | 'same-origin' | 'include' | undefined;
+  private readonly extraHeaders: Record<string, string>;
   private readonly fetchFn: FetchLike;
   private readonly timeoutMs: number;
 
   constructor(options: ClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
     this.token = options.token;
+    this.credentials = options.credentials;
+    this.extraHeaders = options.headers ?? {};
     this.fetchFn = options.fetch ?? ((input, init) => fetch(input, init));
     this.timeoutMs = options.timeoutMs ?? 30_000;
   }
 
   private headers(extra: Record<string, string> = {}): Record<string, string> {
-    return { authorization: `Bearer ${this.token}`, ...extra };
+    return {
+      ...this.extraHeaders,
+      ...(this.token === undefined ? {} : { authorization: `Bearer ${this.token}` }),
+      ...extra,
+    };
   }
 
   private async send(
@@ -153,6 +168,7 @@ export class OrbitClient {
       res = await this.fetchFn(url, {
         method: def.method,
         headers: this.headers(def.body ? { 'content-type': 'application/json' } : {}),
+        ...(this.credentials ? { credentials: this.credentials } : {}),
         ...(def.body ? { body: JSON.stringify(args.body ?? {}) } : {}),
         ...(signals.length ? { signal: AbortSignal.any(signals) } : {}),
       });
@@ -284,6 +300,7 @@ export class OrbitClient {
             accept: 'text/event-stream',
             ...(last === undefined ? {} : { 'last-event-id': String(last) }),
           }),
+          ...(this.credentials ? { credentials: this.credentials } : {}),
           ...(opts.signal ? { signal: opts.signal } : {}),
         });
       } catch (err) {

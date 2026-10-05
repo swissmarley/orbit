@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs';
 import type { Approval } from '@orbit/sdk-client';
-import { OrbitError } from '@orbit/core';
+import { OrbitError, formatRelative } from '@orbit/core';
 import type { Context } from '../context';
 import { painter } from '../io';
-import { formatRelative, renderDiff, scrubControls, scrubDeep } from '../render';
+import { renderDiff, scrubControls, scrubDeep } from '../render';
 import { follow } from './run';
 
 type Paint = ReturnType<typeof painter>;

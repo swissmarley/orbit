@@ -17,6 +17,8 @@ export interface Io {
    * Tests start it in-process instead.
    */
   startDaemon?: (env: Record<string, string | undefined>) => Promise<void>;
+  /** Open a URL in the browser (`orbit app`). Default: the platform launcher. */
+  openUrl?: (url: string) => void;
 }
 
 export function processIo(): Io {

@@ -42,7 +42,7 @@ fresh random token to `daemon.token` (0600) and its address to `daemon.json`
 (0600). Every route but `/v1/health` and `/openapi.json` needs the token
 (timing-safe compare). Requests naming another Host are refused (DNS
 rebinding) and requests carrying an `Origin` header are refused (no browser
-access until the M5 app adds an explicit origin allowlist). The token is
+access until the M5 app adds an explicit origin allowlist; ADR-011 replaced this refusal with one). The token is
 registered with the process redactor.
 
 **Events over SSE.** `/v1/events` replays from `Last-Event-ID` (or `after`)

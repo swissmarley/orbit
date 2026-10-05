@@ -73,11 +73,16 @@ export function buildOpenApi(): JsonSchema {
       title: 'orbitd API',
       version: API_VERSION,
       description:
-        'Local API of the Orbit daemon. Loopback only; authenticate with the bearer token in $ORBIT_HOME/daemon.token.',
+        'Local API of the Orbit daemon. Loopback only; authenticate with the bearer token in $ORBIT_HOME/daemon.token, or (the App) with the session cookie from POST /v1/session plus the X-Orbit-CSRF: 1 header (ADR-011).',
     },
     servers: [{ url: 'http://127.0.0.1:7420' }],
-    security: [{ bearer: [] }],
-    components: { securitySchemes: { bearer: { type: 'http', scheme: 'bearer' } } },
+    security: [{ bearer: [] }, { session: [] }],
+    components: {
+      securitySchemes: {
+        bearer: { type: 'http', scheme: 'bearer' },
+        session: { type: 'apiKey', in: 'cookie', name: 'orbit_session_<port>' },
+      },
+    },
     paths,
   };
 }

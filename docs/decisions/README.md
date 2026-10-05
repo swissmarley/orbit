@@ -16,3 +16,4 @@ deviate from the mission brief or pick between real alternatives.
 | [008](ADR-008-cli-permission-bridge.md)     | CLI permission bridge through a PreToolUse command hook     | Accepted |
 | [009](ADR-009-tiers-and-taint.md)           | Risk tiers, MCP heuristics and taint                        | Accepted |
 | [010](ADR-010-daemon-api-and-queue.md)      | orbitd as single writer, contract-driven API, loopback auth | Accepted |
+| [011](ADR-011-app-origin-and-session.md)    | App served by orbitd, one-time ticket → session cookie      | Accepted |

@@ -1,7 +1,7 @@
 /** @jsxRuntime automatic @jsxImportSource react */
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { KEYS, renderTerminal } from '../../test/render';
 import { approval, data, events, fakeClient } from '../../test/tui-fixtures';
 import { App } from './app';
@@ -9,6 +9,19 @@ import { App } from './app';
 const plain = (_style: unknown, text: string) => text;
 const WIDE = { columns: 120, rows: 22 };
 const NARROW = { columns: 72, rows: 18 };
+
+// Times are local and relative: pin the zone and the clock (Date only; Ink's timers stay real).
+const zone = process.env.TZ;
+beforeAll(() => {
+  process.env.TZ = 'UTC';
+  vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true });
+  vi.setSystemTime(new Date('2026-10-04T09:20:00.000Z'));
+});
+afterAll(() => {
+  vi.useRealTimers();
+  if (zone === undefined) delete process.env.TZ;
+  else process.env.TZ = zone;
+});
 
 let unmount: (() => void) | undefined;
 afterEach(() => {

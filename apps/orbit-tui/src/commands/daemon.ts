@@ -1,4 +1,4 @@
-import { ExitCode } from '@orbit/core';
+import { ExitCode, formatWhen } from '@orbit/core';
 import { daemonFiles } from '@orbit/sdk-client';
 import type { Context } from '../context';
 import { runningDaemon, waitForDaemonExit } from '../daemon-control';
@@ -18,7 +18,7 @@ export async function daemonStatus(ctx: Context, o: { json?: boolean }): Promise
   }
   const p = painter(ctx.io);
   ctx.io.out(
-    `${p('green', '●')} orbitd ${health.version} on ${client.baseUrl} · pid ${health.pid} · up since ${health.startedAt}`,
+    `${p('green', '●')} orbitd ${health.version} on ${client.baseUrl} · pid ${health.pid} · up since ${formatWhen(health.startedAt)}`,
   );
   ctx.io.out(
     `  ${queue.active.length}/${queue.limit} running · ${queue.queued.length} queued${queue.pausedUntil ? p('yellow', ` · usage limit until ${queue.pausedUntil}`) : ''}`,

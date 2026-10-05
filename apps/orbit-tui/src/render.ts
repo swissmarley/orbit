@@ -1,5 +1,13 @@
 import { relative } from 'node:path';
-import type { RunEvent, RunState } from '@orbit/core';
+import {
+  RUN_STATUS,
+  type RunEvent,
+  type RunState,
+  formatDuration as duration,
+  formatLocalTime,
+  formatTokens as tokens,
+  formatWhen,
+} from '@orbit/core';
 import { type painter } from './io';
 
 type Paint = ReturnType<typeof painter>;
@@ -52,32 +60,6 @@ export function summarizeToolInput(name: string, input: unknown, cwd: string | n
   if (typeof o.description === 'string') return oneLine(o.description, 80);
   if (typeof o.url === 'string') return o.url;
   return oneLine(JSON.stringify(o), 80);
-}
-
-function duration(ms: number): string {
-  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
-}
-
-function tokens(n: number): string {
-  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
-}
-
-export function formatLocalTime(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleString(undefined, {
-    weekday: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZoneName: 'short',
-  });
-}
-
-export function formatRelative(iso: string, now = Date.now()): string {
-  const sec = Math.round((now - Date.parse(iso)) / 1000);
-  if (sec < 60) return `${Math.max(0, sec)}s ago`;
-  if (sec < 3600) return `${Math.round(sec / 60)}m ago`;
-  if (sec < 86_400) return `${Math.round(sec / 3600)}h ago`;
-  return `${Math.round(sec / 86_400)}d ago`;
 }
 
 /** Colorize a unified diff (header lines dropped). */
@@ -218,15 +200,14 @@ export function renderEvent(raw: RunEvent, paint: Paint, cwd: string | null): st
 }
 
 export function renderRunRow(r: RunState, paint: Paint): string {
-  const status: Record<string, Parameters<Paint>[0]> = {
-    completed: 'green',
-    failed: 'red',
-    cancelled: 'yellow',
-    rate_limited: 'yellow',
-    running: 'cyan',
-    queued: 'dim',
-    waiting_approval: 'magenta',
-    paused: 'yellow',
+  const color: Record<string, Parameters<Paint>[0]> = {
+    neutral: 'dim',
+    info: 'cyan',
+    success: 'green',
+    warning: 'yellow',
+    danger: 'red',
+    attention: 'magenta',
   };
-  return `${r.runId}  ${paint(status[r.status] ?? 'white', r.status.padEnd(14))} ${paint('dim', r.createdAt)}  ${oneLine(scrubControls(r.prompt), 60)}`;
+  const s = RUN_STATUS[r.status];
+  return `${r.runId}  ${paint(color[s.tone] ?? 'white', `${s.mark} ${s.label}`.padEnd(14))} ${paint('dim', formatWhen(r.createdAt).padEnd(22))}  ${oneLine(scrubControls(r.prompt), 60)}`;
 }

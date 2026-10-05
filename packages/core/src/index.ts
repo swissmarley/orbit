@@ -14,3 +14,4 @@ export * from './permissions';
 export * from './projection';
 export * from './redact';
 export * from './text';
+export * from './vocabulary';

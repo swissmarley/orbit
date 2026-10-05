@@ -1,5 +1,5 @@
 import type { DoctorReport } from '@orbit/sdk-client';
-import { ExitCode, defaultRedactor } from '@orbit/core';
+import { ExitCode, defaultRedactor, formatWhen } from '@orbit/core';
 import { hasOAuthTokenEnv } from '@orbit/runtime';
 import type { Context } from '../context';
 import { painter } from '../io';
@@ -69,7 +69,7 @@ export async function doctor(ctx: Context, opts: { json?: boolean }): Promise<nu
   );
   row(
     'Daemon',
-    `orbitd ${r.daemon.url} · pid ${r.daemon.pid} · up since ${r.daemon.startedAt} · ${r.daemon.concurrency} concurrent run${r.daemon.concurrency === 1 ? '' : 's'}`,
+    `orbitd ${r.daemon.url} · pid ${r.daemon.pid} · up since ${formatWhen(r.daemon.startedAt)} · ${r.daemon.concurrency} concurrent run${r.daemon.concurrency === 1 ? '' : 's'}`,
   );
   row('Data', r.home);
   row('Runtime', `node ${r.node} · ${r.platform}`);

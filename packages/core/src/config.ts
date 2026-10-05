@@ -9,6 +9,35 @@ export const Principal = z.object({
 export type Principal = z.infer<typeof Principal>;
 
 /**
+ * An extra browser origin allowed to call the API (ADR-011): a loopback dev
+ * server (`http://localhost:5173`) or the desktop shell (`tauri://localhost`).
+ * Never a remote site: the local API is plain HTTP with a bearer token.
+ */
+export const AppOrigin = z
+  .string()
+  .trim()
+  .transform((s) => s.replace(/\/+$/, '').toLowerCase())
+  .refine((s) => isAllowedAppOrigin(s), {
+    message:
+      'must be an http(s) origin on a loopback host (localhost, 127.x, [::1]) or tauri://localhost, without a path',
+  });
+
+export function isAllowedAppOrigin(origin: string): boolean {
+  if (origin === 'tauri://localhost' || origin === 'http://tauri.localhost') return true;
+  let u: URL;
+  try {
+    u = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+  if (u.username || u.password || u.search || u.hash) return false;
+  if (u.pathname !== '/' || !origin.startsWith(`${u.protocol}//`)) return false;
+  if (`${u.protocol}//${u.host}` !== origin) return false;
+  return isLoopbackHost(u.hostname);
+}
+
+/**
  * Fully resolved orbitd / CLI configuration. Loaded from
  * `$ORBIT_HOME/config.json` with environment overrides (see
  * `@orbit/runtime` loadConfig). Model values are aliases or IDs supplied by the
@@ -21,6 +50,11 @@ export const OrbitConfig = z.object({
     .object({
       host: z.string().min(1).default('127.0.0.1'),
       port: z.int().min(0).max(65_535).default(7420),
+      /**
+       * Browser origins allowed besides orbitd's own (which serves the App).
+       * `ORBIT_ALLOWED_ORIGINS` (comma-separated) overrides it.
+       */
+      allowedOrigins: z.array(AppOrigin).max(16).default([]),
     })
     .prefault({}),
   /** Human and service principals allowed to use this orbitd. */

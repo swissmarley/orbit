@@ -10,9 +10,15 @@ import {
 } from 'node:fs';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { serve } from '@hono/node-server';
-import { type Logger, OrbitService, type ServiceOptions, createApp } from '@orbit/api';
+import {
+  type Logger,
+  OrbitService,
+  type ServiceOptions,
+  SessionStore,
+  createApp,
+} from '@orbit/api';
 import { type OrbitConfig, OrbitError, isLoopbackHost } from '@orbit/core';
 import { type Env, loadConfig } from '@orbit/runtime';
 import { type DaemonInfo, daemonFiles } from '@orbit/sdk-client';
@@ -29,6 +35,14 @@ export interface DaemonOptions {
   onStopRequested?: () => void;
   /** Test seams passed to the service (mock pacing, probes, workspaces, …). */
   service?: Partial<ServiceOptions>;
+}
+
+/**
+ * Where the built App lives: `ORBIT_APP_DIR`, else `apps/orbit-app/dist` of
+ * this checkout (the packaged layout arrives in M8).
+ */
+export function appDir(env: Env): string {
+  return resolve(env.ORBIT_APP_DIR ?? join(import.meta.dirname, '../../orbit-app/dist'));
 }
 
 export interface Daemon {
@@ -160,10 +174,15 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     let port = opts.port ?? config.api.port;
     const hosts = () => [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`];
     let stopping: Promise<void> | null = null;
+    // App sign-ins live in memory: a restart (new token) signs every browser out.
+    const sessions = new SessionStore();
     const app = createApp({
       service,
       token,
       allowedHosts: hosts,
+      allowedOrigins: config.api.allowedOrigins,
+      sessions,
+      appRoot: appDir(opts.env),
       // The bin exits the process; embedded daemons (tests) just stop.
       onStop: () => (opts.onStopRequested ? opts.onStopRequested() : void stop()),
     });
@@ -205,6 +224,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     };
     const stop = () =>
       (stopping ??= (async () => {
+        sessions.clear();
         server.close();
         // SSE clients hold connections open; the daemon is going away anyway.
         server.closeAllConnections();

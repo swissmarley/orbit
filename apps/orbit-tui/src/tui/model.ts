@@ -1,4 +1,4 @@
-import type { Bot, RunEvent, RunState } from '@orbit/core';
+import { type Bot, type RunEvent, type RunState, STATUS_LEGEND } from '@orbit/core';
 import type { Approval, DoctorReport, RouteResponse } from '@orbit/sdk-client';
 
 /**
@@ -50,6 +50,8 @@ export type Overlay =
 export interface Ui {
   focus: PaneId;
   botIndex: number;
+  /** The Bot the user selected, tracked by id (a new or removed Bot must not move the cursor). */
+  botId: string | null;
   /** 0 = the selected Bot's newest Run. */
   runIndex: number;
   approvalIndex: number;
@@ -66,6 +68,7 @@ export interface Ui {
 export const INITIAL_UI: Ui = {
   focus: 'bots',
   botIndex: 0,
+  botId: null,
   runIndex: 0,
   approvalIndex: 0,
   approvalId: null,
@@ -103,6 +106,10 @@ export interface KeyInfo {
 }
 
 export function selectedBot(data: Data, ui: Ui): Bot | undefined {
+  if (ui.botId !== null) {
+    const byId = data.bots.find((b) => b.id === ui.botId);
+    if (byId) return byId;
+  }
   return data.bots[Math.min(ui.botIndex, data.bots.length - 1)];
 }
 
@@ -243,8 +250,9 @@ export function onKey(ui: Ui, data: Data, input: string, key: KeyInfo): KeyResul
   switch (ui.focus) {
     case 'bots': {
       if (down || up) {
-        const botIndex = clamp(ui.botIndex + (down ? 1 : -1), data.bots.length - 1);
-        return next({ botIndex, runIndex: 0, scroll: 0 });
+        const current = bot ? data.bots.indexOf(bot) : ui.botIndex;
+        const botIndex = clamp(current + (down ? 1 : -1), data.bots.length - 1);
+        return next({ botIndex, botId: data.bots[botIndex]?.id ?? null, runIndex: 0, scroll: 0 });
       }
       if (key.return) return next({ focus: 'timeline' });
       if (!bot) return { ui };
@@ -331,8 +339,12 @@ export function onKey(ui: Ui, data: Data, input: string, key: KeyInfo): KeyResul
  * and `approvalMoved` makes the next decision key a no-op (review F2).
  */
 export function reconcile(ui: Ui, data: Data): Ui {
-  const botIndex = clamp(ui.botIndex, data.bots.length - 1);
-  const runIndex = clamp(ui.runIndex, runsOf(data, data.bots[botIndex]?.id).length - 1);
+  // The Bot selection follows its id; when that Bot is gone the cursor stays at its row.
+  const botAt = ui.botId === null ? -1 : data.bots.findIndex((b) => b.id === ui.botId);
+  const botIndex = botAt >= 0 ? botAt : clamp(ui.botIndex, data.bots.length - 1);
+  const botId = data.bots[botIndex]?.id ?? null;
+  const sameBot = botId === ui.botId || ui.botId === null;
+  const runIndex = sameBot ? clamp(ui.runIndex, runsOf(data, botId ?? undefined).length - 1) : 0;
   let { approvalIndex, approvalId, approvalMoved, overlay } = ui;
   const at = approvalId === null ? -1 : data.approvals.findIndex((a) => a.id === approvalId);
   if (at >= 0) {
@@ -348,6 +360,7 @@ export function reconcile(ui: Ui, data: Data): Ui {
   if (overlayCard !== null && !data.approvals.some((a) => a.id === overlayCard)) overlay = null;
   if (
     botIndex === ui.botIndex &&
+    botId === ui.botId &&
     runIndex === ui.runIndex &&
     approvalIndex === ui.approvalIndex &&
     approvalId === ui.approvalId &&
@@ -356,7 +369,7 @@ export function reconcile(ui: Ui, data: Data): Ui {
   ) {
     return ui;
   }
-  return { ...ui, botIndex, runIndex, approvalIndex, approvalId, approvalMoved, overlay };
+  return { ...ui, botIndex, botId, runIndex, approvalIndex, approvalId, approvalMoved, overlay };
 }
 
 /** Keys shown by the help overlay (single source for docs and the overlay). */
@@ -383,13 +396,6 @@ export const HELP: readonly { keys: string; does: string }[] = [
 
 /** Status symbols (also spelled out next to Runs), for the help overlay. */
 export const LEGEND: readonly { mark: string; means: string }[] = [
-  { mark: '●', means: 'running' },
-  { mark: '◆', means: 'waiting for your approval' },
-  { mark: '⧗', means: 'usage limit — resumes later' },
-  { mark: '⏸', means: 'Bot paused' },
-  { mark: '✔', means: 'done' },
-  { mark: '✘', means: 'failed' },
-  { mark: '■', means: 'cancelled' },
-  { mark: '·', means: 'queued' },
+  ...STATUS_LEGEND,
   { mark: '⚑n', means: 'n approvals pending for this Bot' },
 ];

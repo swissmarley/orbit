@@ -1,9 +1,16 @@
 /** @jsxRuntime automatic @jsxImportSource react */
-import type { RunEvent, RunState } from '@orbit/core';
+import {
+  RUN_STATUS,
+  type RunEvent,
+  type RunState,
+  type Tone,
+  formatClock,
+  formatLocalTime,
+} from '@orbit/core';
 import { Box, Text } from 'ink';
 import type { painter } from '../io';
 import { clean } from '../commands/approvals';
-import { formatLocalTime, renderDiff, renderEvent, scrubControls } from '../render';
+import { renderDiff, renderEvent, scrubControls } from '../render';
 import type { Approval } from '@orbit/sdk-client';
 import {
   type Data,
@@ -21,15 +28,19 @@ export type Paint = ReturnType<typeof painter>;
 /** Narrower than this, the TUI shows one pane at a time with a tab bar. */
 export const NARROW_COLUMNS = 100;
 
-const STATUS: Record<RunState['status'], { mark: string; color: string; label: string }> = {
-  queued: { mark: '·', color: 'gray', label: 'queued' },
-  running: { mark: '●', color: 'cyan', label: 'running' },
-  waiting_approval: { mark: '◆', color: 'magenta', label: 'needs you' },
-  rate_limited: { mark: '⧗', color: 'yellow', label: 'usage limit' },
-  paused: { mark: '⏸', color: 'yellow', label: 'paused' },
-  completed: { mark: '✔', color: 'green', label: 'done' },
-  failed: { mark: '✘', color: 'red', label: 'failed' },
-  cancelled: { mark: '■', color: 'yellow', label: 'cancelled' },
+/** Terminal colour for each tone of the shared status vocabulary (16 basic colours). */
+export const TONE_COLOR: Record<Tone, string> = {
+  neutral: 'gray',
+  info: 'cyan',
+  success: 'green',
+  warning: 'yellow',
+  danger: 'red',
+  attention: 'magenta',
+};
+
+const statusOf = (status: RunState['status']) => {
+  const w = RUN_STATUS[status];
+  return { ...w, color: TONE_COLOR[w.tone] };
 };
 
 const TITLES: Record<PaneId, string> = {
@@ -149,7 +160,8 @@ export function BotsPane(props: {
   for (const a of data.approvals) pendingByBot.set(a.botId, (pendingByBot.get(a.botId) ?? 0) + 1);
   const runs = runsOf(data, bot?.id);
   const listRows = Math.max(1, Math.min(data.bots.length, Math.floor((props.height - 3) / 2)));
-  const first = Math.max(0, Math.min(ui.botIndex - listRows + 1, data.bots.length - listRows));
+  const at = bot ? data.bots.indexOf(bot) : 0;
+  const first = Math.max(0, Math.min(at - listRows + 1, data.bots.length - listRows));
   const runRows = Math.max(0, props.height - 5 - listRows);
   return (
     <Pane id="bots" focused={props.focused} width={props.width} height={props.height}>
@@ -162,8 +174,8 @@ export function BotsPane(props: {
       ) : (
         data.bots.slice(first, first + listRows).map((b, i) => {
           const latest = runsOf(data, b.id)[0];
-          const s = latest ? STATUS[latest.status] : null;
-          const selected = first + i === ui.botIndex;
+          const s = latest ? statusOf(latest.status) : null;
+          const selected = first + i === at;
           const pending = pendingByBot.get(b.id) ?? 0;
           return (
             <Text key={b.id} wrap="truncate" inverse={selected && props.focused}>
@@ -188,12 +200,12 @@ export function BotsPane(props: {
             {runs.length === 0 ? ' — none yet (r runs it)' : ''}
           </Text>
           {runs.slice(0, runRows).map((r, i) => {
-            const s = STATUS[r.status];
+            const s = statusOf(r.status);
             return (
               <Text key={r.runId} wrap="truncate" bold={i === ui.runIndex}>
                 {i === ui.runIndex ? '› ' : '  '}
                 <Text color={s.color}>{s.mark}</Text> {s.label.padEnd(11)}
-                <Text color="gray">{r.createdAt.slice(11, 16)}</Text>
+                <Text color="gray">{formatClock(r.createdAt)}</Text>
               </Text>
             );
           })}
@@ -232,7 +244,7 @@ export function TimelinePane(props: {
   const scroll = Math.min(ui.scroll, maxScroll);
   const end = lines.length - scroll;
   const shown = lines.slice(Math.max(0, end - visible), end);
-  const s = run ? STATUS[run.status] : null;
+  const s = run ? statusOf(run.status) : null;
   return (
     <Pane id="timeline" focused={props.focused} width={props.width} height={props.height}>
       {run && s ? (

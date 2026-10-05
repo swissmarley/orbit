@@ -82,6 +82,31 @@ describe('orbit CLI', () => {
 
   const mockEnv = () => ({ ORBIT_HOME: home, ORBIT_DRIVER: 'mock', PATH: process.env.PATH });
 
+  it('app prints a one-time sign-in link the App can redeem once (ADR-011)', async () => {
+    const cli = harness(mockEnv());
+    expect(await cli.run('app', '--json')).toBe(0);
+    const { url } = cli.json<{ url: string; expiresAt: string }>();
+    const m = /^(http:\/\/127\.0\.0\.1:\d+)\/login#ticket=([\w-]+)$/.exec(url);
+    expect(m).not.toBeNull();
+    const [, origin, ticket] = m ?? [];
+    const redeem = () =>
+      fetch(`${origin}/v1/session`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-orbit-csrf': '1', origin: origin ?? '' },
+        body: JSON.stringify({ ticket }),
+      });
+    const first = await redeem();
+    expect(first.status).toBe(201);
+    expect(first.headers.get('set-cookie')).toMatch(/HttpOnly/);
+    expect((await redeem()).status).toBe(401);
+
+    cli.reset();
+    expect(await cli.run('app', '--origin', 'https://evil.example', '--json')).toBe(ExitCode.usage);
+    cli.reset();
+    expect(await cli.run('app', '--no-open', '--origin', 'http://localhost:5173')).toBe(0);
+    expect(cli.text()).toMatch(/Open Orbit: http:\/\/localhost:5173\/login#ticket=/);
+  });
+
   it('doctor reports the active driver and auth method (human and --json)', async () => {
     const h = harness(mockEnv());
     expect(await h.run('doctor')).toBe(ExitCode.ok);

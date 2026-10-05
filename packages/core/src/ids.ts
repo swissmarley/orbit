@@ -1,5 +1,3 @@
-import { randomBytes } from 'node:crypto';
-
 const ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz'; // Crockford base32, lowercase
 
 function encodeTime(ms: number, length: number): string {
@@ -13,7 +11,8 @@ function encodeTime(ms: number, length: number): string {
 }
 
 function encodeRandom(length: number): string {
-  const bytes = randomBytes(length);
+  // Web Crypto: available in Node and browsers, so ids work in every client.
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(length));
   let out = '';
   for (const b of bytes) out += ALPHABET.charAt(b % 32);
   return out;

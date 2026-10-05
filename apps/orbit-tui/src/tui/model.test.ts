@@ -159,6 +159,23 @@ describe('TUI key model', () => {
     expect(press(INITIAL_UI, 'c', { ctrl: true }).command).toEqual({ kind: 'quit' });
   });
 
+  it('the Bot selection follows its id when Bots are added or removed', () => {
+    const d = data();
+    const ui = reconcile(press(INITIAL_UI, 'j', {}, d).ui, d);
+    const picked = ui.botId;
+    expect(picked).not.toBeNull();
+    // A new Bot sorted before it: the cursor stays on the same Bot, not the same row.
+    const grown = data({ bots: [bot('bot_0', 'Aardvark'), ...d.bots] });
+    const after = reconcile(ui, grown);
+    expect(after.botId).toBe(picked);
+    expect(grown.bots[after.botIndex]?.id).toBe(picked);
+    // The selected Bot disappears: the cursor stays at its row and the Run selection resets.
+    const shrunk = data({ bots: d.bots.filter((b) => b.id !== picked) });
+    const gone = reconcile({ ...after, runIndex: 2 }, shrunk);
+    expect(gone.botId).not.toBe(picked);
+    expect(gone.runIndex).toBe(0);
+  });
+
   it('reconcile keeps selections valid when data shrinks', () => {
     const ui: Ui = { ...INITIAL_UI, botIndex: 2, runIndex: 4, approvalIndex: 3 };
     const d = data({ bots: [bot('bot_a', 'Alpha')], approvals: [approval('apr_1')] });

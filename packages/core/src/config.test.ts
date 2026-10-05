@@ -5,7 +5,7 @@ describe('OrbitConfig', () => {
   it('applies safe local defaults', () => {
     const c = OrbitConfig.parse({ home: '/tmp/orbit' });
     expect(c.mode).toBe('local');
-    expect(c.api).toEqual({ host: '127.0.0.1', port: 7420 });
+    expect(c.api).toEqual({ host: '127.0.0.1', port: 7420, allowedOrigins: [] });
     expect(c.driver).toBeNull();
     expect(c.models).toEqual({ default: 'opus', triage: 'haiku' });
     expect(c.sdk.bare).toBe(true);

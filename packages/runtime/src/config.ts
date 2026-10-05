@@ -56,6 +56,13 @@ export function loadConfig(
       ...(intFromEnv(env, 'ORBIT_PORT') !== undefined
         ? { port: intFromEnv(env, 'ORBIT_PORT') }
         : {}),
+      ...(env.ORBIT_ALLOWED_ORIGINS !== undefined
+        ? {
+            allowedOrigins: env.ORBIT_ALLOWED_ORIGINS.split(',')
+              .map((o) => o.trim())
+              .filter(Boolean),
+          }
+        : {}),
       ...overrides.api,
     },
     models: {
