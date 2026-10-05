@@ -90,3 +90,10 @@ export {
   staticApiKey,
 } from './proxy/key-source';
 export type { ProxyCounters, ProxyRefusal } from './proxy/stats';
+export {
+  type DotGitState,
+  type TakeoverGit,
+  gitCommonDir,
+  prepareTakeoverGit,
+  worktreeAdminDir,
+} from './git-dirs';

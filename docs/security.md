@@ -263,7 +263,16 @@ refused, and nothing restarts by itself after you release it.
   workspace from the terminal only (the bearer token, never a browser
   session), holds the Bot while it is open and is audited. The App shows the
   command instead of opening a shell, because a shell in the browser would
-  bypass the policy engine.
+  bypass the policy engine. A Bot can write anything in its workspace,
+  including a `.git` that leads to a repository configuration of its own
+  (`core.fsmonitor`, hooks), which a git-aware prompt would run as you. So
+  for a worktree Bot orbitd puts its own `.git` file back when it was
+  changed (moving the Bot's version aside, audited) and the shell gets
+  `GIT_DIR`/`GIT_WORK_TREE` naming Orbit's worktree entry, so git in that
+  shell never reads the workspace's `.git` or a repository nested in it; for
+  a directory Bot a `.git` in the workspace refuses the take-over, with the
+  commands to inspect and move it from outside. `GIT_CEILING_DIRECTORIES`
+  keeps git from walking up out of the workspace.
 
 ## Audit
 

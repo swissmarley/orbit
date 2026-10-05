@@ -139,7 +139,8 @@ reason: interrupted }`):
   owner's explicit choice and the way out when a pid was reused.
 - **Environment.** The shell gets the `tool` allowlist plus `ORBIT_TAKEOVER=1`:
   no API key, no OAuth variables, no `ORBIT_*` (so no Orbit token or home).
-  The owner's own files remain readable to the owner, as always.
+  The owner's own files remain readable to the owner, as always. Git
+  variables: see the amendment below.
 - Files the owner edits are the owner's: no taint is added or cleared.
 
 ### Vocabulary and events
@@ -168,3 +169,55 @@ reason: interrupted }`):
   a parent interrupted in the same segment as its delegation does not wait
   for the child after a retry. Real-engine behaviour of the pause rests on the
   `continue: false` park verified live in M1/M2.
+
+## Amendment (M8 safety review): git in the take-over shell
+
+**Context.** A Bot's contained Bash (and its file tools) may write anything
+in its workspace, including the `.git` entry. A Bot could point it at a
+repository of its own whose configuration runs programs (`core.fsmonitor`,
+`core.hooksPath`, filters, `core.pager`, …). The owner's shell opens in that
+workspace, and a git-aware prompt runs `git status` before the owner types
+anything: the Bot's program would run as the owner, outside every sandbox.
+
+**Decision.** Before `POST /v1/bots/{bot}/takeover` hands the workspace over
+(after the hold is taken, before the take-over is recorded; a refusal undoes
+the hold), orbitd checks the workspace's `.git` (`prepareTakeoverGit` in
+`@orbit/sandbox`):
+
+- **Worktree Bot.** The worktree entry Orbit created is found in the owner's
+  repository by its `gitdir` back-pointer (never through the workspace). The
+  workspace's `.git` must be a regular file whose only line is `gitdir:`
+  leading to exactly that entry. Anything else — another target, extra lines,
+  a symlink, a directory, nothing — is moved aside to
+  `.git.orbit-replaced-<time>` (never deleted: it may hold the Bot's work)
+  and Orbit's file is written back; the audit records
+  `takeover.git_restored { workspace, was, movedTo }`. A workspace that is no
+  longer a registered worktree is refused (start a Run to prepare it again).
+  The response carries `git: { dir, workTree, restored }`, and the CLI
+  exports `GIT_DIR` and `GIT_WORK_TREE` with exactly those values, so git in
+  the shell never consults the workspace's `.git` at all — nor a repository
+  the Bot nested in a subfolder (discovery is off while `GIT_DIR` is set).
+- **Directory Bot.** Orbit made no repository there, so any `.git` is the
+  Bot's. The take-over is **refused** (`conflict`) with a hint to look at it
+  without git and move it from outside the workspace (`cat …/.git/config`,
+  `mv …/.git …git-from-bot`). Considered: renaming it aside automatically.
+  Refusing is the safer choice — Orbit neither changes a Bot's own files
+  behind its back nor leaves the owner guessing where its repository went —
+  and the hint's commands run outside the workspace, so no prompt reads the
+  repository. Inherited `GIT_DIR`, `GIT_WORK_TREE` and `GIT_COMMON_DIR` are
+  removed from a directory Bot's shell.
+- **Both.** `GIT_CEILING_DIRECTORIES` is the workspace's parent, so git never
+  walks up into `$ORBIT_HOME`. The owner's own global git configuration
+  stays in effect (no `GIT_CONFIG_NOSYSTEM`). The banner prints one line
+  saying which applies (and when a changed `.git` was put back).
+
+**Consequences.** A worktree Bot's `.git` file is always Orbit's when a
+take-over starts, and the take-over shell's git reads only the owner's
+repository. Residual: in a directory Bot's workspace a repository the Bot
+nested in a subfolder is found by git once the owner `cd`s into it (the
+banner says there is no repository Orbit made); programs that ignore
+`GIT_DIR` (an editor launched with a clean environment) follow the
+workspace's `.git` as restored by Orbit. The worktree entry itself lies
+outside the workspace: the engine sandbox does not make it writable, and the
+plugin sandbox keeps its `commondir`, `gitdir` and `config.worktree`
+read-only (ADR-019).

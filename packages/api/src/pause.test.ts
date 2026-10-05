@@ -1,7 +1,17 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Bot, type RunEvent, type RunEventBody, type RunState, event } from '@orbit/core';
+import type { WorkspaceProvider } from '@orbit/runtime';
 import { openDatabase } from '@orbit/store';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TOKEN, type Harness, harness } from '../test/harness';
@@ -471,6 +481,80 @@ describe('take-over (orbit shell)', () => {
       expect.objectContaining({ pid: 999_001, stale: true }),
       expect.objectContaining({ pid: process.pid, via: 'bot_resume' }),
     ]);
+  });
+
+  it("a directory Bot's workspace with a .git (the Bot's repository) is refused, the hold undone", async () => {
+    start();
+    const bot = await createBot({ name: 'Notes', mock: { fixture: 'pong' } });
+    const ws = join(h.home, 'workspaces', bot.id);
+    mkdirSync(join(ws, '.git'), { recursive: true });
+    writeFileSync(join(ws, '.git', 'config'), '[core]\n\tfsmonitor = touch /tmp/pwned\n');
+    const t = await take('notes');
+    expect(t.status).toBe(409);
+    expect(t.body.error?.message).toMatch(/holds a git repository/);
+    expect(t.body.error?.hint).toContain(`mv ${join(ws, '.git')}`);
+    expect((await h.json<Bot>('GET', '/v1/bots/notes')).body.pausedAt).toBeNull();
+    expect(h.service.controls.takeover(bot.id)).toBeNull();
+    expect(h.service.audit.list({ action: 'takeover.started' })).toHaveLength(0);
+    rmSync(join(ws, '.git'), { recursive: true });
+    const ok = await take('notes');
+    expect(ok.status).toBe(201);
+    expect(ok.body.git).toBeNull();
+  });
+
+  it("a worktree Bot: GIT_DIR is Orbit's worktree entry, and a rewritten .git is put back (audited)", async () => {
+    const home = mkdtempSync(join(tmpdir(), 'orbit-takeover-git-'));
+    homes.push(home);
+    const gitEnv = {
+      PATH: process.env.PATH ?? '',
+      HOME: home,
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_AUTHOR_NAME: 'Owner',
+      GIT_AUTHOR_EMAIL: 'owner@example.test',
+      GIT_COMMITTER_NAME: 'Owner',
+      GIT_COMMITTER_EMAIL: 'owner@example.test',
+    };
+    const git = (cwd: string, ...args: string[]) =>
+      execFileSync('git', args, { cwd, env: gitEnv, encoding: 'utf8' }).trim();
+    const repo = join(realpathSync(home), 'repo');
+    git(home, 'init', '-q', '-b', 'main', repo);
+    git(repo, 'commit', '-q', '--allow-empty', '-m', 'init');
+    const worktrees: WorkspaceProvider = (b) => {
+      const path = join(realpathSync(home), 'ws', b.id);
+      if (!existsSync(path)) {
+        mkdirSync(join(realpathSync(home), 'ws'), { recursive: true });
+        git(repo, 'worktree', 'add', '-q', '-b', `orbit/${b.id}`, path);
+      }
+      return Promise.resolve({
+        path,
+        shellContained: false,
+        engineSandbox: null,
+        git: { repo, branch: `orbit/${b.id}` },
+      });
+    };
+    start({ service: { workspaces: worktrees } });
+    const bot = await createBot({
+      name: 'Coder',
+      mock: { fixture: 'pong' },
+      sandbox: { kind: 'worktree', repo },
+    });
+    const first = await take('coder');
+    expect(first.status, JSON.stringify(first.body)).toBe(201);
+    const admin = join(repo, '.git', 'worktrees', bot.id);
+    expect(first.body.git).toEqual({ dir: admin, workTree: first.body.workspace, restored: false });
+    await h.call('DELETE', '/v1/bots/coder/takeover');
+
+    // The Bot pointed its .git at a repository of its own.
+    const ws = first.body.workspace;
+    git(home, 'init', '-q', join(home, 'evil'));
+    writeFileSync(join(ws, '.git'), `gitdir: ${join(home, 'evil', '.git')}\n`);
+    const second = await take('coder');
+    expect(second.status).toBe(201);
+    expect(second.body.git).toMatchObject({ dir: admin, restored: true });
+    expect(readFileSync(join(ws, '.git'), 'utf8')).toBe(`gitdir: ${admin}\n`);
+    const restored = h.service.audit.list({ action: 'takeover.git_restored' })[0]?.data;
+    expect(restored).toMatchObject({ workspace: ws, was: 'file' });
+    expect(String(restored?.movedTo)).toMatch(/\.git\.orbit-replaced-\d+$/);
   });
 
   it('only the bearer token may take over: an App session cookie is refused', async () => {

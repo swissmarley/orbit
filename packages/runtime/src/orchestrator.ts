@@ -849,6 +849,12 @@ export class Orchestrator {
     return (await this.workspaces(bot, this.driver.kind)).path;
   }
 
+  /** The Bot's prepared workspace and, for a worktree Bot, the repository Orbit names. */
+  async hostWorkspace(bot: Bot): Promise<{ path: string; git?: { repo: string; branch: string } }> {
+    const ws = await this.workspaces(bot, this.driver.kind);
+    return { path: ws.path, ...(ws.git ? { git: ws.git } : {}) };
+  }
+
   activeRuns(): string[] {
     return [...this.active.keys()];
   }

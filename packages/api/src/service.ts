@@ -113,10 +113,12 @@ import {
   type EngineCredential,
   type PluginSandboxSupport,
   SandboxManager,
+  type TakeoverGit,
   defaultRunner,
   detectPluginSandbox,
   detectSandboxSupport,
   parseUpstream,
+  prepareTakeoverGit,
 } from '@orbit/sandbox';
 import {
   BotRepo,
@@ -932,8 +934,17 @@ export class OrbitService {
     // The Bot-pause hold: no Run of the Bot starts or resumes while it lasts.
     if (!bot.pausedAt) this.bots.setPaused(bot.id, true);
     let workspace: string;
+    let git: TakeoverGit | null;
     try {
-      workspace = await this.orchestrator.workspacePath(bot);
+      const ws = await this.orchestrator.hostWorkspace(bot);
+      workspace = ws.path;
+      // The workspace's .git must be Orbit's (worktree Bots) or absent
+      // (directory Bots) before the owner's git-aware shell opens there.
+      git = prepareTakeoverGit({
+        kind: bot.spec.sandbox.kind === 'worktree' ? 'worktree' : 'directory',
+        workspace,
+        repo: ws.git?.repo,
+      });
     } catch (err) {
       if (!wasPaused) this.bots.setPaused(bot.id, false);
       if (existing) this.controls.clearTakeover(bot.id);
@@ -948,6 +959,14 @@ export class OrbitService {
       by: this.actor(),
     };
     this.controls.setTakeover(t);
+    if (git?.restored) {
+      this.audit.append({
+        actor: this.actor(),
+        action: 'takeover.git_restored',
+        subject: bot.id,
+        data: { workspace, was: git.restored.was, movedTo: git.restored.movedTo },
+      });
+    }
     this.audit.append({
       actor: this.actor(),
       action: 'takeover.started',
@@ -958,6 +977,9 @@ export class OrbitService {
       botId: bot.id,
       botName: bot.spec.name,
       workspace,
+      git: git
+        ? { dir: git.gitDir, workTree: git.workTree, restored: git.restored !== null }
+        : null,
       pid,
       startedAt: t.startedAt,
       wasPaused,

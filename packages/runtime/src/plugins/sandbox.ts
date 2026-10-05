@@ -4,7 +4,6 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
   readlinkSync,
   realpathSync,
@@ -27,6 +26,8 @@ import {
   LINUX_SYSTEM_PATHS,
   type PluginSandboxSupport,
   type GitBind,
+  gitCommonDir,
+  worktreeAdminDir,
   type SandboxBind,
   type SystemPath,
   type WrappedCommand,
@@ -233,35 +234,6 @@ export function existingDenied(paths: readonly string[]): HostPath[] {
   });
 }
 
-/**
- * The administrative directory (`<common>/worktrees/<name>`) of the linked
- * worktree checked out at `workspace`, found by its `gitdir` back-pointer —
- * never from the workspace's own `.git` file, which the Bot can rewrite.
- */
-export function worktreeAdminDir(commonDir: string, workspace: string): string | null {
-  const ws = realOrNull(workspace) ?? resolve(workspace);
-  const worktrees = join(commonDir, 'worktrees');
-  let names: string[];
-  try {
-    names = readdirSync(worktrees);
-  } catch {
-    return null;
-  }
-  for (const n of names) {
-    const dir = join(worktrees, n);
-    if (!lstatOrNull(dir)?.isDirectory()) continue;
-    try {
-      const target = readFileSync(join(dir, 'gitdir'), 'utf8').trim();
-      if (target === '') continue;
-      const tree = dirname(resolve(dir, target));
-      if ((realOrNull(tree) ?? tree) === ws) return dir;
-    } catch {
-      // Not a worktree entry.
-    }
-  }
-  return null;
-}
-
 /** What a commit and a push write in the common git directory (ADR-019). */
 const GIT_WRITABLE = ['objects', 'refs', 'logs', 'reftable'];
 /** Inside the Bot's worktree entry: the pointers and config git follows, read-only. */
@@ -284,28 +256,9 @@ export function gitBind(
   access: 'read' | 'write',
   workspace?: string | null,
 ): GitBind | null {
-  const dotGit = join(repo, '.git');
-  const st = lstatOrNull(dotGit);
-  if (!st) return null;
-  let dir: string | null = null;
-  let link: string | undefined;
-  if (st.isDirectory()) dir = realOrNull(dotGit);
-  else if (st.isFile()) {
-    link = dotGit;
-    const m = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, 'utf8'));
-    const gitdir = m?.[1] ? resolve(repo, m[1].trim()) : null;
-    if (gitdir) {
-      let common = gitdir;
-      try {
-        common = resolve(gitdir, readFileSync(join(gitdir, 'commondir'), 'utf8').trim());
-      } catch {
-        // Not a linked worktree: the gitdir is the common dir.
-      }
-      dir = realOrNull(common);
-    }
-  }
-  if (!dir) return null;
-  const common = dir;
+  const found = gitCommonDir(repo);
+  if (!found) return null;
+  const common = found.dir;
   const writable: string[] = [];
   const protect: string[] = [];
   if (access === 'write') {
@@ -325,7 +278,13 @@ export function gitBind(
       }
     }
   }
-  return { dir: common, access, writable, protect, ...(link ? { dotGit: link } : {}) };
+  return {
+    dir: common,
+    access,
+    writable,
+    protect,
+    ...(found.dotGit ? { dotGit: found.dotGit } : {}),
+  };
 }
 
 export interface SandboxRequest {

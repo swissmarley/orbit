@@ -15352,6 +15352,33 @@
                     "workspace": {
                       "type": "string"
                     },
+                    "git": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "dir": {
+                              "type": "string"
+                            },
+                            "workTree": {
+                              "type": "string"
+                            },
+                            "restored": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "dir",
+                            "workTree",
+                            "restored"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "pid": {
                       "type": "integer",
                       "minimum": -9007199254740991,
@@ -15386,6 +15413,7 @@
                     "botId",
                     "botName",
                     "workspace",
+                    "git",
                     "pid",
                     "startedAt",
                     "wasPaused",
