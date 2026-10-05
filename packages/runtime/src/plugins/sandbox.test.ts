@@ -160,6 +160,20 @@ describe('requestedFolders', () => {
       { path: '/home/owner', from: 'FS_ROOTS', overlaps: '/home/owner/.ssh' },
     ]);
   });
+
+  it('never brings devices, kernel state or runtime sockets in as a folder', () => {
+    const folders = requestedFolders(
+      m,
+      { settings: { FS_ROOTS: '/dev:/run/user/1000:/var/run:/proc/1:/data' }, env: {} },
+      '/home/owner',
+    );
+    expect(hiddenFolders(folders, []).map((h) => [h.path, h.overlaps])).toEqual([
+      ['/dev', '/dev'],
+      ['/run/user/1000', '/run'],
+      ['/var/run', '/var/run'],
+      ['/proc/1', '/proc'],
+    ]);
+  });
 });
 
 describe('module roots and git directories', () => {

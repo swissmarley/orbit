@@ -109,13 +109,28 @@ export function requestedFolders(
   return out;
 }
 
+/**
+ * System locations an owner folder may never bring into a sandbox: devices,
+ * kernel state and runtime sockets (`/run/user/<uid>` holds the session bus
+ * and SSH agent sockets, which a bind would make reachable without a
+ * network).
+ */
+export const SANDBOX_FOLDER_DENIED: readonly string[] = [
+  '/dev',
+  '/proc',
+  '/sys',
+  '/run',
+  '/var/run',
+];
+
 /** Folders that overlap a denied path, with the denied path (shown as warnings). */
 export function hiddenFolders(
   folders: readonly (SandboxBind & { from: string })[],
   denied: readonly string[],
 ): { path: string; from: string; overlaps: string }[] {
+  const all = [...denied, ...SANDBOX_FOLDER_DENIED];
   return folders.flatMap((f) => {
-    const d = denied.find((x) => isWithin(f.path, x) || isWithin(x, f.path));
+    const d = all.find((x) => isWithin(f.path, x) || isWithin(x, f.path));
     return d === undefined ? [] : [{ path: f.path, from: f.from, overlaps: d }];
   });
 }
@@ -322,9 +337,18 @@ export function prepareSandboxedCommand(
     const resolver = realOrNull('/etc/resolv.conf');
     if (resolver && !underSystem(resolver)) runtime.push(resolver);
   }
-  const folders = requestedFolders(req.manifest, { settings: req.settings, env: req.env }, req.home)
+  const requested = requestedFolders(
+    req.manifest,
+    { settings: req.settings, env: req.env },
+    req.home,
+  )
     .filter((f) => existsSync(f.path))
-    .map((f) => ({ path: realOr(f.path), access: f.access }));
+    .map((f) => ({ ...f, path: realOr(f.path) }));
+  // Devices and runtime sockets never; credential stores and Orbit's data the spec drops below.
+  const hidden = new Set(hiddenFolders(requested, []).map((h) => h.path));
+  const folders = requested
+    .filter((f) => !hidden.has(f.path))
+    .map((f) => ({ path: f.path, access: f.access }));
   const workspace =
     needs.workspace !== 'none' && req.workspace
       ? { path: realOr(req.workspace), access: needs.workspace }
