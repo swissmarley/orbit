@@ -45,7 +45,7 @@ describe('Run view: pause', () => {
       timeout: 5000,
     });
     const banner = await screen.findByTestId('pause-banner');
-    expect(banner.textContent).toMatch(/Paused by owner before Read ran\./);
+    expect(banner.textContent).toMatch(/Paused by you before Read ran\./);
     expect(banner.textContent).toMatch(/Resume it to continue, or stop it\./);
     expect(screen.getAllByText('paused').length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: /Pause run/ })).toBeNull();

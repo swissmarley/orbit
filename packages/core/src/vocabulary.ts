@@ -129,15 +129,17 @@ export const INTERRUPT_RETRY_LIMIT = 2;
 
 /**
  * Why a paused Run is paused, in one line every client shows next to
- * `RUN_STATUS.paused` ("Paused by owner before Bash ran"). Tool names come
+ * `RUN_STATUS.paused` ("Paused by you before Bash ran"). Tool names come
  * from the engine: clients scrub the line like other engine text.
  */
 export function pauseReason(p: RunPause): string {
   if (p.reason === 'owner') {
-    if (p.interruptedTurn) return `Paused by ${p.by}, who interrupted the last turn.`;
+    // The local owner reads "you"; a hosted principal keeps its name.
+    const who = p.by === 'owner' ? 'you' : p.by;
+    if (p.interruptedTurn) return `Paused by ${who}, which interrupted the last turn.`;
     return p.toolName
-      ? `Paused by ${p.by} before ${p.toolName} ran.`
-      : `Paused by ${p.by} at a tool call.`;
+      ? `Paused by ${who} before ${p.toolName} ran.`
+      : `Paused by ${who} at a tool call.`;
   }
   if (p.autoResume) return 'Interrupted when orbitd stopped; it resumes by itself.';
   return `Interrupted when orbitd stopped and needs you: ${p.detail ?? 'Orbit could not tell whether it is safe to continue'}.`;

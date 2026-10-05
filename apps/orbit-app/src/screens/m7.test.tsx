@@ -156,7 +156,7 @@ describe('Settings → Integrations', () => {
       const dialog = await screen.findByRole('dialog', { name: /Install Clock\?/ });
       expect(dialog.textContent).toMatch(/matched its integrity \(sha512-/);
       expect(dialog.textContent).toMatch(/1 tool \(1 read\)/);
-      expect(dialog.textContent).toMatch(/no workspace · no network/);
+      expect(dialog.textContent).toMatch(/no workspace and no network access/);
       expect(dialog.textContent).toMatch(/stays off until you enable it/);
       await noA11yViolations(document.body);
       await user.click(within(dialog).getByRole('button', { name: /^Install/ }));

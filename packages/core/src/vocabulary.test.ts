@@ -69,7 +69,7 @@ describe('pause reasons (ADR-016)', () => {
   };
   it('say who paused and why, in one line', () => {
     expect(pauseReason({ ...base, reason: 'owner', toolName: 'Bash' })).toBe(
-      'Paused by owner before Bash ran.',
+      'Paused by you before Bash ran.',
     );
     expect(pauseReason({ ...base, reason: 'owner', interruptedTurn: true })).toMatch(
       /interrupted the last turn/,
@@ -81,5 +81,13 @@ describe('pause reasons (ADR-016)', () => {
       pauseReason({ ...base, reason: 'interrupted', detail: 'send_email (t1) has no result' }),
     ).toBe('Interrupted when orbitd stopped and needs you: send_email (t1) has no result.');
     expect(pauseNextStep({ ...base, reason: 'interrupted' })).toMatch(/verify first/);
+  });
+  it('the local owner reads "you"; a hosted principal keeps its name', () => {
+    expect(pauseReason({ ...base, reason: 'owner', interruptedTurn: true })).toBe(
+      'Paused by you, which interrupted the last turn.',
+    );
+    expect(pauseReason({ ...base, by: 'alice', reason: 'owner', toolName: 'Bash' })).toBe(
+      'Paused by alice before Bash ran.',
+    );
   });
 });
