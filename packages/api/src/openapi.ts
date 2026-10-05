@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { API_VERSION, ErrorBody, type RouteDef, routes } from './contract';
+import { API_VERSION, ErrorBody, type RouteDef, routeRole, routes } from './contract';
 
 type JsonSchema = Record<string, unknown>;
 
@@ -57,7 +57,7 @@ export function buildOpenApi(): JsonSchema {
             : { description: 'JSON Lines', content: { 'application/x-ndjson': {} } },
         default: errorResponse,
       },
-      ...(def.auth === false ? { security: [] } : {}),
+      ...(def.auth === false ? { security: [] } : { 'x-orbit-role': routeRole(def) }),
     };
     if (def.body) {
       op.requestBody = {
@@ -73,14 +73,19 @@ export function buildOpenApi(): JsonSchema {
       title: 'orbitd API',
       version: API_VERSION,
       description:
-        'Local API of the Orbit daemon. Loopback only; authenticate with the bearer token in $ORBIT_HOME/daemon.token, or (the App) with the session cookie from POST /v1/session plus the X-Orbit-CSRF: 1 header (ADR-011).',
+        'API of the Orbit daemon. Local mode listens on loopback; authenticate with the bearer token in $ORBIT_HOME/daemon.token, or (the App) with the session cookie from POST /v1/session plus the session’s X-Orbit-CSRF header (ADR-011). Hosted mode (ADR-015) serves its public https URL, signs browsers in through OIDC (cookie __Host-orbit_session) and limits each route to a least role (x-orbit-role: viewer < operator < owner); the bearer token acts as the owner.',
     },
     servers: [{ url: 'http://127.0.0.1:7420' }],
     security: [{ bearer: [] }, { session: [] }],
     components: {
       securitySchemes: {
         bearer: { type: 'http', scheme: 'bearer' },
-        session: { type: 'apiKey', in: 'cookie', name: 'orbit_session_<port>' },
+        session: {
+          type: 'apiKey',
+          in: 'cookie',
+          name: 'orbit_session_<port>',
+          description: 'Hosted mode: __Host-orbit_session',
+        },
       },
     },
     paths,

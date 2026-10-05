@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { OrbitConfig, type OrbitConfigInput } from '@orbit/core';
 import type { WorkspaceProvider } from '@orbit/runtime';
 import { type OrbitDb, openDatabase } from '@orbit/store';
-import { createApp } from '../src/app';
+import { type AppOptions, createApp } from '../src/app';
 import { OrbitService, type ServiceOptions } from '../src/service';
 
 export const TOKEN = 'test-token-0123456789abcdef0123456789abcdef';
@@ -46,6 +46,8 @@ export function harness(
     home?: string;
     db?: OrbitDb;
     start?: boolean;
+    /** Extra createApp options (hosted mode, sessions). */
+    app?: Partial<Omit<AppOptions, 'service' | 'token'>>;
   } = {},
 ): Harness {
   const home = options.home ?? mkdtempSync(join(tmpdir(), 'orbit-api-'));
@@ -75,7 +77,13 @@ export function harness(
     ...options.service,
   });
   if (options.start !== false) service.start();
-  const app = createApp({ service, token: TOKEN, validateResponses: true, heartbeatMs: 50 });
+  const app = createApp({
+    service,
+    token: TOKEN,
+    validateResponses: true,
+    heartbeatMs: 50,
+    ...options.app,
+  });
   let server: ReturnType<typeof serve> | undefined;
   const call = (
     method: string,

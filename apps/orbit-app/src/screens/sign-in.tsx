@@ -1,15 +1,48 @@
 /** @jsxRuntime automatic @jsxImportSource react */
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
-import { KeyRound, Terminal } from 'lucide-react';
+import { KeyRound, LogIn, Terminal } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { authStore, csrfSecret, errorText, takeTicketFromLocation, useClient } from '../lib/api';
-import { keys } from '../lib/queries';
+import { OIDC_LOGIN_PATH } from '@orbit/sdk-client/browser';
+import { keys, useHealth } from '../lib/queries';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
 
+/** Hosted mode (ADR-015): the organization's identity provider signs people in. */
+function OidcSignIn({ error }: { error?: unknown }) {
+  return (
+    <div className="flex min-h-full items-center justify-center p-6">
+      <Card className="w-full max-w-md">
+        <CardContent className="flex flex-col gap-4 pt-6">
+          <div className="flex items-center gap-2">
+            <KeyRound className="size-5 text-accent" aria-hidden />
+            <h1 className="text-lg font-semibold">Sign in to Orbit</h1>
+          </div>
+          {error ? (
+            <p role="alert" className="rounded-md bg-danger-bg px-3 py-2 text-sm text-danger">
+              {errorText(error)}
+            </p>
+          ) : null}
+          <p className="text-sm text-fg-muted">
+            Sign in with your organization’s account. Your role decides what you can do here.
+          </p>
+          <Button asChild variant="primary">
+            {/* A full-page navigation: orbitd redirects to the identity provider. */}
+            <a href={OIDC_LOGIN_PATH}>
+              <LogIn aria-hidden /> Sign in
+            </a>
+          </Button>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 /** Not signed in: how to get in (the token never enters the browser, ADR-011). */
 export function SignedOut({ error }: { error?: unknown }) {
+  const health = useHealth();
+  if (health.data?.signIn === 'oidc') return <OidcSignIn error={error} />;
   return (
     <div className="flex min-h-full items-center justify-center p-6">
       <Card className="w-full max-w-md">

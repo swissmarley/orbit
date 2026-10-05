@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomBytes } from 'node:crypto';
 import { arch, platform } from 'node:os';
 import { join } from 'node:path';
@@ -18,6 +19,7 @@ import {
   pluginSecretKey,
   event,
   humanPrincipalCount,
+  principalsByRole,
   runLabel,
   slugify,
 } from '@orbit/core';
@@ -111,9 +113,14 @@ import type {
   DenyBody,
   DoctorReport,
   QueueSnapshot,
+  SessionPrincipal,
 } from './contract';
 
-/** Who acts through the local API: the single local owner (OIDC principals arrive with hosted mode). */
+/**
+ * The bearer token's principal id, and the actor recorded for API calls made
+ * outside any request (local mode has only this one owner). Hosted requests
+ * record their own principal (ADR-015).
+ */
 export const OWNER = 'owner';
 
 const IN_FLIGHT: readonly RunState['status'][] = [
@@ -155,6 +162,8 @@ export interface ServiceOptions {
   };
   log?: Logger;
   now?: () => Date;
+  /** How orbitd listens (shown by doctor): in-process TLS, container bind. */
+  listen?: { tls: boolean; container: boolean };
 }
 
 /**
@@ -199,8 +208,11 @@ export class OrbitService {
   private unsubscribeRuns: (() => void) | undefined;
   /** Post-run summaries run one at a time, after the Run's outcome is final. */
   private summaries: Promise<void> = Promise.resolve();
-  private readonly log: Logger;
+  /** Every line goes through the redactor. */
+  readonly log: Logger;
   private readonly now: () => Date;
+  /** The principal of the API request being served (set by the auth middleware). */
+  private readonly requestPrincipal = new AsyncLocalStorage<SessionPrincipal>();
 
   constructor(private readonly opts: ServiceOptions) {
     const { config, env, db } = opts;
@@ -597,6 +609,36 @@ export class OrbitService {
 
   // ── bots ──────────────────────────────────────────────────────────────────
 
+  // ── principals (ADR-015) ──────────────────────────────────────────────────
+
+  /**
+   * The principal the bearer token acts as: the server operator's credential
+   * (`daemon.token`, 0600) is always the owner.
+   */
+  tokenPrincipal(): SessionPrincipal {
+    const configured = this.config.principals.find((p) => p.id === OWNER);
+    return {
+      id: OWNER,
+      name: configured?.name ?? (this.config.mode === 'hosted' ? 'Server operator' : 'Local owner'),
+      role: 'owner',
+    };
+  }
+
+  /** Serve one API request as `principal`: audit records and decisions name it. */
+  runAs<T>(principal: SessionPrincipal, fn: () => T): T {
+    return this.requestPrincipal.run(principal, fn);
+  }
+
+  /** Who acts right now: the request's principal, or the local owner outside requests. */
+  actor(): string {
+    return this.requestPrincipal.getStore()?.id ?? OWNER;
+  }
+
+  /** Hosted mode: the public https origin (webhooks, sign-in); null locally. */
+  publicUrl(): string | null {
+    return this.config.mode === 'hosted' ? this.config.hosted.publicUrl : null;
+  }
+
   private checkSpec(spec: BotSpecInput): void {
     validateTriggers((spec.triggers ?? []) as TriggerSpec[]);
     const parsed = BotSpec.parse(spec);
@@ -622,7 +664,7 @@ export class OrbitService {
     this.checkSpec(spec);
     const bot = this.bots.create(spec);
     this.audit.append({
-      actor: OWNER,
+      actor: this.actor(),
       action: 'bot.created',
       subject: bot.id,
       data: { spec: bot.spec },
@@ -634,7 +676,7 @@ export class OrbitService {
     this.checkSpec(spec);
     const bot = this.bots.update(ref, spec);
     this.audit.append({
-      actor: OWNER,
+      actor: this.actor(),
       action: 'bot.updated',
       subject: bot.id,
       data: { version: bot.version, spec: bot.spec },
@@ -643,7 +685,7 @@ export class OrbitService {
   }
 
   pauseBot(ref: string): Bot {
-    const bot = this.orchestrator.pauseBot(ref, OWNER);
+    const bot = this.orchestrator.pauseBot(ref, this.actor());
     // Nothing of a paused Bot may continue once it is resumed: queued, parked
     // and rate-limited Runs are closed too (review L2).
     this.closeWaiting(bot.id);
@@ -661,7 +703,7 @@ export class OrbitService {
       if (this.queue.isActive(run.runId) || this.orchestrator.isActive(run.runId)) continue;
       this.queue.remove(run.runId);
       try {
-        this.orchestrator.stop(run.runId, OWNER);
+        this.orchestrator.stop(run.runId, this.actor());
       } catch (err) {
         if (!(err instanceof OrbitError && err.code === 'conflict')) throw err;
       }
@@ -669,7 +711,7 @@ export class OrbitService {
   }
 
   resumeBot(ref: string): Bot {
-    const bot = this.orchestrator.resumeBot(ref, OWNER);
+    const bot = this.orchestrator.resumeBot(ref, this.actor());
     this.queue.pump();
     return bot;
   }
@@ -754,8 +796,12 @@ export class OrbitService {
     return { fired: true, runId: run.runId };
   }
 
-  inboundTriggers(): InboundStatus[] {
-    return this.triggers.status();
+  /** Inbound triggers; in hosted mode webhooks show the public address senders use. */
+  inboundTriggers(): (InboundStatus & { url: string | null })[] {
+    const base = this.publicUrl();
+    return this.triggers
+      .status()
+      .map((t) => ({ ...t, url: base !== null && t.path !== null ? base + t.path : null }));
   }
 
   /**
@@ -851,14 +897,17 @@ export class OrbitService {
     this.vault.set(webhookSecretName(bot.id, name), secret);
     this.redactor.addSecret(secret);
     this.audit.append({
-      actor: OWNER,
+      actor: this.actor(),
       action: 'webhook.secret_set',
       subject: bot.id,
       data: { trigger: name },
     });
+    const path = `/hooks/${bot.id}/${name}`;
+    const base = this.publicUrl();
     return {
       secret,
-      path: `/hooks/${bot.id}/${name}`,
+      path,
+      url: base === null ? null : base + path,
       style: trigger.style,
       headers:
         trigger.style === 'github'
@@ -874,14 +923,14 @@ export class OrbitService {
   }
 
   setPluginSecret(id: string, name: string, value: string): PluginStatus {
-    this.plugins.setSecret(id, name, value, OWNER);
+    this.plugins.setSecret(id, name, value, this.actor());
     this.redactor.addSecret(value);
     if (id === 'slack') this.triggers.restartSlack();
     return this.plugins.get(id);
   }
 
   removePluginSecret(id: string, name: string): PluginStatus {
-    this.plugins.removeSecret(id, name, OWNER);
+    this.plugins.removeSecret(id, name, this.actor());
     if (id === 'slack') this.triggers.restartSlack();
     return this.plugins.get(id);
   }
@@ -1148,11 +1197,11 @@ export class OrbitService {
       title: body.title,
       body: body.body,
       pinned: body.pinned,
-      createdBy: OWNER,
+      createdBy: this.actor(),
     });
     // Audit ids and kinds only: memory text must be deletable, the audit log is not.
     this.audit.append({
-      actor: OWNER,
+      actor: this.actor(),
       action: 'memory.created',
       subject: m.id,
       data: { botId: bot.id, kind: m.kind, pinned: m.pinned },
@@ -1172,7 +1221,7 @@ export class OrbitService {
     const before = this.memory.get(id);
     const m = this.memory.update(id, patch);
     this.audit.append({
-      actor: OWNER,
+      actor: this.actor(),
       action: patch.trusted && before.taint.length > 0 ? 'memory.trusted' : 'memory.updated',
       subject: m.id,
       data: {
@@ -1187,7 +1236,7 @@ export class OrbitService {
   deleteMemory(id: string): void {
     const m = this.memory.delete(id);
     this.audit.append({
-      actor: OWNER,
+      actor: this.actor(),
       action: 'memory.deleted',
       subject: m.id,
       data: { botId: m.botId, kind: m.kind, source: m.source },
@@ -1210,13 +1259,13 @@ export class OrbitService {
       ...text,
       runId,
       signal,
-      createdBy: OWNER,
+      createdBy: this.actor(),
     });
     this.store.append(runId, run.botId, [
-      event('feedback.recorded', { signal, memoryId: m.id, approvalId: null, by: OWNER }),
+      event('feedback.recorded', { signal, memoryId: m.id, approvalId: null, by: this.actor() }),
     ]);
     this.audit.append({
-      actor: OWNER,
+      actor: this.actor(),
       action: 'feedback.recorded',
       subject: runId,
       data: { signal, memoryId: m.id },
@@ -1250,14 +1299,14 @@ export class OrbitService {
         // Edited values may still carry text the model wrote in a tainted Run (review M6 L2).
         taint:
           text.signal === 'edited' ? (this.store.getRun(approval.runId)?.taintSources ?? []) : [],
-        createdBy: OWNER,
+        createdBy: this.actor(),
       });
       this.store.append(approval.runId, approval.botId, [
         event('feedback.recorded', {
           signal: text.signal,
           memoryId: m.id,
           approvalId: approval.id,
-          by: OWNER,
+          by: this.actor(),
         }),
       ]);
     } catch (err) {
@@ -1273,7 +1322,7 @@ export class OrbitService {
     const bot = this.bots.get(botRef);
     const n = this.workspaceTaint.clearAll(bot.id);
     this.audit.append({
-      actor: OWNER,
+      actor: this.actor(),
       action: 'workspace.taint_cleared',
       subject: bot.id,
       data: { files: n },
@@ -1417,7 +1466,7 @@ export class OrbitService {
   private cancelWaiting(runId: string): void {
     this.queue.remove(runId);
     try {
-      this.orchestrator.cancelQueued(runId, OWNER);
+      this.orchestrator.cancelQueued(runId, this.actor());
     } catch (err) {
       if (!(err instanceof OrbitError && err.code === 'conflict')) throw err;
     }
@@ -1429,7 +1478,7 @@ export class OrbitService {
     // orbitd is the single writer: a `running` Run that no job executes is an
     // orphan and is closed now instead of waiting for a poll that never comes.
     const orphaned = !this.queue.isActive(runId) && !this.orchestrator.isActive(runId);
-    this.orchestrator.stop(runId, OWNER, { orphaned });
+    this.orchestrator.stop(runId, this.actor(), { orphaned });
     return this.requireRun(runId);
   }
 
@@ -1466,7 +1515,7 @@ export class OrbitService {
     }
     const approval = this.approvals.decide(id, {
       approve: true,
-      by: OWNER,
+      by: this.actor(),
       editedInput: body.editedInput ?? null,
       always: body.always ?? null,
     });
@@ -1477,7 +1526,7 @@ export class OrbitService {
   deny(id: string, body: z.output<typeof DenyBody>): z.infer<typeof DecisionResult> {
     const approval = this.approvals.decide(id, {
       approve: false,
-      by: OWNER,
+      by: this.actor(),
       reason: body.reason ?? null,
     });
     this.recordDecisionFeedback(approval, false);
@@ -1500,13 +1549,13 @@ export class OrbitService {
         inputMatch: body.inputMatch ?? null,
         effect: body.effect,
         reason: body.reason ?? null,
-        createdBy: OWNER,
+        createdBy: this.actor(),
         expiresAt: body.expiresAt,
       },
       tier,
     );
     this.audit.append({
-      actor: OWNER,
+      actor: this.actor(),
       action: 'rule.created',
       subject: rule.id,
       data: { ...rule },
@@ -1516,7 +1565,7 @@ export class OrbitService {
 
   revokeRule(id: string): Rule {
     const rule = this.rules.revoke(id);
-    this.audit.append({ actor: OWNER, action: 'rule.revoked', subject: rule.id, data: {} });
+    this.audit.append({ actor: this.actor(), action: 'rule.revoked', subject: rule.id, data: {} });
     return rule;
   }
 
@@ -1536,13 +1585,13 @@ export class OrbitService {
   setSecret(name: string, value: string): { name: string; keySource: 'keychain' | 'file' } {
     this.vault.set(name, value);
     this.redactor.addSecret(value);
-    this.audit.append({ actor: OWNER, action: 'secret.set', subject: name, data: {} });
+    this.audit.append({ actor: this.actor(), action: 'secret.set', subject: name, data: {} });
     return { name, keySource: this.vault.keySource };
   }
 
   removeSecret(name: string): void {
     if (!this.vault.remove(name)) throw new OrbitError('not_found', `Secret ${name} not found`);
-    this.audit.append({ actor: OWNER, action: 'secret.removed', subject: name, data: {} });
+    this.audit.append({ actor: this.actor(), action: 'secret.removed', subject: name, data: {} });
   }
 
   killStatus(): { engaged: boolean; by: string | null } {
@@ -1551,7 +1600,7 @@ export class OrbitService {
   }
 
   setKill(on: boolean): { engaged: boolean; by: string | null } {
-    this.orchestrator.killAll(OWNER, on);
+    this.orchestrator.killAll(this.actor(), on);
     if (on) {
       // "Stop everything": nothing waiting may continue after the release (review L2).
       this.closeWaiting();
@@ -1570,6 +1619,7 @@ export class OrbitService {
       detectSandboxSupport(defaultRunner(buildChildEnv('tool', env)), { pathEnv: env.PATH ?? '' }),
     ]);
     const c = this.config;
+    const listen = this.opts.listen ?? { tls: false, container: false };
     return {
       ok: r.driver !== null,
       driver: r.driver,
@@ -1596,12 +1646,51 @@ export class OrbitService {
               },
             ]
           : []),
+        // The container listens on every interface inside its own network
+        // namespace; only the host's loopback may reach the published port.
+        ...(listen.container
+          ? [
+              {
+                code: 'container_bind',
+                message: `orbitd listens on ${c.api.host} inside a container. Publish its port to the host's loopback only (\`127.0.0.1:${c.api.port}:${c.api.port}\`): the local API is plain HTTP.`,
+              },
+            ]
+          : []),
+        ...(c.mode === 'local' &&
+        (c.hosted.publicUrl !== null || c.hosted.tls !== null || c.hosted.oidc !== null)
+          ? [
+              {
+                code: 'hosted_settings_ignored',
+                message:
+                  'Hosted settings (public URL, TLS, OIDC) are ignored in local mode. Set ORBIT_MODE=hosted to use them.',
+              },
+            ]
+          : []),
+        ...(c.mode === 'hosted' && !c.principals.some((p) => p.oidc !== undefined)
+          ? [
+              {
+                code: 'no_oidc_principals',
+                message:
+                  'No principal names an OIDC subject or email, so nobody can sign in to the App. Add "oidc": {"subject": "…"} to the principals in config.json.',
+              },
+            ]
+          : []),
       ],
       refusal: r.refusal,
       onboarding: r.onboarding,
       mode: c.mode,
       api: c.api,
       humanPrincipals: humanPrincipalCount(c),
+      principals: principalsByRole(c),
+      hosted:
+        c.mode === 'hosted'
+          ? {
+              publicUrl: c.hosted.publicUrl,
+              issuer: c.hosted.oidc?.issuer ?? null,
+              tls: c.hosted.tls !== null,
+            }
+          : null,
+      listen: { tls: listen.tls, container: listen.container },
       models: c.models,
       home: c.home,
       node: process.version,

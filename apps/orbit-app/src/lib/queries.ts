@@ -7,6 +7,7 @@ import { useClient } from './api';
 export const keys = {
   all: ['orbit'] as const,
   session: ['orbit', 'session'] as const,
+  health: ['orbit', 'health'] as const,
   doctor: ['orbit', 'doctor'] as const,
   bots: ['orbit', 'bots'] as const,
   bot: (id: string) => ['orbit', 'bots', id] as const,
@@ -54,6 +55,17 @@ export function useInboundTriggers() {
 export function useSession() {
   const c = useClient();
   return useQuery({ queryKey: keys.session, queryFn: () => c.call('getSession'), retry: false });
+}
+
+/** Public: how browsers sign in here (one-time link or, hosted, OIDC; ADR-015). */
+export function useHealth() {
+  const c = useClient();
+  return useQuery({
+    queryKey: keys.health,
+    queryFn: () => c.health(),
+    staleTime: 300_000,
+    retry: false,
+  });
 }
 
 export function useDoctor() {

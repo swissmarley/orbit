@@ -84,12 +84,12 @@ describe('orbitd', () => {
     }
   });
 
-  it('refuses hosted mode and non-loopback binds (token over plain HTTP)', async () => {
-    await expect(start({ ORBIT_MODE: 'hosted' })).rejects.toMatchObject({
-      code: 'invalid_config',
-      message: /Hosted mode/,
-    });
+  it('refuses non-loopback binds in local mode (token over plain HTTP)', async () => {
     await expect(start({ ORBIT_HOST: '0.0.0.0' })).rejects.toMatchObject({
+      code: 'invalid_config',
+      message: /only listens on loopback/,
+    });
+    await expect(start({ ORBIT_HOST: '192.168.1.10' })).rejects.toMatchObject({
       message: /only listens on loopback/,
     });
     expect(existsSync(daemonFiles(home).lock)).toBe(false);

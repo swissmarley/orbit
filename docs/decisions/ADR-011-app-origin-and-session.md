@@ -95,4 +95,4 @@ restart`, `pnpm --filter @orbit/app dev`, then
   to orbitd).
 - Desktop (M8): the Tauri shell either loads the App from orbitd or uses the
   Tauri origin from the allowlist; it obtains its ticket the same way the CLI
-  does. Hosted mode (M8) replaces tickets with OIDC sign-in over TLS.
+  does. Hosted mode (ADR-015) signs browsers in through OIDC, which mints the same ticket.

@@ -36,7 +36,7 @@ current. The client is "generated" at the type level from the same table
 rather than by a code generator: nothing to regenerate, nothing to drift.
 
 **Local auth.** orbitd binds to loopback only and refuses non-loopback
-`ORBIT_HOST` and `ORBIT_MODE=hosted` until TLS + OIDC exist (M8): a bearer
+`ORBIT_HOST` and `ORBIT_MODE=hosted` until TLS + OIDC exist (M8; ADR-015 added both): a bearer
 token over plain HTTP is not acceptable off the machine. Each start writes a
 fresh random token to `daemon.token` (0600) and its address to `daemon.json`
 (0600). Every route but `/v1/health` and `/openapi.json` needs the token

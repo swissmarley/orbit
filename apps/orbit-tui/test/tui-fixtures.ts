@@ -229,6 +229,7 @@ export const inbound = () => [
     state: 'needs_setup' as const,
     detail: 'no signing secret yet',
     path: '/hooks/bot_a/deploys',
+    url: null,
   },
 ];
 

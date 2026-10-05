@@ -9,22 +9,28 @@ import {
   writeFileSync,
 } from 'node:fs';
 import type { Server } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
 import type { AddressInfo } from 'node:net';
 import { join, resolve } from 'node:path';
 import { serve } from '@hono/node-server';
 import {
   type Logger,
+  OIDC_CALLBACK_PATH,
+  OidcSignIn,
   OrbitService,
   type ServiceOptions,
   SessionStore,
   createApp,
 } from '@orbit/api';
 import { type OrbitConfig, OrbitError, isLoopbackHost } from '@orbit/core';
-import { type Env, loadConfig } from '@orbit/runtime';
+import { type Env, GUARD_API_KEY_HOWTO, loadConfig } from '@orbit/runtime';
 import { type DaemonInfo, daemonFiles } from '@orbit/sdk-client';
 import { openDatabase } from '@orbit/store';
 
 export const ORBITD_VERSION = '0.1.0';
+
+/** Vault entry holding the OIDC client secret (confidential clients; ADR-015). */
+export const OIDC_CLIENT_SECRET = 'oidc_client_secret';
 
 export interface DaemonOptions {
   env: Env;
@@ -35,6 +41,112 @@ export interface DaemonOptions {
   onStopRequested?: () => void;
   /** Test seams passed to the service (mock pacing, probes, workspaces, …). */
   service?: Partial<ServiceOptions>;
+  /** Is this process inside a container? Default: `/.dockerenv` or `/run/.containerenv` exists. */
+  inContainer?: () => boolean;
+}
+
+function containerMarkerExists(): boolean {
+  return existsSync('/.dockerenv') || existsSync('/run/.containerenv');
+}
+
+/** Every interface: allowed only inside a container (local mode) or with TLS (hosted). */
+const WILDCARD_HOSTS = new Set(['0.0.0.0', '::', '[::]']);
+
+/** How orbitd listens, decided before anything is opened (ADR-010, ADR-015). */
+export interface ListenPlan {
+  /** In-process TLS: the PEM certificate chain and key. */
+  tls: { cert: Buffer; key: Buffer } | null;
+  /** Local mode inside a container, bound to every interface of its own network namespace. */
+  container: boolean;
+  /** The host clients on this machine (CLI, sign-in links) use; `127.0.0.1` for a container bind. */
+  publishedHost: string;
+  /** Hosted mode: the public https origin. */
+  publicUrl: string | null;
+}
+
+const refuse = (message: string, hint: string) =>
+  new OrbitError('invalid_config', message, { hint });
+
+function readPem(path: string, what: string): Buffer {
+  try {
+    return readFileSync(path);
+  } catch (err) {
+    throw refuse(
+      `Cannot read the TLS ${what} ${path}: ${(err as NodeJS.ErrnoException).code ?? 'error'}`,
+      'ORBIT_TLS_CERT and ORBIT_TLS_KEY name PEM files orbitd can read.',
+    );
+  }
+}
+
+/**
+ * The startup rules (ADR-015). Local mode listens on loopback, or on every
+ * interface of a container (ORBIT_CONTAINER=1 and a container marker; the
+ * port must then be published to the host's loopback only). Hosted mode needs
+ * a public https URL and OIDC, never uses the CliDriver, and listens off
+ * loopback only with in-process TLS; on loopback without TLS it sits behind
+ * a TLS-terminating reverse proxy on the same machine.
+ */
+export function planListen(
+  config: OrbitConfig,
+  env: Env,
+  inContainer: () => boolean = containerMarkerExists,
+): ListenPlan {
+  const host = config.api.host;
+  const loopback = isLoopbackHost(host);
+  if (config.mode === 'hosted') {
+    const { publicUrl, oidc, tls } = config.hosted;
+    if (publicUrl === null) {
+      throw refuse(
+        'Hosted mode needs its public https URL',
+        'Set ORBIT_PUBLIC_URL=https://orbit.example.com (the address browsers and webhook senders use), or hosted.publicUrl in config.json.',
+      );
+    }
+    if (oidc === null) {
+      throw refuse(
+        'Hosted mode needs OIDC sign-in',
+        'Set ORBIT_OIDC_ISSUER and ORBIT_OIDC_CLIENT_ID (register the callback URL ' +
+          `${publicUrl}${OIDC_CALLBACK_PATH} with your identity provider).`,
+      );
+    }
+    if (config.driver === 'cli') {
+      throw new OrbitError(
+        'compliance_refused',
+        'Hosted mode never uses your Claude subscription (ORBIT_DRIVER=cli)',
+        { hint: GUARD_API_KEY_HOWTO },
+      );
+    }
+    if (!loopback && tls === null) {
+      throw refuse(
+        `orbitd listens on ${host} only with TLS`,
+        'Set ORBIT_TLS_CERT and ORBIT_TLS_KEY, or keep ORBIT_HOST=127.0.0.1 behind a TLS-terminating reverse proxy on this machine.',
+      );
+    }
+    return {
+      tls: tls
+        ? { cert: readPem(tls.certFile, 'certificate'), key: readPem(tls.keyFile, 'key') }
+        : null,
+      container: false,
+      publishedHost: loopback ? host : '127.0.0.1',
+      publicUrl,
+    };
+  }
+  if (loopback) return { tls: null, container: false, publishedHost: host, publicUrl: null };
+  const asked = env.ORBIT_CONTAINER?.trim() === '1';
+  if (asked && WILDCARD_HOSTS.has(host) && inContainer()) {
+    return { tls: null, container: true, publishedHost: '127.0.0.1', publicUrl: null };
+  }
+  if (asked && WILDCARD_HOSTS.has(host)) {
+    throw refuse(
+      `ORBIT_CONTAINER=1 is set, but this is not a container (got ORBIT_HOST=${host})`,
+      'Outside a container orbitd listens on loopback only: use ORBIT_HOST=127.0.0.1. Hosted mode (TLS + OIDC) serves other machines.',
+    );
+  }
+  throw refuse(
+    `orbitd only listens on loopback in local mode (got ORBIT_HOST=${host})`,
+    asked
+      ? 'Inside a container use ORBIT_HOST=0.0.0.0 (or ::) and publish the port to the host loopback only (127.0.0.1:7420:7420).'
+      : 'The local API is plain HTTP with a bearer token: use 127.0.0.1. Inside a container set ORBIT_CONTAINER=1 with ORBIT_HOST=0.0.0.0; for other machines use hosted mode (TLS + OIDC).',
+  );
 }
 
 /**
@@ -47,6 +159,8 @@ export function appDir(env: Env): string {
 
 export interface Daemon {
   url: string;
+  /** The port orbitd listens on (with ORBIT_PORT=0, the one it was given). */
+  port: number;
   config: OrbitConfig;
   service: OrbitService;
   stop(): Promise<void>;
@@ -128,26 +242,13 @@ function acquireLock(path: string): () => void {
 }
 
 /**
- * The orbitd composition root: config → policy checks → database → service
- * → HTTP server on loopback with a fresh bearer token. orbitd is the single
- * writer of the Orbit database while it runs.
+ * The orbitd composition root: config → listen rules → database → service
+ * → HTTP(S) server with a fresh bearer token. orbitd is the single writer of
+ * the Orbit database while it runs.
  */
 export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   const config = loadConfig(opts.env);
-  if (config.mode === 'hosted') {
-    throw new OrbitError('invalid_config', 'Hosted mode is not available yet', {
-      hint: 'Hosted mode needs OIDC sign-in and TLS (planned for M8). Run orbitd locally with ORBIT_MODE=local.',
-    });
-  }
-  if (!isLoopbackHost(config.api.host)) {
-    throw new OrbitError(
-      'invalid_config',
-      `orbitd only listens on loopback for now (got ORBIT_HOST=${config.api.host})`,
-      {
-        hint: 'The local API uses a bearer token over plain HTTP; remote access needs TLS and OIDC (M8). Use 127.0.0.1.',
-      },
-    );
-  }
+  const plan = planListen(config, opts.env, opts.inContainer);
   mkdirSync(config.home, { recursive: true, mode: 0o700 });
   const files = daemonFiles(config.home);
   const releaseLock = acquireLock(files.lock);
@@ -167,15 +268,38 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       db,
       version: ORBITD_VERSION,
       ...(opts.log ? { log: opts.log } : {}),
+      listen: { tls: plan.tls !== null, container: plan.container },
       ...opts.service,
     });
     service.redactor.addSecret(token);
+    const envClientSecret = opts.env.ORBIT_OIDC_CLIENT_SECRET?.trim() ?? '';
+    const clientSecretFromEnv = envClientSecret === '' ? null : envClientSecret;
+    if (clientSecretFromEnv !== null) service.redactor.addSecret(clientSecretFromEnv);
 
     let port = opts.port ?? config.api.port;
-    const hosts = () => [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`];
+    // Loopback names always; hosted mode adds the public host (DNS-rebinding guard).
+    const hosts = () => [
+      `127.0.0.1:${port}`,
+      `localhost:${port}`,
+      `[::1]:${port}`,
+      ...(plan.publicUrl !== null ? [new URL(plan.publicUrl).host] : []),
+    ];
     let stopping: Promise<void> | null = null;
     // App sign-ins live in memory: a restart (new token) signs every browser out.
     const sessions = new SessionStore();
+    const oidcConfig = config.mode === 'hosted' ? config.hosted.oidc : null;
+    const oidc =
+      plan.publicUrl !== null && oidcConfig !== null
+        ? new OidcSignIn({
+            issuer: oidcConfig.issuer,
+            clientId: oidcConfig.clientId,
+            // Read per sign-in: `orbit secret set oidc_client_secret` needs no restart.
+            clientSecret: () => service.vault.get(OIDC_CLIENT_SECRET) ?? clientSecretFromEnv,
+            scopes: oidcConfig.scopes,
+            redirectUri: `${plan.publicUrl}${OIDC_CALLBACK_PATH}`,
+            principals: () => config.principals,
+          })
+        : null;
     const app = createApp({
       service,
       token,
@@ -183,12 +307,26 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       allowedOrigins: config.api.allowedOrigins,
       sessions,
       appRoot: appDir(opts.env),
+      hosted:
+        plan.publicUrl !== null
+          ? { publicUrl: plan.publicUrl, oidc, tls: plan.tls !== null }
+          : null,
       // The bin exits the process; embedded daemons (tests) just stop.
       onStop: () => (opts.onStopRequested ? opts.onStopRequested() : void stop()),
     });
     const server = await new Promise<Server>((resolve, reject) => {
       const s = serve(
-        { fetch: app.fetch, hostname: config.api.host, port },
+        {
+          fetch: app.fetch,
+          hostname: config.api.host,
+          port,
+          ...(plan.tls
+            ? {
+                createServer: createHttpsServer,
+                serverOptions: { cert: plan.tls.cert, key: plan.tls.key, minVersion: 'TLSv1.2' },
+              }
+            : {}),
+        },
         (info: AddressInfo) => {
           port = info.port;
           resolve(s);
@@ -205,8 +343,14 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       );
     });
     writePrivate(files.token, `${token}\n`);
-    const host = config.api.host.includes(':') ? `[${config.api.host}]` : config.api.host;
-    const url = `http://${host}:${port}`;
+    // The address clients on this machine use: the loopback port (127.0.0.1
+    // for a container bind), or with in-process TLS the public URL, the name
+    // the certificate is for.
+    const published = plan.publishedHost.includes(':')
+      ? `[${plan.publishedHost.replace(/^\[|\]$/g, '')}]`
+      : plan.publishedHost;
+    const url =
+      plan.tls !== null && plan.publicUrl !== null ? plan.publicUrl : `http://${published}:${port}`;
     service.url = url;
     const info: DaemonInfo = {
       pid: process.pid,
@@ -232,7 +376,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         db.close();
         cleanup();
       })());
-    return { url, config, service, stop };
+    return { url, port, config, service, stop };
   } catch (err) {
     cleanup();
     throw err;

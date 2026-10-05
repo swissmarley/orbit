@@ -24,6 +24,51 @@ function boolFromEnv(env: Env, name: string): boolean | undefined {
   throw new OrbitError('invalid_config', `${name} must be a boolean`);
 }
 
+type HostedInput = NonNullable<OrbitConfigInput['hosted']>;
+
+/**
+ * Hosted settings (ADR-015): `ORBIT_PUBLIC_URL`, `ORBIT_TLS_CERT` +
+ * `ORBIT_TLS_KEY` (both or neither) and `ORBIT_OIDC_ISSUER` +
+ * `ORBIT_OIDC_CLIENT_ID` override the file field by field. The OIDC client
+ * secret is a credential, not configuration: orbitd reads it itself.
+ */
+function hostedFromEnv(
+  env: Env,
+  fromFile: HostedInput | undefined,
+  override: HostedInput | undefined,
+): HostedInput {
+  const out: HostedInput = { ...fromFile };
+  const publicUrl = env.ORBIT_PUBLIC_URL?.trim();
+  if (publicUrl) out.publicUrl = publicUrl;
+  const cert = env.ORBIT_TLS_CERT?.trim();
+  const key = env.ORBIT_TLS_KEY?.trim();
+  if (cert || key) {
+    if (!cert || !key) {
+      throw new OrbitError('invalid_config', 'Set both ORBIT_TLS_CERT and ORBIT_TLS_KEY', {
+        hint: 'They name the PEM certificate (chain) and its private key.',
+      });
+    }
+    out.tls = { certFile: resolve(cert), keyFile: resolve(key) };
+  }
+  const issuer = env.ORBIT_OIDC_ISSUER?.trim();
+  const clientId = env.ORBIT_OIDC_CLIENT_ID?.trim();
+  if (issuer || clientId) {
+    const base = out.oidc ?? undefined;
+    const merged = {
+      ...base,
+      ...(issuer ? { issuer } : {}),
+      ...(clientId ? { clientId } : {}),
+    };
+    if (merged.issuer === undefined || merged.clientId === undefined) {
+      throw new OrbitError('invalid_config', 'OIDC needs both an issuer and a client id', {
+        hint: 'Set ORBIT_OIDC_ISSUER and ORBIT_OIDC_CLIENT_ID (or hosted.oidc in config.json).',
+      });
+    }
+    out.oidc = { ...merged, issuer: merged.issuer, clientId: merged.clientId };
+  }
+  return { ...out, ...override };
+}
+
 /**
  * Resolve configuration: defaults ← $ORBIT_HOME/config.json ← environment.
  * Only Orbit's own variables are read here; credentials are never part of
@@ -100,6 +145,7 @@ export function loadConfig(
     }
     merged.mode = parsed.data;
   }
+  merged.hosted = hostedFromEnv(env, fromFile.hosted, overrides.hosted);
   if (env.ORBIT_CLAUDE_PATH) merged.claudePath = env.ORBIT_CLAUDE_PATH;
   const triageCalls = intFromEnv(env, 'ORBIT_TRIAGE_MAX_CALLS_PER_DAY');
   if (triageCalls !== undefined) merged.triage = { ...merged.triage, maxCallsPerDay: triageCalls };

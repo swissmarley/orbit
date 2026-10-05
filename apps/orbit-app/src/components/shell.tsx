@@ -9,6 +9,7 @@ import {
   Keyboard,
   LayoutGrid,
   ListTree,
+  LogOut,
   Moon,
   Octagon,
   Settings,
@@ -21,7 +22,14 @@ import { MOD } from '../lib/platform';
 import { authStore, isUnauthorized, useClient } from '../lib/api';
 import { cn } from '../lib/cn';
 import { type Connection, connectionStore, startLiveFeed } from '../lib/live';
-import { useDoctor, useKill, usePendingApprovals, useQueue, useSession } from '../lib/queries';
+import {
+  useDoctor,
+  useHealth,
+  useKill,
+  usePendingApprovals,
+  useQueue,
+  useSession,
+} from '../lib/queries';
 import { useStore } from '../lib/store';
 import { type ThemeChoice, setTheme, themeStore } from '../lib/theme';
 import { ConfirmHost, confirmAction } from './confirm';
@@ -136,6 +144,32 @@ function StatusChips() {
         </Badge>
       ) : null}
       <DriverBadge />
+    </div>
+  );
+}
+
+/** Hosted mode (ADR-015): who is signed in, with what role, and the way out. */
+function SignedInAs() {
+  const session = useSession();
+  const health = useHealth();
+  const actions = useActions();
+  const p = session.data?.principal;
+  if (health.data?.signIn !== 'oidc' || !p) return null;
+  return (
+    <div className="flex items-center gap-1">
+      <span className="hidden text-sm text-fg-muted md:inline" data-testid="signed-in-as">
+        {p.name} <span className="text-fg-subtle">· {p.role}</span>
+      </span>
+      <Tooltip content={`Signed in as ${p.name} (${p.role}). Sign out`}>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={`Sign out ${p.name}`}
+          onClick={() => void actions.signOut()}
+        >
+          <LogOut aria-hidden />
+        </Button>
+      </Tooltip>
     </div>
   );
 }
@@ -305,6 +339,7 @@ export function AppShell() {
           </Button>
         </Tooltip>
         <ThemeToggle />
+        <SignedInAs />
       </header>
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <nav

@@ -1,14 +1,14 @@
 import { timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, resolve, sep } from 'node:path';
-import { OrbitError, type RunEvent, errorMessage } from '@orbit/core';
+import { OrbitError, type RunEvent, errorMessage, isLoopbackHost, roleAtLeast } from '@orbit/core';
 import {
   MAX_WEBHOOK_BYTES,
   PLUGIN_MCP_PREFIX,
   handleMcpBody,
   handleMcpRequest,
 } from '@orbit/runtime';
-import { type Context, Hono } from 'hono';
+import { type Context, Hono, type MiddlewareHandler } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { streamSSE } from 'hono/streaming';
@@ -17,14 +17,19 @@ import {
   API_VERSION,
   CSRF_HEADER,
   type ErrorBody,
+  OIDC_CALLBACK_PATH,
+  OIDC_LOGIN_PATH,
   type RouteDef,
   type RouteName,
   STATUS_FOR_CODE,
+  type SessionPrincipal,
   honoPath,
+  routeRole,
   routes,
 } from './contract';
+import { OidcError, type OidcSignIn } from './oidc';
 import { buildOpenApi } from './openapi';
-import { OWNER, type OrbitService } from './service';
+import type { OrbitService } from './service';
 import { SessionStore } from './session';
 
 export interface AppOptions {
@@ -51,6 +56,12 @@ export interface AppOptions {
   validateResponses?: boolean;
   /** Called after POST /v1/daemon/stop has been answered. */
   onStop?: () => void;
+  /**
+   * Hosted mode (ADR-015): orbitd's public https origin (its own origin for
+   * browsers, besides the loopback names), Secure `__Host-` session cookies,
+   * HSTS, and OIDC sign-in. Null or omitted = local mode.
+   */
+  hosted?: { publicUrl: string; oidc: OidcSignIn | null; tls: boolean } | null;
 }
 
 interface Input {
@@ -74,6 +85,16 @@ const MAX_BODY_BYTES = 1024 * 1024;
 export const MCP_PATH = '/mcp/orbit';
 /** Inbound webhooks (ADR-014): HMAC-signed, no bearer token; not part of the client contract. */
 export const HOOKS_PREFIX = '/hooks/';
+
+/**
+ * Hosted mode's session cookie (ADR-015): `__Host-` makes browsers insist on
+ * Secure, Path=/ and no Domain, so no other host can set or shadow it.
+ */
+export const HOSTED_SESSION_COOKIE = '__Host-orbit_session';
+/** Hosted mode: the pending OIDC sign-in's state, sent back only to the callback path. */
+export const OIDC_STATE_COOKIE = '__Secure-orbit_oidc_state';
+/** HSTS in hosted mode: browsers then reach the public origin over https only. */
+export const HSTS = 'max-age=31536000';
 
 /** Per-port cookie name: cookies ignore ports, and two daemons may share 127.0.0.1. */
 export function sessionCookieName(url: string): string {
@@ -124,6 +145,16 @@ const APP_NOT_BUILT = `<!doctype html><meta charset="utf-8"><title>Orbit</title>
 <p>Build it once with <code>pnpm --filter @orbit/app build</code>, then run <code>orbit app</code> again.
 The CLI (<code>orbit</code>) and the TUI work without it.</p></body>`;
 
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+
+/** Where a refused OIDC sign-in lands: what happened, never who may sign in. */
+function signInPage(title: string, message: string): string {
+  return `<!doctype html><meta charset="utf-8"><title>Orbit</title>
+<body style="font-family:system-ui;max-width:40rem;margin:4rem auto;padding:0 1rem">
+<h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p>
+<p><a href="${OIDC_LOGIN_PATH}">Try again</a></p></body>`;
+}
+
 function tokenMatches(header: string | undefined, token: string): boolean {
   const presented = /^Bearer (\S+)$/.exec(header ?? '')?.[1];
   if (!presented) return false;
@@ -158,21 +189,41 @@ export function createApp(opts: AppOptions): Hono {
     const list = typeof opts.allowedHosts === 'function' ? opts.allowedHosts() : opts.allowedHosts;
     return new Set((list ?? []).map((h) => h.toLowerCase()));
   };
+  const hosted = opts.hosted ?? null;
   const publicPaths = new Set(['/openapi.json', routes.health.path]);
+  /** The OIDC sign-in routes are where a browser goes before it has any credential. */
+  const signInPaths = new Set([OIDC_LOGIN_PATH, OIDC_CALLBACK_PATH]);
   const sessions = opts.sessions ?? new SessionStore();
-  /** How each request authenticated (set by the auth middleware). */
-  const via = new WeakMap<Request, 'token' | 'session'>();
+  /**
+   * How each request authenticated, and as whom (set by the auth middleware).
+   * Keyed by c.req: bodyLimit replaces c.req.raw for requests with a body.
+   */
+  const via = new WeakMap<object, 'token' | 'session'>();
+  const principals = new WeakMap<object, SessionPrincipal>();
+  /** Hosted mode: one fixed `__Host-` cookie; locally one per port (ADR-011). */
+  const cookieName = (url: string) => (hosted ? HOSTED_SESSION_COOKIE : sessionCookieName(url));
   const extraOrigins = () => {
     const list =
       typeof opts.allowedOrigins === 'function' ? opts.allowedOrigins() : opts.allowedOrigins;
     return new Set((list ?? []).map((o) => o.toLowerCase().replace(/\/+$/, '')));
   };
-  /** orbitd's own origin (the Host header is already checked against allowedHosts). */
-  const ownOrigin = (host: string | undefined) => `http://${(host ?? '').toLowerCase()}`;
-  const originAllowed = (host: string | undefined, origin: string) => {
+  /**
+   * Is this orbitd's own origin? The Host header is already checked against
+   * allowedHosts; in hosted mode the public origin counts whatever Host a
+   * reverse proxy forwards (ADR-015).
+   */
+  const isOwnOrigin = (host: string | undefined, origin: string) => {
     const o = origin.toLowerCase();
-    return o === ownOrigin(host) || extraOrigins().has(o);
+    const h = (host ?? '').toLowerCase();
+    if (!hosted) return o === `http://${h}`;
+    if (o === hosted.publicUrl) return true;
+    // Hosted: besides the public origin, only the loopback names (the
+    // operator on the machine itself), with the scheme orbitd serves.
+    const hostname = h.replace(/:\d+$/, '');
+    return isLoopbackHost(hostname) && o === `${hosted.tls ? 'https' : 'http'}://${h}`;
   };
+  const originAllowed = (host: string | undefined, origin: string) =>
+    isOwnOrigin(host, origin) || extraOrigins().has(origin.toLowerCase());
   const appRoot = opts.appRoot ? resolve(opts.appRoot) : null;
   const isAppPath = (method: string, path: string) =>
     appRoot !== null &&
@@ -223,11 +274,20 @@ export function createApp(opts: AppOptions): Hono {
     if (origin !== undefined && !okOrigin) {
       return c.json(errorBody('forbidden', 'Cross-origin requests are not allowed'), 403);
     }
+    // The issuer sends the browser back to the callback with a cross-site
+    // top-level navigation; that GET carries only the code and state, which
+    // the callback checks against the browser's own state cookie.
+    const oidcReturn =
+      hosted !== null &&
+      hosted.oidc !== null &&
+      c.req.method === 'GET' &&
+      c.req.path === OIDC_CALLBACK_PATH &&
+      c.req.header('sec-fetch-mode') === 'navigate';
     // A cross-site request without an Origin we know (old browsers, odd fetch modes).
-    if (c.req.header('sec-fetch-site') === 'cross-site' && !okOrigin) {
+    if (c.req.header('sec-fetch-site') === 'cross-site' && !okOrigin && !oidcReturn) {
       return c.json(errorBody('forbidden', 'Cross-origin requests are not allowed'), 403);
     }
-    const cors = okOrigin && origin.toLowerCase() !== ownOrigin(c.req.header('host'));
+    const cors = okOrigin && !isOwnOrigin(c.req.header('host'), origin);
     if (c.req.method === 'OPTIONS') {
       if (!cors)
         return c.json(errorBody('forbidden', 'Cross-origin requests are not allowed'), 403);
@@ -243,6 +303,7 @@ export function createApp(opts: AppOptions): Hono {
     await next();
     c.res.headers.set('x-content-type-options', 'nosniff');
     c.res.headers.set('referrer-policy', 'no-referrer');
+    if (hosted) c.res.headers.set('strict-transport-security', HSTS);
     if (cors) {
       c.res.headers.set('access-control-allow-origin', origin);
       c.res.headers.set('access-control-allow-credentials', 'true');
@@ -258,31 +319,42 @@ export function createApp(opts: AppOptions): Hono {
     if (c.req.path === MCP_PATH || c.req.path.startsWith(PLUGIN_MCP_PREFIX)) return next();
     // Webhooks authenticate with their HMAC signature (verified before parsing).
     if (c.req.path.startsWith(HOOKS_PREFIX)) return next();
+    // Hosted sign-in: the state cookie and the issuer's signed answer are the credential.
+    if (c.req.method === 'GET' && signInPaths.has(c.req.path) && hosted?.oidc) return next();
+    const signInHint = hosted?.oidc ? 'Sign in again.' : 'Run `orbit app`.';
     if (tokenMatches(c.req.header('authorization'), opts.token)) {
-      via.set(c.req.raw, 'token');
-      return next();
+      via.set(c.req, 'token');
+      const principal = service.tokenPrincipal();
+      principals.set(c.req, principal);
+      // Every service call of this request records this principal as its actor.
+      return service.runAs(principal, next);
     }
-    const cookie = cookieValue(c.req.header('cookie'), sessionCookieName(c.req.url));
+    const cookie = cookieValue(c.req.header('cookie'), cookieName(c.req.url));
     const session =
-      cookie === undefined ? 'none' : sessions.check(cookie, c.req.header(CSRF_HEADER));
-    if (session === 'bad_csrf') {
+      cookie === undefined
+        ? ({ status: 'none' } as const)
+        : sessions.authenticate(cookie, c.req.header(CSRF_HEADER));
+    if (session.status === 'bad_csrf') {
       // A valid cookie without this session's CSRF secret: another listener
       // on a loopback port may have harvested the cookie (cookies ignore ports).
       return c.json(
-        errorBody('unauthorized', 'This App session needs signing in again', 'Run `orbit app`.'),
+        errorBody('unauthorized', 'This App session needs signing in again', signInHint),
         401,
       );
     }
-    if (session === 'ok') {
+    if (session.status === 'ok') {
       // Cookie + this session's secret (held only by the App's origin).
-      via.set(c.req.raw, 'session');
-      return next();
+      via.set(c.req, 'session');
+      principals.set(c.req, session.principal);
+      return service.runAs(session.principal, next);
     }
     return c.json(
       errorBody(
         'unauthorized',
         'Missing or wrong API token',
-        'The CLI reads it from $ORBIT_HOME/daemon.token; the App signs in with `orbit app`.',
+        hosted?.oidc
+          ? 'Sign in to the App; the server operator uses $ORBIT_HOME/daemon.token.'
+          : 'The CLI reads it from $ORBIT_HOME/daemon.token; the App signs in with `orbit app`.',
       ),
       401,
     );
@@ -297,6 +369,71 @@ export function createApp(opts: AppOptions): Hono {
   );
 
   app.get('/openapi.json', (c) => c.json(buildOpenApi()));
+
+  /**
+   * Hosted sign-in (ADR-015), outside the client contract like /hooks: the
+   * App links here; orbitd redirects to the issuer with state, nonce and a
+   * PKCE challenge, and the state rides back in a short-lived cookie that
+   * only the callback path receives.
+   */
+  const oidc = hosted?.oidc ?? null;
+  if (oidc !== null) {
+    const page = (c: Context, status: 400 | 403 | 502, title: string, message: string) =>
+      c.html(signInPage(title, message), status, {
+        'content-security-policy': APP_CSP,
+        'cache-control': 'no-store',
+      });
+    const clearState = (c: Context) =>
+      deleteCookie(c, OIDC_STATE_COOKIE, { path: OIDC_CALLBACK_PATH, secure: true });
+
+    app.get(OIDC_LOGIN_PATH, async (c) => {
+      let started: { location: string; state: string };
+      try {
+        started = await oidc.begin();
+      } catch (err) {
+        const message = err instanceof OidcError ? err.message : 'Sign-in is not available';
+        service.log('warn', `OIDC sign-in could not start: ${errorMessage(err)}`);
+        return page(c, 502, 'Sign-in is not available', message);
+      }
+      setCookie(c, OIDC_STATE_COOKIE, started.state, {
+        path: OIDC_CALLBACK_PATH,
+        httpOnly: true,
+        secure: true,
+        // Lax: the issuer's redirect back is a cross-site top-level GET.
+        sameSite: 'Lax',
+        maxAge: oidc.stateMaxAgeSeconds,
+      });
+      c.header('cache-control', 'no-store');
+      return c.redirect(started.location, 302);
+    });
+
+    app.get(OIDC_CALLBACK_PATH, async (c) => {
+      const state = getCookie(c, OIDC_STATE_COOKIE);
+      clearState(c);
+      let principal: SessionPrincipal;
+      try {
+        principal = await oidc.finish(c.req.query(), state);
+      } catch (err) {
+        if (err instanceof OidcError) {
+          service.log('info', `OIDC sign-in refused: ${err.message}`);
+          return page(c, err.status, 'You are not signed in', err.message);
+        }
+        service.log('warn', `OIDC sign-in failed: ${errorMessage(err)}`);
+        return page(c, 502, 'You are not signed in', 'Sign-in failed. Try again.');
+      }
+      // The same one-time ticket the CLI hands out, bound to this principal:
+      // the App's /login page redeems it for the session cookie (ADR-011).
+      const { ticket } = sessions.mintTicket(principal);
+      service.audit.append({
+        actor: principal.id,
+        action: 'session.signed_in',
+        subject: principal.id,
+        data: { via: 'oidc', role: principal.role },
+      });
+      c.header('cache-control', 'no-store');
+      return c.redirect(`/login#ticket=${ticket}`, 302);
+    });
+  }
 
   /**
    * Orbit's tools for the CLI engine (ADR-012): JSON-RPC over HTTP with the
@@ -394,9 +531,15 @@ export function createApp(opts: AppOptions): Hono {
   });
 
   const requireVia = (c: Context) => {
-    const v = via.get(c.req.raw);
+    const v = via.get(c.req);
     if (!v) throw new OrbitError('unauthorized', 'Not signed in');
     return v;
+  };
+
+  const requirePrincipal = (c: Context) => {
+    const p = principals.get(c.req);
+    if (!p) throw new OrbitError('unauthorized', 'Not signed in');
+    return p;
   };
 
   const handlers: Partial<Record<RouteName, Handler>> = {
@@ -406,6 +549,8 @@ export function createApp(opts: AppOptions): Hono {
       api: API_VERSION,
       pid: process.pid,
       startedAt: service.startedAt,
+      signIn: oidc !== null ? 'oidc' : 'ticket',
+      publicUrl: hosted?.publicUrl ?? null,
     }),
     doctor: () => service.doctor(),
     stopDaemon: () => {
@@ -413,12 +558,12 @@ export function createApp(opts: AppOptions): Hono {
       setTimeout(() => opts.onStop?.(), 10).unref();
       return { ok: true };
     },
-    getSession: (_i, c) => ({ via: requireVia(c) }),
+    getSession: (_i, c) => ({ via: requireVia(c), principal: requirePrincipal(c) }),
     createLoginTicket: (_i, c) => {
       if (requireVia(c) !== 'token') {
         throw new OrbitError('forbidden', 'Only the bearer token (the CLI) can mint login tickets');
       }
-      return sessions.mintTicket();
+      return sessions.mintTicket(requirePrincipal(c));
     },
     createSession: ({ body }, c) => {
       // Before sign-in the App has no secret yet; any value proves a script
@@ -429,22 +574,24 @@ export function createApp(opts: AppOptions): Hono {
       const redeemed = sessions.redeem((body as z.output<typeof routes.createSession.body>).ticket);
       if (!redeemed) {
         throw new OrbitError('unauthorized', 'This sign-in link was already used or has expired', {
-          hint: 'Run `orbit app` again for a fresh link.',
+          hint: oidc !== null ? 'Sign in again.' : 'Run `orbit app` again for a fresh link.',
         });
       }
-      setCookie(c, sessionCookieName(c.req.url), redeemed.session, {
+      // Hosted: `__Host-` + Secure (the public URL is https, even behind a proxy).
+      setCookie(c, cookieName(c.req.url), redeemed.session, {
         path: '/',
         httpOnly: true,
         sameSite: 'Strict',
         maxAge: redeemed.maxAgeSeconds,
+        ...(hosted ? { secure: true } : {}),
       });
       return { ok: true, csrf: redeemed.csrf };
     },
     deleteSession: (_i, c) => {
-      const name = sessionCookieName(c.req.url);
+      const name = cookieName(c.req.url);
       const cookie = getCookie(c, name);
       if (cookie !== undefined) sessions.revoke(cookie);
-      deleteCookie(c, name, { path: '/' });
+      deleteCookie(c, name, { path: '/', ...(hosted ? { secure: true } : {}) });
       return { ok: true };
     },
     listBots: () => service.bots.list(),
@@ -481,8 +628,19 @@ export function createApp(opts: AppOptions): Hono {
       });
     },
     getApproval: ({ params }) => service.approvals.require(param(params, 'approval')),
-    approve: ({ params, body }) =>
-      service.approve(param(params, 'approval'), body as z.output<typeof routes.approve.body>),
+    approve: ({ params, body }, c) => {
+      const b = body as z.output<typeof routes.approve.body>;
+      // "Always" writes a standing rule, and rules are the owner's (ADR-015).
+      const p = requirePrincipal(c);
+      if (b.always && !roleAtLeast(p.role, 'owner')) {
+        throw new OrbitError(
+          'forbidden',
+          `Approving "always" creates a standing rule, which needs the owner role; ${p.name} is ${p.role === 'operator' ? 'an' : 'a'} ${p.role}`,
+          { hint: 'Approve this once, or ask an owner to add a rule.' },
+        );
+      }
+      return service.approve(param(params, 'approval'), b);
+    },
     deny: ({ params, body }) =>
       service.deny(param(params, 'approval'), body as z.output<typeof routes.deny.body>),
     listRules: ({ query }) =>
@@ -544,15 +702,19 @@ export function createApp(opts: AppOptions): Hono {
     triageUsage: () => service.triageUsage(),
     listPlugins: () => service.listPlugins(),
     addPlugin: ({ body }) =>
-      service.plugins.install((body as z.output<typeof routes.addPlugin.body>).dir, OWNER),
+      service.plugins.install(
+        (body as z.output<typeof routes.addPlugin.body>).dir,
+        service.actor(),
+      ),
     getPlugin: ({ params }) => service.plugins.get(param(params, 'plugin')),
     removePlugin: ({ params }) => {
-      service.plugins.remove(param(params, 'plugin'), OWNER);
+      service.plugins.remove(param(params, 'plugin'), service.actor());
       return { ok: true };
     },
-    enablePlugin: ({ params }) => service.plugins.enable(param(params, 'plugin'), OWNER),
-    disablePlugin: ({ params }) => service.plugins.disable(param(params, 'plugin'), OWNER),
-    checkPlugin: ({ params }) => service.plugins.check(param(params, 'plugin'), OWNER),
+    enablePlugin: ({ params }) => service.plugins.enable(param(params, 'plugin'), service.actor()),
+    disablePlugin: ({ params }) =>
+      service.plugins.disable(param(params, 'plugin'), service.actor()),
+    checkPlugin: ({ params }) => service.plugins.check(param(params, 'plugin'), service.actor()),
     setPluginSecret: ({ params, body }) =>
       service.setPluginSecret(
         param(params, 'plugin'),
@@ -566,7 +728,7 @@ export function createApp(opts: AppOptions): Hono {
         param(params, 'plugin'),
         param(params, 'name'),
         (body as z.output<typeof routes.setPluginSetting.body>).value,
-        OWNER,
+        service.actor(),
       ),
     listTriggers: () => service.inboundTriggers(),
     webhookSecret: ({ params }) =>
@@ -637,8 +799,28 @@ export function createApp(opts: AppOptions): Hono {
   for (const [name, def] of Object.entries(routes) as [RouteName, RouteDef][]) {
     const handler = handlers[name];
     if (!handler) throw new Error(`No handler for route ${name}`);
-    const method = def.method.toLowerCase() as 'get' | 'post' | 'put' | 'delete';
-    app[method](honoPath(def.path), async (c) => {
+    const needed = routeRole(def);
+    // Roles (ADR-015): checked before the body is read or the handler runs.
+    // Local mode has one owner, so this never refuses there.
+    const guard: MiddlewareHandler = async (c, next) => {
+      if (def.auth !== false) {
+        const p = principals.get(c.req);
+        if (!p) return c.json(errorBody('unauthorized', 'Not signed in'), 401);
+        if (!roleAtLeast(p.role, needed)) {
+          return c.json(
+            errorBody(
+              'forbidden',
+              `This needs the ${needed} role; ${p.name} is ${p.role === 'operator' ? 'an' : 'a'} ${p.role}`,
+              'An owner of this Orbit can change your role (principals in config.json).',
+            ),
+            403,
+          );
+        }
+      }
+      await next();
+      return undefined;
+    };
+    app.on(def.method, honoPath(def.path), guard, async (c) => {
       const query = def.query ? def.query.parse(c.req.query()) : {};
       let body: unknown = undefined;
       if (def.body) {

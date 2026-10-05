@@ -1,10 +1,13 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import type { SessionPrincipal } from './contract';
 
 /**
  * Browser sessions for the App (ADR-011). A bearer-token holder (the CLI's
  * `orbit app`) mints a one-time login ticket; the App redeems it once for an
- * HttpOnly, SameSite=Strict session cookie. Everything lives in memory: a
- * daemon restart (which also rotates the bearer token) signs every browser
+ * HttpOnly, SameSite=Strict session cookie. In hosted mode (ADR-015) the
+ * OIDC callback mints the ticket. A ticket is bound to the principal it was
+ * minted for, and so is the session it becomes. Everything lives in memory:
+ * a daemon restart (which also rotates the bearer token) signs every browser
  * out.
  */
 
@@ -25,6 +28,8 @@ interface Entry {
   value: Buffer;
   /** Sessions only: the CSRF secret the App must echo (the cookie alone is not enough). */
   csrf?: Buffer;
+  /** Who signs in with this ticket / acts through this session. */
+  principal: SessionPrincipal;
   createdAt: number;
   lastSeenAt: number;
 }
@@ -80,6 +85,7 @@ export class SessionStore {
     max: number,
     value: string,
     t: number,
+    principal: SessionPrincipal,
     csrf?: string,
   ): void {
     while (map.size >= max) {
@@ -90,17 +96,18 @@ export class SessionStore {
     map.set(randomBytes(8).toString('hex'), {
       value: Buffer.from(value),
       ...(csrf === undefined ? {} : { csrf: Buffer.from(csrf) }),
+      principal: { ...principal },
       createdAt: t,
       lastSeenAt: t,
     });
   }
 
-  /** A single-use login ticket for `orbit app`. */
-  mintTicket(): { ticket: string; expiresAt: string } {
+  /** A single-use login ticket (`orbit app`, or the OIDC callback) for `principal`. */
+  mintTicket(principal: SessionPrincipal): { ticket: string; expiresAt: string } {
     this.sweep();
     const t = this.now().getTime();
     const ticket = secret();
-    SessionStore.add(this.tickets, this.maxTickets, ticket, t);
+    SessionStore.add(this.tickets, this.maxTickets, ticket, t, principal);
     return { ticket, expiresAt: new Date(t + this.ticketTtlMs).toISOString() };
   }
 
@@ -110,15 +117,27 @@ export class SessionStore {
    * storage). Cookies ignore ports, so any listener on 127.0.0.1 may see the
    * cookie; without the secret it is useless (M5 review HIGH-1).
    */
-  redeem(ticket: string): { session: string; csrf: string; maxAgeSeconds: number } | null {
+  redeem(ticket: string): {
+    session: string;
+    csrf: string;
+    maxAgeSeconds: number;
+    principal: SessionPrincipal;
+  } | null {
     this.sweep();
     const key = find(this.tickets, ticket);
-    if (key === null) return null;
+    const entry = key === null ? undefined : this.tickets.get(key);
+    if (key === null || !entry) return null;
     this.tickets.delete(key);
     const session = secret();
     const csrf = secret();
-    SessionStore.add(this.sessions, this.maxSessions, session, this.now().getTime(), csrf);
-    return { session, csrf, maxAgeSeconds: Math.floor(this.maxTtlMs / 1000) };
+    const t = this.now().getTime();
+    SessionStore.add(this.sessions, this.maxSessions, session, t, entry.principal, csrf);
+    return {
+      session,
+      csrf,
+      maxAgeSeconds: Math.floor(this.maxTtlMs / 1000),
+      principal: { ...entry.principal },
+    };
   }
 
   /**
@@ -127,17 +146,27 @@ export class SessionStore {
    * otherwise.
    */
   check(session: string, csrf: string | undefined): 'ok' | 'bad_csrf' | 'none' {
+    return this.authenticate(session, csrf).status;
+  }
+
+  /** Like check(), plus the session's principal when it is 'ok'. */
+  authenticate(
+    session: string,
+    csrf: string | undefined,
+  ):
+    | { status: 'ok'; principal: SessionPrincipal }
+    | { status: 'bad_csrf' | 'none'; principal?: undefined } {
     this.sweep();
     const key = find(this.sessions, session);
-    if (key === null) return 'none';
+    if (key === null) return { status: 'none' };
     const e = this.sessions.get(key);
-    if (!e?.csrf) return 'none';
+    if (!e?.csrf) return { status: 'none' };
     const presented = Buffer.from(csrf ?? '');
     if (presented.length !== e.csrf.length || !timingSafeEqual(presented, e.csrf)) {
-      return 'bad_csrf';
+      return { status: 'bad_csrf' };
     }
     e.lastSeenAt = this.now().getTime();
-    return 'ok';
+    return { status: 'ok', principal: { ...e.principal } };
   }
 
   revoke(session: string): void {
