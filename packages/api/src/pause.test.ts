@@ -396,6 +396,12 @@ describe('take-over (orbit shell)', () => {
     await h.call('DELETE', '/v1/bots/notes/takeover');
     expect((await h.json<Bot>('GET', '/v1/bots/notes')).body.pausedAt).not.toBeNull();
     await h.call('POST', '/v1/bots/notes/resume');
+    // Paused on purpose during a take-over: it stays paused afterwards too.
+    expect((await take('notes')).body.wasPaused).toBe(false);
+    await h.call('POST', '/v1/bots/notes/pause');
+    await h.call('DELETE', '/v1/bots/notes/takeover');
+    expect((await h.json<Bot>('GET', '/v1/bots/notes')).body.pausedAt).not.toBeNull();
+    await h.call('POST', '/v1/bots/notes/resume');
 
     // A Run queued before the take-over waits for it, then runs.
     const queued = h.service.orchestrator.enqueue('notes');

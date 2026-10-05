@@ -659,8 +659,11 @@ export class Orchestrator {
       );
     }
     if (!active) {
-      // Between the queue and its first event (the workspace is being prepared).
-      throw new OrbitError('conflict', `Run ${runId} is starting; pause it again in a moment`);
+      // Between segments: the workspace is being prepared, or the segment is closing.
+      throw new OrbitError(
+        'conflict',
+        `Run ${runId} is starting or ending a segment; pause it again in a moment`,
+      );
     }
     // One open request per segment; `now` may upgrade a request to pause at the next call.
     if (s.pauseRequested && (s.pauseRequested.now || !now)) return s;
