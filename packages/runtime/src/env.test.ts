@@ -212,6 +212,22 @@ describe('buildChildEnv: orbitd (the daemon the CLI starts)', () => {
       buildChildEnv('orbitd', {}, { CLAUDE_CODE_OAUTH_TOKEN: 'x' });
     }).toThrow(EnvPolicyError);
   });
+
+  it('gets the hosted-mode settings (ADR-015); no engine or tool child does', () => {
+    const hosted = {
+      ORBIT_PUBLIC_URL: 'https://orbit.example.com',
+      ORBIT_TLS_CERT: '/etc/orbit/cert.pem',
+      ORBIT_TLS_KEY: '/etc/orbit/key.pem',
+      ORBIT_OIDC_ISSUER: 'https://id.example.com',
+      ORBIT_OIDC_CLIENT_ID: 'orbit',
+      ORBIT_OIDC_CLIENT_SECRET: 'TEST-oidc-client-secret',
+      ORBIT_CONTAINER: '1',
+    };
+    expect(buildChildEnv('orbitd', hosted)).toEqual(hosted);
+    for (const kind of ['cli-engine', 'sdk-engine', 'tool'] as const) {
+      expect(buildChildEnv(kind, hosted)).toEqual({});
+    }
+  });
 });
 
 describe('buildChildEnv: shared behaviour', () => {

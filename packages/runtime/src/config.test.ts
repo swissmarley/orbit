@@ -354,3 +354,77 @@ describe('loadConfig: credentials never enter the config object', () => {
     expect(c.driver).toBeNull();
   });
 });
+
+describe('loadConfig: hosted mode (ADR-015)', () => {
+  it('reads the public URL, TLS files and OIDC client from the environment', () => {
+    const c = loadConfig(
+      env({
+        ORBIT_MODE: 'hosted',
+        ORBIT_PUBLIC_URL: 'https://Orbit.Example.com/',
+        ORBIT_TLS_CERT: 'certs/orbit.pem',
+        ORBIT_TLS_KEY: '/etc/orbit/key.pem',
+        ORBIT_OIDC_ISSUER: 'https://id.example.com/realms/orbit',
+        ORBIT_OIDC_CLIENT_ID: 'orbit',
+        ORBIT_OIDC_CLIENT_SECRET: 'TEST-oidc-client-secret',
+      }),
+    );
+    expect(c.mode).toBe('hosted');
+    expect(c.hosted).toEqual({
+      publicUrl: 'https://orbit.example.com',
+      tls: { certFile: resolve('certs/orbit.pem'), keyFile: '/etc/orbit/key.pem' },
+      oidc: {
+        issuer: 'https://id.example.com/realms/orbit',
+        clientId: 'orbit',
+        scopes: ['openid', 'email', 'profile'],
+      },
+    });
+    // The client secret is a credential: orbitd reads it, the config never holds it.
+    expect(JSON.stringify(c)).not.toContain('TEST-oidc-client-secret');
+  });
+
+  it('environment values override config.json field by field', () => {
+    writeConfig({
+      hosted: {
+        publicUrl: 'https://old.example.com',
+        oidc: { issuer: 'https://id.example.com', clientId: 'file-client', scopes: ['openid'] },
+      },
+    });
+    const c = loadConfig(env({ ORBIT_OIDC_CLIENT_ID: 'env-client' }));
+    expect(c.hosted.publicUrl).toBe('https://old.example.com');
+    expect(c.hosted.oidc).toEqual({
+      issuer: 'https://id.example.com',
+      clientId: 'env-client',
+      scopes: ['openid'],
+    });
+  });
+
+  it.each<{ scenario: string; vars: Env; message: RegExp }>([
+    {
+      scenario: 'an http public URL',
+      vars: { ORBIT_PUBLIC_URL: 'http://orbit.example.com' },
+      message: /publicUrl/,
+    },
+    {
+      scenario: 'a public URL with a path',
+      vars: { ORBIT_PUBLIC_URL: 'https://example.com/orbit' },
+      message: /publicUrl/,
+    },
+    {
+      scenario: 'a TLS certificate without its key',
+      vars: { ORBIT_TLS_CERT: '/x.pem' },
+      message: /both ORBIT_TLS_CERT and ORBIT_TLS_KEY/,
+    },
+    {
+      scenario: 'an issuer without a client id',
+      vars: { ORBIT_OIDC_ISSUER: 'https://id.example.com' },
+      message: /issuer and a client id/,
+    },
+    {
+      scenario: 'a plain-http remote issuer',
+      vars: { ORBIT_OIDC_ISSUER: 'http://id.example.com', ORBIT_OIDC_CLIENT_ID: 'x' },
+      message: /issuer/,
+    },
+  ])('$scenario → invalid_config', ({ vars, message }) => {
+    expectInvalid(() => loadConfig(env(vars)), message);
+  });
+});
