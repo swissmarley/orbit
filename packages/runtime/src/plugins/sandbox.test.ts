@@ -384,7 +384,7 @@ describe.skipIf(!realSandbox)('a plugin in a real bwrap sandbox', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  const start = (m: PluginManifest, opts: { denied?: string[] } = {}) => {
+  const start = (m: PluginManifest, opts: { denied?: string[]; home?: string } = {}) => {
     const command = { command: process.execPath, args: [join(pluginDir, 'server.mjs')] };
     const workspace = join(orbitHome, 'workspaces', 'bot_1');
     const cmd = prepareSandboxedCommand(
@@ -395,7 +395,7 @@ describe.skipIf(!realSandbox)('a plugin in a real bwrap sandbox', () => {
         command,
         settings: {},
         env: process.env,
-        home: homedir(),
+        home: opts.home ?? homedir(),
         orbitHome,
         denied: [orbitHome, ...(opts.denied ?? [])],
         workspace,
@@ -456,6 +456,16 @@ describe.skipIf(!realSandbox)('a plugin in a real bwrap sandbox', () => {
     const write = start(manifest({ sandbox: { workspace: 'write' } }));
     expect(await write({ op: 'write', path: join(ws, 'c.txt') })).toBe('wrote');
     expect(readFileSync(join(ws, 'c.txt'), 'utf8')).toBe('x');
+  });
+
+  it('works when the plugin and $ORBIT_HOME live inside the home (a checkout under ~)', async () => {
+    // `root` plays the owner's home: it holds the plugin, $ORBIT_HOME and a private file.
+    writeFileSync(join(root, 'diary.txt'), 'private');
+    const probe = start(manifest({ sandbox: { workspace: 'read' } }), { home: root });
+    expect(await probe({ op: 'read', path: join(pluginDir, 'server.mjs') })).toMatch(/^read:/);
+    expect(await probe({ op: 'read', path: join(root, 'diary.txt') })).toBe('error:ENOENT');
+    expect(await probe({ op: 'read', path: join(orbitHome, 'orbit.db') })).toBe('error:ENOENT');
+    expect(await probe({ op: 'list', path: join(orbitHome, 'workspaces') })).toBe('list:bot_1');
   });
 
   it('has no network unless a tool needs it', async () => {
