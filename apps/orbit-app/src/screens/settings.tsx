@@ -13,7 +13,7 @@ import { Field, Input, Select } from '../components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { useActions } from '../lib/actions';
 import { errorText, useClient } from '../lib/api';
-import { INBOX_KEYS } from '../lib/inbox';
+import { helpStore } from '../components/keyboard-help';
 import { useAudit, useBots, useDoctor, useKill, useRules, useSecrets } from '../lib/queries';
 import { useStore } from '../lib/store';
 import { type ThemeChoice, setTheme, themeStore } from '../lib/theme';
@@ -94,17 +94,12 @@ function General() {
         <CardHeader>
           <CardTitle>Keyboard</CardTitle>
         </CardHeader>
-        <CardContent>
-          <dl className="grid grid-cols-[9rem_1fr] gap-x-3 gap-y-1.5 text-sm">
-            <Row term="⌘K / Ctrl+K">search and commands</Row>
-            {INBOX_KEYS.map((k) => (
-              <Row key={k.keys} term={k.keys}>
-                Inbox: {k.does}
-              </Row>
-            ))}
-            <Row term="[ ] · L">Run view: step the replay · back to live</Row>
-            <Row term="y">confirm a question (anything else cancels)</Row>
-          </dl>
+        <CardContent className="text-sm text-fg-muted">
+          Press <Kbd>?</Kbd> anywhere for every shortcut, or <Kbd>⌘K</Kbd> to search and run
+          commands.
+          <div className="mt-3">
+            <Button onClick={() => helpStore.set(true)}>Show shortcuts</Button>
+          </div>
         </CardContent>
       </Card>
       <Card>

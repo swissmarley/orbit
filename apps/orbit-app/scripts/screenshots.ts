@@ -1,65 +1,107 @@
+/**
+ * Screenshots of every App screen for UI review: a real orbitd (mock driver,
+ * ORBIT_PORT=0, throwaway home) with seeded Bots and Runs, captured in light
+ * and dark at 1440, 1024 and 768 px. Build the App first.
+ *
+ *   pnpm --filter @orbit/app exec tsx scripts/screenshots.ts <out-dir> [width,…]
+ */
+import { mkdirSync } from 'node:fs';
 import { chromium } from '@playwright/test';
 import { startOrbitd } from '../e2e/orbitd';
 
-const out =
-  process.argv[2] ??
-  '/tmp/claude-0/-home-user-orbit/bcfe95c4-922a-5b94-9163-2d18301d904f/scratchpad';
+const out = process.argv[2] ?? 'screenshots';
+const widths = (process.argv[3] ?? '1440,1024,768').split(',').map(Number);
+mkdirSync(out, { recursive: true });
+
 const o = await startOrbitd();
 const browser = await chromium.launch();
+const errors: string[] = [];
 try {
-  const page = await browser.newPage({ viewport: { width: 1360, height: 860 } });
-  const errors: string[] = [];
-  page.on('console', (m) => {
-    if (m.type() === 'error') errors.push(m.text());
-  });
-  page.on('pageerror', (e) => errors.push(String(e)));
-  page.on('response', (r) => {
-    if (r.status() >= 400) errors.push(`${r.status()} ${r.request().method()} ${r.url()}`);
-  });
-  await page.goto(await o.signInUrl());
-  await page.waitForURL(/\/(welcome|inbox)/);
-  await page.waitForTimeout(800);
-  await page.screenshot({ path: `${out}/01-welcome.png`, fullPage: true });
   const bot = await o.api<{ id: string }>('POST', '/v1/bots', {
     name: 'Mailer',
-    goal: 'Reply to Ada about Tuesday',
+    goal: 'Reply to Ada about Tuesday’s launch window',
     tools: ['Read', 'Write'],
     mock: { fixture: 'send-email' },
     approvals: { parkWindowSeconds: 0 },
   });
-  await o.api('POST', '/v1/bots', {
+  const notes = await o.api<{ id: string }>('POST', '/v1/bots', {
     name: 'Notes digest',
-    goal: 'Summarize notes every weekday at 9',
+    goal: 'Summarize new notes into a digest every weekday at 9',
+    tools: ['Read', 'Glob', 'Grep', 'Write'],
+    mock: { fixture: 'read-then-write-denied' },
     triggers: [{ kind: 'cron', cron: '0 9 * * 1-5' }],
   });
+  const research = await o.api<{ id: string }>('POST', '/v1/bots', {
+    name: 'Researcher',
+    goal: 'Research competitors with subagents',
+    mock: { fixture: 'subagent-delegation' },
+  });
   const run = await o.api<{ runId: string }>('POST', `/v1/bots/${bot.id}/runs`, {});
-  await page.goto(o.url + '/inbox');
-  await page.getByTestId('inbox-row').first().waitFor({ timeout: 15000 });
-  await page.screenshot({ path: `${out}/02-inbox.png`, fullPage: true });
-  await page.keyboard.press('Enter');
-  await page.getByTestId('approval-card').waitFor();
-  await page.screenshot({ path: `${out}/03-card.png` });
-  await page.keyboard.press('Escape');
-  await page.goto(o.url + '/bots');
-  await page.waitForTimeout(800);
-  await page.screenshot({ path: `${out}/04-bots.png`, fullPage: true });
-  await page.goto(`${o.url}/runs/${run.runId}`);
-  await page.waitForTimeout(1200);
-  await page.screenshot({ path: `${out}/05-run.png`, fullPage: true });
-  await page.goto(`${o.url}/bots/${bot.id}?tab=config`);
-  await page.waitForTimeout(800);
-  await page.screenshot({ path: `${out}/06-bot.png`, fullPage: true });
-  await page.goto(`${o.url}/settings?tab=engine`);
-  await page.waitForTimeout(800);
-  await page.screenshot({ path: `${out}/07-settings.png`, fullPage: true });
-  await page.goto(`${o.url}/bots/new`);
-  await page.waitForTimeout(500);
-  await page.screenshot({ path: `${out}/08-new.png`, fullPage: true });
-  await page.emulateMedia({ colorScheme: 'dark' });
-  await page.goto(o.url + '/inbox');
-  await page.waitForTimeout(800);
-  await page.screenshot({ path: `${out}/09-inbox-dark.png`, fullPage: true });
-  console.log('errors:', errors);
+  await o.api('POST', `/v1/bots/${notes.id}/runs`, {});
+  const sub = await o.api<{ runId: string }>('POST', `/v1/bots/${research.id}/runs`, {});
+  await o.api('PUT', `/v1/bots/${notes.id}`, {
+    name: 'Notes digest',
+    goal: 'Summarize new notes into a digest every weekday at 9',
+    tools: ['Read', 'Glob', 'Grep', 'Write', 'Edit'],
+    triggers: [{ kind: 'cron', cron: '0 9 * * 1-5' }],
+    budgets: { maxRunsPerDay: 5 },
+  });
+  await new Promise((r) => setTimeout(r, 1500));
+
+  const screens: [string, string][] = [
+    ['inbox', '/inbox'],
+    ['bots', '/bots'],
+    ['bot-overview', `/bots/${notes.id}`],
+    ['bot-config-diff', `/bots/${notes.id}?tab=config`],
+    ['run-parked', `/runs/${run.runId}`],
+    ['run-subagents', `/runs/${sub.runId}`],
+    ['runs', '/runs'],
+    ['new-bot', '/bots/new'],
+    ['settings', '/settings'],
+    ['settings-engine', '/settings?tab=engine'],
+    ['settings-policies', '/settings?tab=policies'],
+    ['settings-audit', '/settings?tab=audit'],
+    ['welcome', '/welcome'],
+  ];
+  for (const scheme of ['light', 'dark'] as const) {
+    for (const width of widths) {
+      const context = await browser.newContext({
+        viewport: { width, height: 900 },
+        colorScheme: scheme,
+      });
+      const page = await context.newPage();
+      page.on('pageerror', (e) => errors.push(String(e)));
+      page.on('response', (r) => {
+        if (r.status() >= 400) errors.push(`${r.status()} ${r.request().method()} ${r.url()}`);
+      });
+      await page.goto(await o.signInUrl());
+      await page.waitForURL(/\/(welcome|inbox)/);
+      for (const [name, path] of screens) {
+        await page.goto(o.url + path);
+        await page.locator('main h1').first().waitFor();
+        await page.waitForTimeout(500);
+        await page.screenshot({ path: `${out}/${name}-${scheme}-${width}.png`, fullPage: true });
+      }
+      await page.goto(`${o.url}/inbox`);
+      await page.getByTestId('inbox-row').first().waitFor();
+      await page.keyboard.press('Enter');
+      await page.getByTestId('approval-card').waitFor();
+      await page.screenshot({ path: `${out}/approval-card-${scheme}-${width}.png` });
+      await page.keyboard.press('e');
+      await page.screenshot({ path: `${out}/approval-edit-${scheme}-${width}.png` });
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('Control+k');
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: `${out}/palette-${scheme}-${width}.png` });
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('?');
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: `${out}/help-${scheme}-${width}.png` });
+      await context.close();
+    }
+  }
+  console.log(errors.length ? `errors:\n${errors.join('\n')}` : 'no page errors');
 } finally {
   await browser.close();
   await o.stop();

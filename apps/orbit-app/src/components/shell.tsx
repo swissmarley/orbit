@@ -5,6 +5,7 @@ import { Link, Outlet, useRouterState } from '@tanstack/react-router';
 import {
   Command as CommandIcon,
   Inbox,
+  Keyboard,
   LayoutGrid,
   ListTree,
   Moon,
@@ -22,6 +23,7 @@ import { useDoctor, useKill, usePendingApprovals, useQueue, useSession } from '.
 import { useStore } from '../lib/store';
 import { type ThemeChoice, setTheme, themeStore } from '../lib/theme';
 import { ConfirmHost, confirmAction } from './confirm';
+import { KeyboardHelp, helpStore } from './keyboard-help';
 import { CommandPalette, paletteStore } from './palette';
 import { ListSkeleton } from './states';
 import { Badge } from './ui/badge';
@@ -275,6 +277,16 @@ export function AppShell() {
         >
           <CommandIcon aria-hidden /> Search <Kbd>⌘K</Kbd>
         </Button>
+        <Tooltip content="Keyboard shortcuts (?)">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Keyboard shortcuts"
+            onClick={() => helpStore.set(true)}
+          >
+            <Keyboard aria-hidden />
+          </Button>
+        </Tooltip>
         <ThemeToggle />
       </header>
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
@@ -307,6 +319,7 @@ export function AppShell() {
         </main>
       </div>
       <CommandPalette />
+      <KeyboardHelp />
       <ConfirmHost />
     </div>
   );
