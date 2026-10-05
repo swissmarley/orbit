@@ -115,7 +115,7 @@ export function canonicalArgs(
   input: Record<string, unknown>,
 ): Record<string, unknown> | null {
   const r = SCHEMAS[name].safeParse(input);
-  return r.success ? (r.data) : null;
+  return r.success ? r.data : null;
 }
 
 function hitLine(m: Memory, snippet: string): string {
