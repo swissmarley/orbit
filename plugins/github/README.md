@@ -74,8 +74,8 @@ list the plugin can use it.
   Bot's repository and branch (`ORBIT_GIT_REPO`, `ORBIT_GIT_BRANCH`). git runs
   with an explicit `GIT_DIR` (the worktree's entry in that repository, found by
   its back-pointer to the workspace) and `GIT_WORK_TREE`, so the workspace's
-  own `.git` file, which the Bot can rewrite, is never read. Other Bots' kinds
-  of workspace get no git tools. `git_commit` and `git_push` refuse unless the
+  own `.git` file, which the Bot can rewrite, is never read. For a Bot without
+  a worktree every git tool refuses. `git_commit` and `git_push` refuse unless the
   worktree is checked out on exactly the Bot's own `orbit/<bot>` branch.
 - **The approval names what is pushed.** `git_push` takes the branch and the
   commit sha, so the approval card shows both; it pushes exactly
