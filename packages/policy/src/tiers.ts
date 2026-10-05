@@ -94,6 +94,70 @@ const SEND_VERBS = [
   'invite',
   'upload',
 ];
+/**
+ * Words that destroy, run code or reach other hosts. Nouns that merely look
+ * like verbs (`format`, `system`, `clone`, `fork`, `lock`, `mail`) are left
+ * out, so reads such as `get_system_info` keep READ.
+ */
+const ACTING_WORDS = [
+  'rm',
+  'rmdir',
+  'del',
+  'unlink',
+  'erase',
+  'purge',
+  'wipe',
+  'shred',
+  'destroy',
+  'drop',
+  'truncate',
+  'trash',
+  'overwrite',
+  'clear',
+  'reset',
+  'revert',
+  'rollback',
+  'flush',
+  'terminate',
+  'eval',
+  'evaluate',
+  'spawn',
+  'popen',
+  'shell',
+  'sh',
+  'bash',
+  'zsh',
+  'cmd',
+  'powershell',
+  'sudo',
+  'chmod',
+  'chown',
+  'chgrp',
+  'mkdir',
+  'touch',
+  'mv',
+  'cp',
+  'ln',
+  'curl',
+  'wget',
+  'ssh',
+  'scp',
+  'rsync',
+  'launch',
+  'trigger',
+  'fire',
+  'dispatch',
+  'emit',
+  'mutate',
+  'alter',
+  'retweet',
+  'repost',
+  'reshare',
+  'impersonate',
+  'escalate',
+  'elevate',
+  'bypass',
+];
 /** Words that are verbs only when they lead the name (post_message vs get_post). */
 const LEADING_SEND_VERBS = ['post', 'email', 'message', 'dm', 'reply', 'respond', 'comment'];
 /** Unambiguous mutating verbs: any of them disqualifies READ (and drafting, except create/save/update/edit). */
@@ -149,6 +213,10 @@ const MUTATING_VERBS = [
   'mute',
   'block',
   'ban',
+  // Destructive, shell and code-running words, often abbreviated: a read verb
+  // in front of them (`get_rm`, `view_eval`, `fetch_curl`) does not make the
+  // name a read, and they are not drafting either (`purge_drafts`) (M8 corpus).
+  ...ACTING_WORDS,
 ];
 const DRAFT_HELPER_VERBS = ['create', 'save', 'update', 'edit'];
 /** Joining words mean a compound action; compound names are never READ or WRITE_LOCAL. */
