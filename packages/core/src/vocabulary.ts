@@ -320,6 +320,42 @@ export const PLUGIN_STATE: Readonly<
   },
 };
 
+/** How a plugin's server runs here (ADR-019): Integrations, `orbit plugin show`, doctor. */
+export const PLUGIN_SANDBOX_STATE: Readonly<
+  Record<'sandboxed' | 'unsandboxed' | 'refused' | 'off' | 'remote', StatusWord>
+> = {
+  sandboxed: {
+    mark: '▣',
+    label: 'sandboxed',
+    tone: 'success',
+    meaning: 'runs in an OS sandbox: only the folders and network its manifest declares',
+  },
+  unsandboxed: {
+    mark: '△',
+    label: 'unsandboxed',
+    tone: 'warning',
+    meaning: 'runs as your user without an OS sandbox (Orbit still decides every call)',
+  },
+  refused: {
+    mark: '✘',
+    label: 'no sandbox',
+    tone: 'danger',
+    meaning: 'cannot be sandboxed here and plugins.sandbox is required: it does not start',
+  },
+  off: {
+    mark: '△',
+    label: 'sandbox off',
+    tone: 'warning',
+    meaning: 'plugins.sandbox is off: plugins run as your user (Orbit still decides every call)',
+  },
+  remote: {
+    mark: '↗',
+    label: 'remote',
+    tone: 'neutral',
+    meaning: 'an http server elsewhere: nothing runs on this computer',
+  },
+};
+
 /** An inbound trigger's listener (`orbit triggers`, Settings → Integrations). */
 export const TRIGGER_STATE: Readonly<
   Record<'listening' | 'connecting' | 'needs_setup' | 'error' | 'off', StatusWord>

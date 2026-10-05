@@ -20,7 +20,11 @@
       "tier": "READ",
       "description": "Read recent messages of a channel (up to 50)"
     },
-    { "name": "get_thread_replies", "tier": "READ", "description": "Read a thread's replies" },
+    {
+      "name": "get_thread_replies",
+      "tier": "READ",
+      "description": "Read a thread's replies"
+    },
     {
       "name": "lookup_user",
       "tier": "READ",
@@ -57,5 +61,9 @@
       "required": false
     }
   ],
-  "env": ["SLACK_API_URL"]
+  "env": ["SLACK_API_URL"],
+  "sandbox": {
+    "workspace": "none",
+    "network": true
+  }
 }

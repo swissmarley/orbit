@@ -545,6 +545,11 @@ export function createApp(opts: AppOptions): Hono {
     listPlugins: () => service.listPlugins(),
     addPlugin: ({ body }) =>
       service.plugins.install((body as z.output<typeof routes.addPlugin.body>).dir, OWNER),
+    pluginCatalog: () => service.pluginInstaller.listing(),
+    installPlugin: ({ body }) => {
+      const { dryRun, ...req } = body as z.output<typeof routes.installPlugin.body>;
+      return service.installPlugin(req, dryRun);
+    },
     getPlugin: ({ params }) => service.plugins.get(param(params, 'plugin')),
     removePlugin: ({ params }) => {
       service.plugins.remove(param(params, 'plugin'), OWNER);

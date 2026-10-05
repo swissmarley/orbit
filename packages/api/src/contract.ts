@@ -9,8 +9,15 @@ import {
   Memory,
   MemoryHit,
   MemoryKind,
+  ExactVersion,
+  NpmPackageName,
+  PluginCatalogListing,
+  PluginInstallPreview,
+  PluginSandboxMode,
+  PluginSandboxState,
   PluginStatus,
   RunEvent,
+  Sha512Integrity,
   RunState,
   RunStatus,
   Tier,
@@ -222,6 +229,18 @@ export const DoctorReport = z.object({
       missing: z.array(z.string()),
       platform: z.string(),
     }),
+    /** The OS sandbox for plugin servers (ADR-019). */
+    plugins: z.object({
+      mode: PluginSandboxMode,
+      available: z.boolean(),
+      engine: z.enum(['bwrap', 'sandbox-exec']).nullable(),
+      /** Why the host cannot sandbox plugins (null when it can). */
+      reason: z.string().nullable(),
+      /** Enabled plugins that run without it (or do not start), and why. */
+      notSandboxed: z.array(
+        z.object({ id: z.string(), state: PluginSandboxState, reason: z.string().nullable() }),
+      ),
+    }),
   }),
   daemon: z.object({
     pid: z.int(),
@@ -322,6 +341,28 @@ export const AddPluginBody = z.object({
   dir: z.string().trim().min(1).max(1000),
 });
 export const SetPluginSettingBody = z.object({ value: z.string().max(2000).nullable() });
+
+/** Install a plugin from the catalog (by id) or npm (exact version and SRI), ADR-019. */
+export const InstallPluginBody = z.discriminatedUnion('source', [
+  z.object({
+    source: z.literal('catalog'),
+    id: z.string().min(1).max(64),
+    /** Download and verify only: report what it would install, keep nothing. */
+    dryRun: z.boolean().default(false),
+  }),
+  z.object({
+    source: z.literal('npm'),
+    package: NpmPackageName,
+    version: ExactVersion,
+    integrity: Sha512Integrity,
+    dryRun: z.boolean().default(false),
+  }),
+]);
+export const InstallPluginResult = z.object({
+  preview: PluginInstallPreview,
+  /** The installed plugin (off until you enable it); null for a dry run. */
+  plugin: PluginStatus.nullable(),
+});
 
 export const InboundTrigger = z.object({
   botId: z.string(),
@@ -817,6 +858,22 @@ export const routes = {
     body: AddPluginBody,
     status: 201,
     response: PluginStatus,
+  },
+  pluginCatalog: {
+    method: 'GET',
+    path: '/v1/plugin-catalog',
+    summary: 'Plugins the configured catalog lists (plugins.catalogUrl), with what is installed',
+    tag: 'plugins',
+    response: PluginCatalogListing,
+  },
+  installPlugin: {
+    method: 'POST',
+    path: '/v1/plugin-installs',
+    summary:
+      'Install a plugin from the catalog or npm: SRI-verified, unpacked without running anything, off until you enable it (dryRun reports what it would install)',
+    tag: 'plugins',
+    body: InstallPluginBody,
+    response: InstallPluginResult,
   },
   getPlugin: {
     method: 'GET',

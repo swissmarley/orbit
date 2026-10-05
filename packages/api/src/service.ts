@@ -11,6 +11,7 @@ import {
   OrbitError,
   Redactor,
   type RunState,
+  type PluginInstallPreview,
   type PluginStatus,
   type TriggerRef,
   type TriggerSpec,
@@ -70,9 +71,12 @@ import {
   type WorkspaceProvider,
   type InboundContent,
   type InboundStatus,
+  PluginInstaller,
+  type PluginInstallRequest,
   PluginRegistry,
   PluginSegments,
   TriggerRouter,
+  defaultStoreDir,
   buildChildEnv,
   gitRunner,
   triggerKey,
@@ -94,7 +98,12 @@ import {
   systemProbes,
   validateTriggers,
 } from '@orbit/runtime';
-import { defaultRunner, detectSandboxSupport } from '@orbit/sandbox';
+import {
+  type PluginSandboxSupport,
+  defaultRunner,
+  detectPluginSandbox,
+  detectSandboxSupport,
+} from '@orbit/sandbox';
 import {
   BotRepo,
   Controls,
@@ -148,6 +157,10 @@ export interface ServiceOptions {
   memoryDir?: string | null;
   /** Reference plugins directory; default the repository's plugins/, null = none (tests). */
   pluginsDir?: string | null;
+  /** Tests: what this host's plugin sandbox can do (default: detected once, ADR-019). */
+  pluginSandbox?: PluginSandboxSupport;
+  /** Tests: fetch for the plugin catalog and registry. */
+  pluginFetch?: typeof fetch;
   /** Tests: Slack Socket Mode doubles. */
   slack?: {
     fetch?: typeof fetch;
@@ -182,6 +195,7 @@ export class OrbitService {
   readonly orbitSessions: OrbitSessions;
   readonly triage: TriagePath;
   readonly plugins: PluginRegistry;
+  readonly pluginInstaller: PluginInstaller;
   readonly pluginSegments: PluginSegments;
   readonly triggers: TriggerRouter;
   private readonly triggerState: TriggerStateRepo;
@@ -189,6 +203,7 @@ export class OrbitService {
   readonly version: string;
   /** Base URL once orbitd listens (shown by doctor). */
   url = '';
+  private readonly pluginSandboxSupport: () => PluginSandboxSupport;
 
   private engine: { resolution: AuthResolution; handle: DriverHandle } | null = null;
   private engineStarting: Promise<{ resolution: AuthResolution; handle: DriverHandle }> | null =
@@ -239,6 +254,14 @@ export class OrbitService {
     });
     this.workspaceTaint = new WorkspaceTaint(db, this.now);
     this.orbitSessions = new OrbitSessions();
+    // The plugin sandbox (ADR-019): detected once, on first use (a bwrap probe).
+    let sandboxSupport: PluginSandboxSupport | undefined = opts.pluginSandbox;
+    const pluginSandbox = () =>
+      (sandboxSupport ??= detectPluginSandbox({
+        pathEnv: env.PATH ?? '',
+        env: buildChildEnv('tool', env),
+      }));
+    const storeDir = config.plugins.storeDir ?? defaultStoreDir(env);
     this.plugins = new PluginRegistry({
       db,
       vault: this.vault,
@@ -249,7 +272,21 @@ export class OrbitService {
       now: this.now,
       redact: (t) => this.redactor.redactString(t),
       audit: this.audit,
+      sandbox: { mode: config.plugins.sandbox, support: pluginSandbox },
+      storeDir,
     });
+    // Refuses a store inside $ORBIT_HOME (Bots write there): orbitd does not start with one.
+    this.pluginInstaller = new PluginInstaller({
+      registry: this.plugins,
+      storeDir,
+      orbitHome: config.home,
+      catalogUrl: config.plugins.catalogUrl,
+      npmRegistry: config.plugins.npmRegistry,
+      now: this.now,
+      audit: this.audit,
+      ...(opts.pluginFetch ? { fetch: opts.pluginFetch } : {}),
+    });
+    this.pluginSandboxSupport = pluginSandbox;
     this.pluginSegments = new PluginSegments();
     this.orbitTools = new OrbitToolset({
       memory: this.memory,
@@ -884,6 +921,14 @@ export class OrbitService {
     this.plugins.removeSecret(id, name, OWNER);
     if (id === 'slack') this.triggers.restartSlack();
     return this.plugins.get(id);
+  }
+
+  /** Install from the catalog or npm (ADR-019): verified, stored, off until enabled. */
+  installPlugin(
+    req: PluginInstallRequest,
+    dryRun: boolean,
+  ): Promise<{ preview: PluginInstallPreview; plugin: PluginStatus | null }> {
+    return this.pluginInstaller.install(req, OWNER, { dryRun });
   }
 
   requireRun(runId: string): RunState {
@@ -1563,6 +1608,47 @@ export class OrbitService {
 
   // ── doctor ────────────────────────────────────────────────────────────────
 
+  /** The plugin sandbox for doctor (ADR-019): the mode, the host, plugins that run without it. */
+  private pluginSandboxDoctor(): {
+    report: DoctorReport['sandbox']['plugins'];
+    warnings: { code: string; message: string }[];
+  } {
+    const mode = this.config.plugins.sandbox;
+    const support = this.pluginSandboxSupport();
+    const enabled = this.plugins.list().filter((p) => p.enabled);
+    const notSandboxed = enabled
+      .filter((p) => p.sandbox.state !== 'sandboxed' && p.sandbox.state !== 'remote')
+      .map((p) => ({ id: p.id, state: p.sandbox.state, reason: p.sandbox.reason }));
+    const warnings: { code: string; message: string }[] = [];
+    if (mode === 'off') {
+      warnings.push({
+        code: 'plugin_sandbox_off',
+        message:
+          'plugins.sandbox is off: plugin servers run as your user without an OS sandbox (Orbit still decides every call). Set it to auto or required.',
+      });
+    } else {
+      for (const p of notSandboxed) {
+        warnings.push({
+          code: p.state === 'refused' ? 'plugin_sandbox_refused' : 'plugin_unsandboxed',
+          message:
+            p.state === 'refused'
+              ? `Plugin ${p.id} does not start: it cannot be sandboxed here (${p.reason ?? 'unknown'}) and plugins.sandbox is required.`
+              : `Plugin ${p.id} runs without an OS sandbox: ${p.reason ?? 'unknown'}.`,
+        });
+      }
+    }
+    return {
+      report: {
+        mode,
+        available: support.available,
+        engine: support.engine,
+        reason: support.reason,
+        notSandboxed,
+      },
+      warnings,
+    };
+  }
+
   async doctor(): Promise<DoctorReport> {
     const env = this.opts.env;
     const [r, sandbox] = await Promise.all([
@@ -1570,6 +1656,7 @@ export class OrbitService {
       detectSandboxSupport(defaultRunner(buildChildEnv('tool', env)), { pathEnv: env.PATH ?? '' }),
     ]);
     const c = this.config;
+    const pluginSandbox = this.pluginSandboxDoctor();
     return {
       ok: r.driver !== null,
       driver: r.driver,
@@ -1596,6 +1683,7 @@ export class OrbitService {
               },
             ]
           : []),
+        ...pluginSandbox.warnings,
       ],
       refusal: r.refusal,
       onboarding: r.onboarding,
@@ -1606,7 +1694,7 @@ export class OrbitService {
       home: c.home,
       node: process.version,
       platform: `${platform()}-${arch()}`,
-      sandbox,
+      sandbox: { ...sandbox, plugins: pluginSandbox.report },
       daemon: {
         pid: process.pid,
         startedAt: this.startedAt,

@@ -451,11 +451,89 @@
                             "platform"
                           ],
                           "additionalProperties": false
+                        },
+                        "plugins": {
+                          "type": "object",
+                          "properties": {
+                            "mode": {
+                              "type": "string",
+                              "enum": [
+                                "auto",
+                                "required",
+                                "off"
+                              ]
+                            },
+                            "available": {
+                              "type": "boolean"
+                            },
+                            "engine": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "bwrap",
+                                    "sandbox-exec"
+                                  ]
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "reason": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "notSandboxed": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "state": {
+                                    "type": "string",
+                                    "enum": [
+                                      "sandboxed",
+                                      "unsandboxed",
+                                      "refused",
+                                      "off",
+                                      "remote"
+                                    ]
+                                  },
+                                  "reason": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "state",
+                                  "reason"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "mode",
+                            "available",
+                            "engine",
+                            "reason",
+                            "notSandboxed"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
                         "docker",
-                        "engineSandbox"
+                        "engineSandbox",
+                        "plugins"
                       ],
                       "additionalProperties": false
                     },
@@ -20572,6 +20650,44 @@
                       "builtIn": {
                         "type": "boolean"
                       },
+                      "source": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "builtin",
+                              "folder",
+                              "npm"
+                            ]
+                          },
+                          "package": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "version": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "integrity": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "package",
+                          "version",
+                          "integrity"
+                        ],
+                        "additionalProperties": false
+                      },
                       "dir": {
                         "type": "string"
                       },
@@ -20719,6 +20835,118 @@
                           "type": "string"
                         }
                       },
+                      "sandbox": {
+                        "type": "object",
+                        "properties": {
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "sandboxed",
+                              "unsandboxed",
+                              "refused",
+                              "off",
+                              "remote"
+                            ]
+                          },
+                          "engine": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "bwrap",
+                                  "sandbox-exec"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "reason": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "needs": {
+                            "type": "object",
+                            "properties": {
+                              "workspace": {
+                                "default": "none",
+                                "type": "string",
+                                "enum": [
+                                  "none",
+                                  "read",
+                                  "write"
+                                ]
+                              },
+                              "network": {
+                                "default": false,
+                                "type": "boolean"
+                              },
+                              "paths": {
+                                "default": [],
+                                "maxItems": 8,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "access": {
+                                      "default": "read",
+                                      "type": "string",
+                                      "enum": [
+                                        "read",
+                                        "write"
+                                      ]
+                                    },
+                                    "parent": {
+                                      "default": false,
+                                      "type": "boolean"
+                                    },
+                                    "default": {
+                                      "default": [],
+                                      "maxItems": 4,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string",
+                                        "maxLength": 500
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "name",
+                                    "access",
+                                    "parent",
+                                    "default"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "nestedSandbox": {
+                                "default": false,
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "workspace",
+                              "network",
+                              "paths",
+                              "nestedSandbox"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "state",
+                          "engine",
+                          "reason",
+                          "needs"
+                        ],
+                        "additionalProperties": false
+                      },
                       "undeclaredTools": {
                         "type": "array",
                         "items": {
@@ -20776,6 +21004,7 @@
                       "description",
                       "homepage",
                       "builtIn",
+                      "source",
                       "dir",
                       "enabled",
                       "state",
@@ -20784,6 +21013,7 @@
                       "secrets",
                       "settings",
                       "env",
+                      "sandbox",
                       "undeclaredTools",
                       "bots",
                       "warnings",
@@ -20874,6 +21104,44 @@
                     "builtIn": {
                       "type": "boolean"
                     },
+                    "source": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "builtin",
+                            "folder",
+                            "npm"
+                          ]
+                        },
+                        "package": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "version": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "integrity": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "package",
+                        "version",
+                        "integrity"
+                      ],
+                      "additionalProperties": false
+                    },
                     "dir": {
                       "type": "string"
                     },
@@ -21021,6 +21289,118 @@
                         "type": "string"
                       }
                     },
+                    "sandbox": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "sandboxed",
+                            "unsandboxed",
+                            "refused",
+                            "off",
+                            "remote"
+                          ]
+                        },
+                        "engine": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "bwrap",
+                                "sandbox-exec"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reason": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "needs": {
+                          "type": "object",
+                          "properties": {
+                            "workspace": {
+                              "default": "none",
+                              "type": "string",
+                              "enum": [
+                                "none",
+                                "read",
+                                "write"
+                              ]
+                            },
+                            "network": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "paths": {
+                              "default": [],
+                              "maxItems": 8,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "access": {
+                                    "default": "read",
+                                    "type": "string",
+                                    "enum": [
+                                      "read",
+                                      "write"
+                                    ]
+                                  },
+                                  "parent": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "default": {
+                                    "default": [],
+                                    "maxItems": 4,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "maxLength": 500
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "access",
+                                  "parent",
+                                  "default"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "nestedSandbox": {
+                              "default": false,
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "workspace",
+                            "network",
+                            "paths",
+                            "nestedSandbox"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "engine",
+                        "reason",
+                        "needs"
+                      ],
+                      "additionalProperties": false
+                    },
                     "undeclaredTools": {
                       "type": "array",
                       "items": {
@@ -21078,6 +21458,7 @@
                     "description",
                     "homepage",
                     "builtIn",
+                    "source",
                     "dir",
                     "enabled",
                     "state",
@@ -21086,6 +21467,7 @@
                     "secrets",
                     "settings",
                     "env",
+                    "sandbox",
                     "undeclaredTools",
                     "bots",
                     "warnings",
@@ -21160,6 +21542,920 @@
         }
       }
     },
+    "/v1/plugin-catalog": {
+      "get": {
+        "operationId": "pluginCatalog",
+        "summary": "Plugins the configured catalog lists (plugins.catalogUrl), with what is installed",
+        "tags": [
+          "plugins"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "url": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9-]{1,31}$"
+                          },
+                          "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 80
+                          },
+                          "description": {
+                            "default": "",
+                            "type": "string",
+                            "maxLength": 1000
+                          },
+                          "homepage": {
+                            "type": "string",
+                            "format": "uri"
+                          },
+                          "package": {
+                            "type": "string",
+                            "maxLength": 214,
+                            "pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$"
+                          },
+                          "version": {
+                            "type": "string",
+                            "maxLength": 160,
+                            "pattern": "^\\d{1,9}\\.\\d{1,9}\\.\\d{1,9}(?:-[0-9A-Za-z.-]{1,64})?(?:\\+[0-9A-Za-z.-]{1,64})?$"
+                          },
+                          "integrity": {
+                            "type": "string",
+                            "pattern": "^sha512-[A-Za-z0-9+/]{86}==$"
+                          },
+                          "manifestHash": {
+                            "type": "string",
+                            "pattern": "^[a-f0-9]{64}$"
+                          },
+                          "installed": {
+                            "type": "boolean"
+                          },
+                          "installedVersion": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "description",
+                          "package",
+                          "version",
+                          "integrity",
+                          "installed",
+                          "installedVersion"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "error": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "url",
+                    "description",
+                    "entries",
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "hint": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "hint"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/plugin-installs": {
+      "post": {
+        "operationId": "installPlugin",
+        "summary": "Install a plugin from the catalog or npm: SRI-verified, unpacked without running anything, off until you enable it (dryRun reports what it would install)",
+        "tags": [
+          "plugins"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "preview": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "version": {
+                          "type": "string"
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "package": {
+                          "type": "string"
+                        },
+                        "packageVersion": {
+                          "type": "string"
+                        },
+                        "integrity": {
+                          "type": "string"
+                        },
+                        "manifestHash": {
+                          "type": "string"
+                        },
+                        "fromCatalog": {
+                          "type": "boolean"
+                        },
+                        "server": {
+                          "type": "string"
+                        },
+                        "tools": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "engineName": {
+                                "type": "string"
+                              },
+                              "description": {
+                                "type": "string"
+                              },
+                              "declaredTier": {
+                                "type": "string",
+                                "enum": [
+                                  "READ",
+                                  "WRITE_LOCAL",
+                                  "EXTERNAL",
+                                  "FINANCIAL"
+                                ]
+                              },
+                              "tier": {
+                                "type": "string",
+                                "enum": [
+                                  "READ",
+                                  "WRITE_LOCAL",
+                                  "EXTERNAL",
+                                  "FINANCIAL"
+                                ]
+                              },
+                              "egress": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "engineName",
+                              "description",
+                              "declaredTier",
+                              "tier",
+                              "egress"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "secrets": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "description": {
+                                "type": "string"
+                              },
+                              "required": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "description",
+                              "required"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "settings": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "description": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "description"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "env": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "sandbox": {
+                          "type": "object",
+                          "properties": {
+                            "workspace": {
+                              "default": "none",
+                              "type": "string",
+                              "enum": [
+                                "none",
+                                "read",
+                                "write"
+                              ]
+                            },
+                            "network": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "paths": {
+                              "default": [],
+                              "maxItems": 8,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "access": {
+                                    "default": "read",
+                                    "type": "string",
+                                    "enum": [
+                                      "read",
+                                      "write"
+                                    ]
+                                  },
+                                  "parent": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "default": {
+                                    "default": [],
+                                    "maxItems": 4,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "maxLength": 500
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "access",
+                                  "parent",
+                                  "default"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "nestedSandbox": {
+                              "default": false,
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "workspace",
+                            "network",
+                            "paths",
+                            "nestedSandbox"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "files": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "bytes": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "version",
+                        "description",
+                        "package",
+                        "packageVersion",
+                        "integrity",
+                        "manifestHash",
+                        "fromCatalog",
+                        "server",
+                        "tools",
+                        "secrets",
+                        "settings",
+                        "env",
+                        "sandbox",
+                        "files",
+                        "bytes"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "plugin": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "version": {
+                              "type": "string"
+                            },
+                            "description": {
+                              "type": "string"
+                            },
+                            "homepage": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "builtIn": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "builtin",
+                                    "folder",
+                                    "npm"
+                                  ]
+                                },
+                                "package": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "version": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "integrity": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "package",
+                                "version",
+                                "integrity"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "dir": {
+                              "type": "string"
+                            },
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "disabled",
+                                "ready",
+                                "needs_setup",
+                                "changed",
+                                "error"
+                              ]
+                            },
+                            "server": {
+                              "type": "string"
+                            },
+                            "tools": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "engineName": {
+                                    "type": "string"
+                                  },
+                                  "description": {
+                                    "type": "string"
+                                  },
+                                  "declaredTier": {
+                                    "type": "string",
+                                    "enum": [
+                                      "READ",
+                                      "WRITE_LOCAL",
+                                      "EXTERNAL",
+                                      "FINANCIAL"
+                                    ]
+                                  },
+                                  "tier": {
+                                    "type": "string",
+                                    "enum": [
+                                      "READ",
+                                      "WRITE_LOCAL",
+                                      "EXTERNAL",
+                                      "FINANCIAL"
+                                    ]
+                                  },
+                                  "egress": {
+                                    "type": "boolean"
+                                  },
+                                  "available": {
+                                    "type": [
+                                      "boolean",
+                                      "null"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "engineName",
+                                  "description",
+                                  "declaredTier",
+                                  "tier",
+                                  "egress",
+                                  "available"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "secrets": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "description": {
+                                    "type": "string"
+                                  },
+                                  "required": {
+                                    "type": "boolean"
+                                  },
+                                  "set": {
+                                    "type": "boolean"
+                                  },
+                                  "vaultName": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "description",
+                                  "required",
+                                  "set",
+                                  "vaultName"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "settings": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "description": {
+                                    "type": "string"
+                                  },
+                                  "required": {
+                                    "type": "boolean"
+                                  },
+                                  "value": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "default": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "description",
+                                  "required",
+                                  "value",
+                                  "default"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "env": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "sandbox": {
+                              "type": "object",
+                              "properties": {
+                                "state": {
+                                  "type": "string",
+                                  "enum": [
+                                    "sandboxed",
+                                    "unsandboxed",
+                                    "refused",
+                                    "off",
+                                    "remote"
+                                  ]
+                                },
+                                "engine": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "bwrap",
+                                        "sandbox-exec"
+                                      ]
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "reason": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "needs": {
+                                  "type": "object",
+                                  "properties": {
+                                    "workspace": {
+                                      "default": "none",
+                                      "type": "string",
+                                      "enum": [
+                                        "none",
+                                        "read",
+                                        "write"
+                                      ]
+                                    },
+                                    "network": {
+                                      "default": false,
+                                      "type": "boolean"
+                                    },
+                                    "paths": {
+                                      "default": [],
+                                      "maxItems": 8,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "name": {
+                                            "type": "string"
+                                          },
+                                          "access": {
+                                            "default": "read",
+                                            "type": "string",
+                                            "enum": [
+                                              "read",
+                                              "write"
+                                            ]
+                                          },
+                                          "parent": {
+                                            "default": false,
+                                            "type": "boolean"
+                                          },
+                                          "default": {
+                                            "default": [],
+                                            "maxItems": 4,
+                                            "type": "array",
+                                            "items": {
+                                              "type": "string",
+                                              "maxLength": 500
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "name",
+                                          "access",
+                                          "parent",
+                                          "default"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    },
+                                    "nestedSandbox": {
+                                      "default": false,
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "required": [
+                                    "workspace",
+                                    "network",
+                                    "paths",
+                                    "nestedSandbox"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "required": [
+                                "state",
+                                "engine",
+                                "reason",
+                                "needs"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "undeclaredTools": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "bots": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "name"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "warnings": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "error": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "checkedAt": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "enabledAt": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "name",
+                            "version",
+                            "description",
+                            "homepage",
+                            "builtIn",
+                            "source",
+                            "dir",
+                            "enabled",
+                            "state",
+                            "server",
+                            "tools",
+                            "secrets",
+                            "settings",
+                            "env",
+                            "sandbox",
+                            "undeclaredTools",
+                            "bots",
+                            "warnings",
+                            "error",
+                            "checkedAt",
+                            "enabledAt"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "preview",
+                    "plugin"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "hint": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "hint"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "const": "catalog"
+                      },
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      },
+                      "dryRun": {
+                        "default": false,
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "source",
+                      "id"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "const": "npm"
+                      },
+                      "package": {
+                        "type": "string",
+                        "maxLength": 214,
+                        "pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$"
+                      },
+                      "version": {
+                        "type": "string",
+                        "maxLength": 160,
+                        "pattern": "^\\d{1,9}\\.\\d{1,9}\\.\\d{1,9}(?:-[0-9A-Za-z.-]{1,64})?(?:\\+[0-9A-Za-z.-]{1,64})?$"
+                      },
+                      "integrity": {
+                        "type": "string",
+                        "pattern": "^sha512-[A-Za-z0-9+/]{86}==$"
+                      },
+                      "dryRun": {
+                        "default": false,
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "source",
+                      "package",
+                      "version",
+                      "integrity"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/plugins/{plugin}": {
       "get": {
         "operationId": "getPlugin",
@@ -21205,6 +22501,44 @@
                     },
                     "builtIn": {
                       "type": "boolean"
+                    },
+                    "source": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "builtin",
+                            "folder",
+                            "npm"
+                          ]
+                        },
+                        "package": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "version": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "integrity": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "package",
+                        "version",
+                        "integrity"
+                      ],
+                      "additionalProperties": false
                     },
                     "dir": {
                       "type": "string"
@@ -21353,6 +22687,118 @@
                         "type": "string"
                       }
                     },
+                    "sandbox": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "sandboxed",
+                            "unsandboxed",
+                            "refused",
+                            "off",
+                            "remote"
+                          ]
+                        },
+                        "engine": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "bwrap",
+                                "sandbox-exec"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reason": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "needs": {
+                          "type": "object",
+                          "properties": {
+                            "workspace": {
+                              "default": "none",
+                              "type": "string",
+                              "enum": [
+                                "none",
+                                "read",
+                                "write"
+                              ]
+                            },
+                            "network": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "paths": {
+                              "default": [],
+                              "maxItems": 8,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "access": {
+                                    "default": "read",
+                                    "type": "string",
+                                    "enum": [
+                                      "read",
+                                      "write"
+                                    ]
+                                  },
+                                  "parent": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "default": {
+                                    "default": [],
+                                    "maxItems": 4,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "maxLength": 500
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "access",
+                                  "parent",
+                                  "default"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "nestedSandbox": {
+                              "default": false,
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "workspace",
+                            "network",
+                            "paths",
+                            "nestedSandbox"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "engine",
+                        "reason",
+                        "needs"
+                      ],
+                      "additionalProperties": false
+                    },
                     "undeclaredTools": {
                       "type": "array",
                       "items": {
@@ -21410,6 +22856,7 @@
                     "description",
                     "homepage",
                     "builtIn",
+                    "source",
                     "dir",
                     "enabled",
                     "state",
@@ -21418,6 +22865,7 @@
                     "secrets",
                     "settings",
                     "env",
+                    "sandbox",
                     "undeclaredTools",
                     "bots",
                     "warnings",
@@ -21596,6 +23044,44 @@
                     "builtIn": {
                       "type": "boolean"
                     },
+                    "source": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "builtin",
+                            "folder",
+                            "npm"
+                          ]
+                        },
+                        "package": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "version": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "integrity": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "package",
+                        "version",
+                        "integrity"
+                      ],
+                      "additionalProperties": false
+                    },
                     "dir": {
                       "type": "string"
                     },
@@ -21743,6 +23229,118 @@
                         "type": "string"
                       }
                     },
+                    "sandbox": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "sandboxed",
+                            "unsandboxed",
+                            "refused",
+                            "off",
+                            "remote"
+                          ]
+                        },
+                        "engine": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "bwrap",
+                                "sandbox-exec"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reason": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "needs": {
+                          "type": "object",
+                          "properties": {
+                            "workspace": {
+                              "default": "none",
+                              "type": "string",
+                              "enum": [
+                                "none",
+                                "read",
+                                "write"
+                              ]
+                            },
+                            "network": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "paths": {
+                              "default": [],
+                              "maxItems": 8,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "access": {
+                                    "default": "read",
+                                    "type": "string",
+                                    "enum": [
+                                      "read",
+                                      "write"
+                                    ]
+                                  },
+                                  "parent": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "default": {
+                                    "default": [],
+                                    "maxItems": 4,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "maxLength": 500
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "access",
+                                  "parent",
+                                  "default"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "nestedSandbox": {
+                              "default": false,
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "workspace",
+                            "network",
+                            "paths",
+                            "nestedSandbox"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "engine",
+                        "reason",
+                        "needs"
+                      ],
+                      "additionalProperties": false
+                    },
                     "undeclaredTools": {
                       "type": "array",
                       "items": {
@@ -21800,6 +23398,7 @@
                     "description",
                     "homepage",
                     "builtIn",
+                    "source",
                     "dir",
                     "enabled",
                     "state",
@@ -21808,6 +23407,7 @@
                     "secrets",
                     "settings",
                     "env",
+                    "sandbox",
                     "undeclaredTools",
                     "bots",
                     "warnings",
@@ -21908,6 +23508,44 @@
                     "builtIn": {
                       "type": "boolean"
                     },
+                    "source": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "builtin",
+                            "folder",
+                            "npm"
+                          ]
+                        },
+                        "package": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "version": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "integrity": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "package",
+                        "version",
+                        "integrity"
+                      ],
+                      "additionalProperties": false
+                    },
                     "dir": {
                       "type": "string"
                     },
@@ -22055,6 +23693,118 @@
                         "type": "string"
                       }
                     },
+                    "sandbox": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "sandboxed",
+                            "unsandboxed",
+                            "refused",
+                            "off",
+                            "remote"
+                          ]
+                        },
+                        "engine": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "bwrap",
+                                "sandbox-exec"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reason": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "needs": {
+                          "type": "object",
+                          "properties": {
+                            "workspace": {
+                              "default": "none",
+                              "type": "string",
+                              "enum": [
+                                "none",
+                                "read",
+                                "write"
+                              ]
+                            },
+                            "network": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "paths": {
+                              "default": [],
+                              "maxItems": 8,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "access": {
+                                    "default": "read",
+                                    "type": "string",
+                                    "enum": [
+                                      "read",
+                                      "write"
+                                    ]
+                                  },
+                                  "parent": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "default": {
+                                    "default": [],
+                                    "maxItems": 4,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "maxLength": 500
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "access",
+                                  "parent",
+                                  "default"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "nestedSandbox": {
+                              "default": false,
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "workspace",
+                            "network",
+                            "paths",
+                            "nestedSandbox"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "engine",
+                        "reason",
+                        "needs"
+                      ],
+                      "additionalProperties": false
+                    },
                     "undeclaredTools": {
                       "type": "array",
                       "items": {
@@ -22112,6 +23862,7 @@
                     "description",
                     "homepage",
                     "builtIn",
+                    "source",
                     "dir",
                     "enabled",
                     "state",
@@ -22120,6 +23871,7 @@
                     "secrets",
                     "settings",
                     "env",
+                    "sandbox",
                     "undeclaredTools",
                     "bots",
                     "warnings",
@@ -22220,6 +23972,44 @@
                     "builtIn": {
                       "type": "boolean"
                     },
+                    "source": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "builtin",
+                            "folder",
+                            "npm"
+                          ]
+                        },
+                        "package": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "version": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "integrity": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "package",
+                        "version",
+                        "integrity"
+                      ],
+                      "additionalProperties": false
+                    },
                     "dir": {
                       "type": "string"
                     },
@@ -22367,6 +24157,118 @@
                         "type": "string"
                       }
                     },
+                    "sandbox": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "sandboxed",
+                            "unsandboxed",
+                            "refused",
+                            "off",
+                            "remote"
+                          ]
+                        },
+                        "engine": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "bwrap",
+                                "sandbox-exec"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reason": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "needs": {
+                          "type": "object",
+                          "properties": {
+                            "workspace": {
+                              "default": "none",
+                              "type": "string",
+                              "enum": [
+                                "none",
+                                "read",
+                                "write"
+                              ]
+                            },
+                            "network": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "paths": {
+                              "default": [],
+                              "maxItems": 8,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "access": {
+                                    "default": "read",
+                                    "type": "string",
+                                    "enum": [
+                                      "read",
+                                      "write"
+                                    ]
+                                  },
+                                  "parent": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "default": {
+                                    "default": [],
+                                    "maxItems": 4,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "maxLength": 500
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "access",
+                                  "parent",
+                                  "default"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "nestedSandbox": {
+                              "default": false,
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "workspace",
+                            "network",
+                            "paths",
+                            "nestedSandbox"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "engine",
+                        "reason",
+                        "needs"
+                      ],
+                      "additionalProperties": false
+                    },
                     "undeclaredTools": {
                       "type": "array",
                       "items": {
@@ -22424,6 +24326,7 @@
                     "description",
                     "homepage",
                     "builtIn",
+                    "source",
                     "dir",
                     "enabled",
                     "state",
@@ -22432,6 +24335,7 @@
                     "secrets",
                     "settings",
                     "env",
+                    "sandbox",
                     "undeclaredTools",
                     "bots",
                     "warnings",
@@ -22540,6 +24444,44 @@
                     "builtIn": {
                       "type": "boolean"
                     },
+                    "source": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "builtin",
+                            "folder",
+                            "npm"
+                          ]
+                        },
+                        "package": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "version": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "integrity": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "package",
+                        "version",
+                        "integrity"
+                      ],
+                      "additionalProperties": false
+                    },
                     "dir": {
                       "type": "string"
                     },
@@ -22687,6 +24629,118 @@
                         "type": "string"
                       }
                     },
+                    "sandbox": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "sandboxed",
+                            "unsandboxed",
+                            "refused",
+                            "off",
+                            "remote"
+                          ]
+                        },
+                        "engine": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "bwrap",
+                                "sandbox-exec"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reason": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "needs": {
+                          "type": "object",
+                          "properties": {
+                            "workspace": {
+                              "default": "none",
+                              "type": "string",
+                              "enum": [
+                                "none",
+                                "read",
+                                "write"
+                              ]
+                            },
+                            "network": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "paths": {
+                              "default": [],
+                              "maxItems": 8,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "access": {
+                                    "default": "read",
+                                    "type": "string",
+                                    "enum": [
+                                      "read",
+                                      "write"
+                                    ]
+                                  },
+                                  "parent": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "default": {
+                                    "default": [],
+                                    "maxItems": 4,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "maxLength": 500
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "access",
+                                  "parent",
+                                  "default"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "nestedSandbox": {
+                              "default": false,
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "workspace",
+                            "network",
+                            "paths",
+                            "nestedSandbox"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "engine",
+                        "reason",
+                        "needs"
+                      ],
+                      "additionalProperties": false
+                    },
                     "undeclaredTools": {
                       "type": "array",
                       "items": {
@@ -22744,6 +24798,7 @@
                     "description",
                     "homepage",
                     "builtIn",
+                    "source",
                     "dir",
                     "enabled",
                     "state",
@@ -22752,6 +24807,7 @@
                     "secrets",
                     "settings",
                     "env",
+                    "sandbox",
                     "undeclaredTools",
                     "bots",
                     "warnings",
@@ -22878,6 +24934,44 @@
                     "builtIn": {
                       "type": "boolean"
                     },
+                    "source": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "builtin",
+                            "folder",
+                            "npm"
+                          ]
+                        },
+                        "package": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "version": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "integrity": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "package",
+                        "version",
+                        "integrity"
+                      ],
+                      "additionalProperties": false
+                    },
                     "dir": {
                       "type": "string"
                     },
@@ -23025,6 +25119,118 @@
                         "type": "string"
                       }
                     },
+                    "sandbox": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "sandboxed",
+                            "unsandboxed",
+                            "refused",
+                            "off",
+                            "remote"
+                          ]
+                        },
+                        "engine": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "bwrap",
+                                "sandbox-exec"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reason": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "needs": {
+                          "type": "object",
+                          "properties": {
+                            "workspace": {
+                              "default": "none",
+                              "type": "string",
+                              "enum": [
+                                "none",
+                                "read",
+                                "write"
+                              ]
+                            },
+                            "network": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "paths": {
+                              "default": [],
+                              "maxItems": 8,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "access": {
+                                    "default": "read",
+                                    "type": "string",
+                                    "enum": [
+                                      "read",
+                                      "write"
+                                    ]
+                                  },
+                                  "parent": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "default": {
+                                    "default": [],
+                                    "maxItems": 4,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "maxLength": 500
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "access",
+                                  "parent",
+                                  "default"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "nestedSandbox": {
+                              "default": false,
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "workspace",
+                            "network",
+                            "paths",
+                            "nestedSandbox"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "engine",
+                        "reason",
+                        "needs"
+                      ],
+                      "additionalProperties": false
+                    },
                     "undeclaredTools": {
                       "type": "array",
                       "items": {
@@ -23082,6 +25288,7 @@
                     "description",
                     "homepage",
                     "builtIn",
+                    "source",
                     "dir",
                     "enabled",
                     "state",
@@ -23090,6 +25297,7 @@
                     "secrets",
                     "settings",
                     "env",
+                    "sandbox",
                     "undeclaredTools",
                     "bots",
                     "warnings",
@@ -23198,6 +25406,44 @@
                     "builtIn": {
                       "type": "boolean"
                     },
+                    "source": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "builtin",
+                            "folder",
+                            "npm"
+                          ]
+                        },
+                        "package": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "version": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "integrity": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "package",
+                        "version",
+                        "integrity"
+                      ],
+                      "additionalProperties": false
+                    },
                     "dir": {
                       "type": "string"
                     },
@@ -23345,6 +25591,118 @@
                         "type": "string"
                       }
                     },
+                    "sandbox": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "sandboxed",
+                            "unsandboxed",
+                            "refused",
+                            "off",
+                            "remote"
+                          ]
+                        },
+                        "engine": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "bwrap",
+                                "sandbox-exec"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reason": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "needs": {
+                          "type": "object",
+                          "properties": {
+                            "workspace": {
+                              "default": "none",
+                              "type": "string",
+                              "enum": [
+                                "none",
+                                "read",
+                                "write"
+                              ]
+                            },
+                            "network": {
+                              "default": false,
+                              "type": "boolean"
+                            },
+                            "paths": {
+                              "default": [],
+                              "maxItems": 8,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "access": {
+                                    "default": "read",
+                                    "type": "string",
+                                    "enum": [
+                                      "read",
+                                      "write"
+                                    ]
+                                  },
+                                  "parent": {
+                                    "default": false,
+                                    "type": "boolean"
+                                  },
+                                  "default": {
+                                    "default": [],
+                                    "maxItems": 4,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "maxLength": 500
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "access",
+                                  "parent",
+                                  "default"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "nestedSandbox": {
+                              "default": false,
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "workspace",
+                            "network",
+                            "paths",
+                            "nestedSandbox"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "engine",
+                        "reason",
+                        "needs"
+                      ],
+                      "additionalProperties": false
+                    },
                     "undeclaredTools": {
                       "type": "array",
                       "items": {
@@ -23402,6 +25760,7 @@
                     "description",
                     "homepage",
                     "builtIn",
+                    "source",
                     "dir",
                     "enabled",
                     "state",
@@ -23410,6 +25769,7 @@
                     "secrets",
                     "settings",
                     "env",
+                    "sandbox",
                     "undeclaredTools",
                     "bots",
                     "warnings",

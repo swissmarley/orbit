@@ -21,13 +21,21 @@
       "tier": "READ",
       "description": "Read the text of the current page or part of it"
     },
-    { "name": "list_links", "tier": "READ", "description": "List the links on the current page" },
+    {
+      "name": "list_links",
+      "tier": "READ",
+      "description": "List the links on the current page"
+    },
     {
       "name": "click",
       "tier": "EXTERNAL",
       "description": "Click an element (may submit a form: asks you)"
     },
-    { "name": "fill", "tier": "EXTERNAL", "description": "Type into a form field (asks you)" }
+    {
+      "name": "fill",
+      "tier": "EXTERNAL",
+      "description": "Type into a form field (asks you)"
+    }
   ],
   "settings": [
     {
@@ -38,7 +46,29 @@
     {
       "name": "BROWSER_EXECUTABLE",
       "description": "Optional path to a Chromium binary (default: Playwright's Chromium, see PLAYWRIGHT_BROWSERS_PATH)."
+    },
+    {
+      "name": "BROWSER_ALLOW_PRIVATE_ADDRESSES",
+      "description": "Set to 'true' to let allowed names resolve to private, loopback or link-local addresses (an intranet site). Off by default: such answers are refused, and cloud metadata addresses always are. An IP address you list exactly is always reachable.",
+      "default": "false"
     }
   ],
-  "env": ["PLAYWRIGHT_BROWSERS_PATH"]
+  "env": ["PLAYWRIGHT_BROWSERS_PATH"],
+  "sandbox": {
+    "workspace": "none",
+    "network": true,
+    "nestedSandbox": true,
+    "paths": [
+      {
+        "name": "BROWSER_EXECUTABLE",
+        "access": "read",
+        "parent": true
+      },
+      {
+        "name": "PLAYWRIGHT_BROWSERS_PATH",
+        "access": "read",
+        "default": ["~/.cache/ms-playwright", "~/Library/Caches/ms-playwright"]
+      }
+    ]
+  }
 }

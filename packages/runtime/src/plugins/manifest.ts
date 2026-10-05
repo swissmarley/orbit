@@ -100,6 +100,8 @@ export interface PluginEnvInput {
   git?: { repo: string; branch: string } | undefined;
   /** Paths the plugin must refuse on the Bot's behalf (credential stores, Orbit's data). */
   deniedPaths?: readonly string[];
+  /** macOS sandbox (ADR-019): the private HOME and temporary folder the profile allows. */
+  sandboxPaths?: { home: string; tmp: string } | undefined;
 }
 
 /**
@@ -132,6 +134,11 @@ export function buildPluginEnv(input: PluginEnvInput): Record<string, string> {
     extra.ORBIT_GIT_BRANCH = input.git.branch;
   }
   if (input.deniedPaths?.length) extra.ORBIT_DENIED_PATHS = JSON.stringify(input.deniedPaths);
+  if (input.sandboxPaths) {
+    // The owner's real home is not readable there: a private one instead.
+    extra.HOME = input.sandboxPaths.home;
+    for (const name of ['TMPDIR', 'TMP', 'TEMP']) extra[name] = input.sandboxPaths.tmp;
+  }
   return buildChildEnv('tool', input.source, extra);
 }
 

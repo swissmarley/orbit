@@ -1,7 +1,14 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { DriverKind, OrbitConfig, type OrbitConfigInput, OrbitError, OrbitMode } from '@orbit/core';
+import {
+  DriverKind,
+  OrbitConfig,
+  type OrbitConfigInput,
+  OrbitError,
+  OrbitMode,
+  PluginSandboxMode,
+} from '@orbit/core';
 import type { Env } from './env';
 
 export function defaultHome(env: Env): string {
@@ -99,6 +106,26 @@ export function loadConfig(
       );
     }
     merged.mode = parsed.data;
+  }
+  const pluginSandbox = env.ORBIT_PLUGIN_SANDBOX?.trim();
+  if (pluginSandbox) {
+    const parsed = PluginSandboxMode.safeParse(pluginSandbox);
+    if (!parsed.success) {
+      throw new OrbitError(
+        'invalid_config',
+        `ORBIT_PLUGIN_SANDBOX must be auto, required or off (got "${pluginSandbox}")`,
+      );
+    }
+    merged.plugins = { ...merged.plugins, sandbox: parsed.data };
+  }
+  if (env.ORBIT_PLUGIN_CATALOG_URL?.trim()) {
+    merged.plugins = { ...merged.plugins, catalogUrl: env.ORBIT_PLUGIN_CATALOG_URL.trim() };
+  }
+  if (env.ORBIT_NPM_REGISTRY?.trim()) {
+    merged.plugins = { ...merged.plugins, npmRegistry: env.ORBIT_NPM_REGISTRY.trim() };
+  }
+  if (env.ORBIT_PLUGIN_STORE?.trim()) {
+    merged.plugins = { ...merged.plugins, storeDir: resolve(env.ORBIT_PLUGIN_STORE.trim()) };
   }
   if (env.ORBIT_CLAUDE_PATH) merged.claudePath = env.ORBIT_CLAUDE_PATH;
   const triageCalls = intFromEnv(env, 'ORBIT_TRIAGE_MAX_CALLS_PER_DAY');

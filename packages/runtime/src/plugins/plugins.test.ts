@@ -10,6 +10,18 @@ import { PluginSegments } from './host';
 import { buildPluginEnv, loadManifest } from './manifest';
 import { PluginRegistry } from './registry';
 
+/** These tests cover the registry itself; sandbox.test.ts runs plugins in the OS sandbox. */
+const SANDBOX_OFF = {
+  mode: 'off' as const,
+  support: () => ({
+    available: false,
+    engine: null,
+    path: null,
+    reason: 'off in these tests',
+    platform: process.platform,
+  }),
+};
+
 const matching = (re: RegExp) => expect.stringMatching(re) as unknown as string;
 
 /** A tiny MCP server: `get_env_names` reports its environment's names, `echo` echoes. */
@@ -105,6 +117,7 @@ beforeEach(async () => {
     home: join(root, 'home'),
     builtInDir: null,
     bots: () => bots,
+    sandbox: SANDBOX_OFF,
   });
 });
 afterEach(() => {
@@ -120,6 +133,7 @@ describe('PluginRegistry', () => {
       env: ENV,
       home: join(root, 'home'),
       bots: () => [],
+      sandbox: SANDBOX_OFF,
     });
     const list = builtIn.list();
     expect(list.map((p) => p.id)).toContain('filesystem');

@@ -11,7 +11,11 @@
     "args": ["--import", "${tsx}", "${pluginDir}/src/server.ts"]
   },
   "tools": [
-    { "name": "list_issues", "tier": "READ", "description": "List a repository's issues" },
+    {
+      "name": "list_issues",
+      "tier": "READ",
+      "description": "List a repository's issues"
+    },
     {
       "name": "get_issue",
       "tier": "READ",
@@ -32,19 +36,31 @@
       "tier": "EXTERNAL",
       "description": "Comment on an issue or pull request (asks you)"
     },
-    { "name": "create_issue", "tier": "EXTERNAL", "description": "Open a new issue (asks you)" },
+    {
+      "name": "create_issue",
+      "tier": "EXTERNAL",
+      "description": "Open a new issue (asks you)"
+    },
     {
       "name": "create_pull_request",
       "tier": "EXTERNAL",
       "description": "Open a pull request, by default from the Bot's branch (asks you)"
     },
-    { "name": "git_status", "tier": "READ", "description": "Show the workspace's git status" },
+    {
+      "name": "git_status",
+      "tier": "READ",
+      "description": "Show the workspace's git status"
+    },
     {
       "name": "git_diff",
       "tier": "READ",
       "description": "Show the workspace's uncommitted changes"
     },
-    { "name": "git_log", "tier": "READ", "description": "Show the latest commits" },
+    {
+      "name": "git_log",
+      "tier": "READ",
+      "description": "Show the latest commits"
+    },
     {
       "name": "git_commit",
       "tier": "WRITE_LOCAL",
@@ -79,5 +95,9 @@
       "default": "orbit-bot@localhost"
     }
   ],
-  "env": ["GITHUB_API_URL"]
+  "env": ["GITHUB_API_URL"],
+  "sandbox": {
+    "workspace": "write",
+    "network": true
+  }
 }
