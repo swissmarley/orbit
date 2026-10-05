@@ -102,7 +102,63 @@ describe('ruleMatches', () => {
       'inputMatch: non-string field does not match even with "*"',
       { toolPattern: 'mcp__x__y', inputMatch: { to: '*' } },
       'mcp__x__y',
-      { to: ['ada@mycompany.com'] },
+      { to: 42 },
+      false,
+    ],
+    [
+      'inputMatch (L11): a list in one string cannot hide an outside recipient',
+      { toolPattern: 'mcp__gmail__send_email', inputMatch: { to: '*@mycompany.com' } },
+      'mcp__gmail__send_email',
+      { to: 'x@evil.com, ada@mycompany.com' },
+      false,
+    ],
+    [
+      'inputMatch (L11): semicolons, spaces and angle brackets end a value',
+      { toolPattern: 'mcp__gmail__send_email', inputMatch: { to: '*@mycompany.com' } },
+      'mcp__gmail__send_email',
+      { to: 'Eve <x@evil.com>;ada@mycompany.com' },
+      false,
+    ],
+    [
+      'inputMatch (L11): every entry of a list must match',
+      { toolPattern: 'mcp__gmail__send_email', inputMatch: { to: '*@mycompany.com' } },
+      'mcp__gmail__send_email',
+      { to: ['ada@mycompany.com', 'x@evil.com'] },
+      false,
+    ],
+    [
+      'inputMatch (L11): a list whose entries all match',
+      { toolPattern: 'mcp__gmail__send_email', inputMatch: { to: '*@mycompany.com' } },
+      'mcp__gmail__send_email',
+      { to: ['ada@mycompany.com', 'bob@mycompany.com'] },
+      true,
+    ],
+    [
+      'inputMatch (L11): an empty list matches nothing',
+      { toolPattern: 'mcp__gmail__send_email', inputMatch: { to: '*@mycompany.com' } },
+      'mcp__gmail__send_email',
+      { to: [] },
+      false,
+    ],
+    [
+      'inputMatch (L11): .. segments never match a path glob',
+      { toolPattern: 'mcp__filesystem__write_file', inputMatch: { path: '/home/me/notes/*' } },
+      'mcp__filesystem__write_file',
+      { path: '/home/me/notes/../.ssh/authorized_keys' },
+      false,
+    ],
+    [
+      'inputMatch (L11): a path below the folder matches',
+      { toolPattern: 'mcp__filesystem__write_file', inputMatch: { path: '/home/me/notes/*' } },
+      'mcp__filesystem__write_file',
+      { path: '/home/me/notes/2026/todo.md' },
+      true,
+    ],
+    [
+      'inputMatch (L11): a newline ends a value',
+      { toolPattern: 'mcp__gmail__send_email', inputMatch: { to: '*@mycompany.com' } },
+      'mcp__gmail__send_email',
+      { to: 'x@evil.com\nada@mycompany.com' },
       false,
     ],
     [
@@ -122,7 +178,7 @@ describe('ruleMatches', () => {
         inputMatch: { channel: '#team-*', text: 'deploy*' },
       },
       'mcp__slack__post_message',
-      { channel: '#team-eng', text: 'deploy done' },
+      { channel: '#team-eng', text: 'deploy-v2' },
       true,
     ],
     [
@@ -173,6 +229,22 @@ describe('RuleStore', () => {
     });
     // What was persisted reads back identically.
     expect(store.list({ includeInactive: true })).toEqual([created]);
+  });
+
+  it('validates inputMatch (review L11)', () => {
+    const make = (inputMatch: Record<string, string>) =>
+      store.create({
+        botId: null,
+        toolPattern: 'mcp__gmail__send_email',
+        inputMatch,
+        effect: 'allow',
+        createdBy: 'u',
+      });
+    expect(() => make({})).toThrow(/1 to 10 fields/);
+    expect(() => make({ to: '*' })).toThrow(/literal text/);
+    expect(() => make({ 'to.address': '*@x.com' })).toThrow(/top-level argument/);
+    expect(() => make({ to: '' })).toThrow(/1 to 500/);
+    expect(make({ to: '*@x.com' }).inputMatch).toEqual({ to: '*@x.com' });
   });
 
   it('defaults optional fields to null', () => {

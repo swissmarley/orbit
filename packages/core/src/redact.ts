@@ -45,7 +45,14 @@ const PATTERNS: Pattern[] = [
 const SENSITIVE_KEY =
   /^(?:api[_-]?key|secret|client[_-]?secret|password|passwd|token|access[_-]?token|auth[_-]?token|refresh[_-]?token|authorization|cookie|private[_-]?key)$/i;
 
+/** Secrets this long are redacted wherever they appear. */
 const MIN_SECRET_LENGTH = 6;
+/**
+ * Shorter secrets (a PIN, a 4-character password) are redacted where they
+ * stand as a token of their own (M2 review L10): matching them inside words
+ * would mangle ordinary text. The vault refuses anything shorter.
+ */
+export const MIN_SHORT_SECRET_LENGTH = 4;
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -57,6 +64,7 @@ export function redactionMarker(kind: string): string {
 
 export class Redactor {
   private readonly secrets = new Set<string>();
+  private readonly shortSecrets = new Set<string>();
 
   constructor(secrets: Iterable<string> = []) {
     for (const s of secrets) this.addSecret(s);
@@ -64,7 +72,11 @@ export class Redactor {
 
   /** Register an exact secret value (vault entry, per-run token, API key). */
   addSecret(value: string | undefined | null): void {
-    if (value && value.length >= MIN_SECRET_LENGTH) this.secrets.add(value);
+    if (!value) return;
+    if (value.length >= MIN_SECRET_LENGTH) this.secrets.add(value);
+    else if (value.length >= MIN_SHORT_SECRET_LENGTH && value.trim() === value) {
+      this.shortSecrets.add(value);
+    }
   }
 
   redactString(input: string): string {
@@ -72,6 +84,12 @@ export class Redactor {
     // Exact secrets first, longest first so overlapping values redact fully.
     for (const secret of [...this.secrets].sort((a, b) => b.length - a.length)) {
       out = out.replace(new RegExp(escapeRegExp(secret), 'g'), redactionMarker('secret'));
+    }
+    for (const secret of [...this.shortSecrets].sort((a, b) => b.length - a.length)) {
+      out = out.replace(
+        new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRegExp(secret)}(?![\\p{L}\\p{N}_])`, 'gu'),
+        redactionMarker('secret'),
+      );
     }
     for (const p of PATTERNS) {
       out = out.replace(p.re, (...args: unknown[]) => {

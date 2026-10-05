@@ -78,6 +78,18 @@ describe('Redactor', () => {
     expect(rr.redactString('abc abc')).toBe('abc abc');
   });
 
+  it('redacts 4–5 character secrets where they stand alone (review L10)', () => {
+    const rr = new Redactor(['4821', 'hunt2']);
+    expect(rr.redactString('PIN: 4821. code=hunt2, again "4821"')).toBe(
+      'PIN: [REDACTED:secret]. code=[REDACTED:secret], again "[REDACTED:secret]"',
+    );
+    // Inside a longer token it is ordinary text, not the secret.
+    expect(rr.redactString('order 948213 and hunt22 and 4821x')).toBe(
+      'order 948213 and hunt22 and 4821x',
+    );
+    expect(rr.redact({ note: 'pin 4821' })).toEqual({ note: 'pin [REDACTED:secret]' });
+  });
+
   it('deep-redacts objects, arrays and sensitive keys without mutating input', () => {
     const input = {
       tool: 'Bash',

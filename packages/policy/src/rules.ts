@@ -55,13 +55,65 @@ export function isNarrowAllowPattern(pattern: string): boolean {
   return /^mcp__[A-Za-z0-9-]+(?:_[A-Za-z0-9-]+)*__[A-Za-z0-9][A-Za-z0-9_]*\*?$/.test(pattern);
 }
 
+/**
+ * An `inputMatch` glob (M2 review L11): `*` stands for one value — any run of
+ * characters except whitespace, controls, list separators (`,` `;`), angle
+ * brackets and quotes — so `*@mycompany.com` cannot match
+ * `"x@evil.com, me@mycompany.com"`; `?` is one such character. Anchored at
+ * both ends and case-sensitive (a domain in other case simply asks).
+ */
+export function inputGlobToRegExp(glob: string): RegExp {
+  const one = '[^\\s\\x00-\\x1f\\x7f,;<>"\'`]';
+  let re = '';
+  for (const ch of glob) {
+    if (ch === '*') re += `${one}*`;
+    else if (ch === '?') re += one;
+    else re += ch.replace(/[.+^${}()|[\]\\/-]/g, '\\$&');
+  }
+  return new RegExp(`^${re}$`);
+}
+
+/** `..` path segments never match: `/notes/*` must not reach `/notes/../../etc`. */
+const TRAVERSAL = /(^|[\\/])\.\.([\\/]|$)/;
+
+function valueMatches(glob: string, value: unknown): boolean {
+  const one = (v: unknown) =>
+    typeof v === 'string' && !TRAVERSAL.test(v) && inputGlobToRegExp(glob).test(v);
+  // A list (several recipients) matches only when every entry does.
+  if (Array.isArray(value)) return value.length > 0 && value.every(one);
+  return one(value);
+}
+
 export function ruleMatches(rule: Rule, toolName: string, input: Record<string, unknown>): boolean {
   if (!globToRegExp(rule.toolPattern).test(toolName)) return false;
   if (!rule.inputMatch) return true;
-  return Object.entries(rule.inputMatch).every(([key, glob]) => {
-    const v = input[key];
-    return typeof v === 'string' && globToRegExp(glob).test(v);
-  });
+  return Object.entries(rule.inputMatch).every(([key, glob]) => valueMatches(glob, input[key]));
+}
+
+/** Validate an `inputMatch` from a client: top-level keys, non-empty globs. */
+export function checkInputMatch(match: Record<string, string>): void {
+  const entries = Object.entries(match);
+  if (entries.length === 0 || entries.length > 10) {
+    throw new OrbitError('invalid_input', 'inputMatch needs 1 to 10 fields');
+  }
+  for (const [k, v] of entries) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(k)) {
+      throw new OrbitError(
+        'invalid_input',
+        `inputMatch field "${k}" is not a top-level argument name`,
+      );
+    }
+    if (v.length === 0 || v.length > 500) {
+      throw new OrbitError('invalid_input', `inputMatch for "${k}" must be 1 to 500 characters`);
+    }
+    // A bare "*" only says the field exists: it narrows nothing for an allow rule.
+    if (/^[*?]*$/.test(v)) {
+      throw new OrbitError(
+        'invalid_input',
+        `inputMatch for "${k}" must contain literal text (for example *@example.com)`,
+      );
+    }
+  }
 }
 
 /**
@@ -94,6 +146,7 @@ export class RuleStore {
         `Allow rules must name one tool, or one server's tools by prefix (mcp__<server>__<prefix>*); "${input.toolPattern}" is too broad`,
       );
     }
+    if (input.inputMatch) checkInputMatch(input.inputMatch);
     const row = {
       id: newId('rul'),
       botId: input.botId,

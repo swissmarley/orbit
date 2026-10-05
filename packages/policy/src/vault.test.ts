@@ -86,22 +86,25 @@ describe('SecretVault basics', () => {
     expect(v.has('GITHUB_TOKEN')).toBe(true);
     expect(v.has('NOPE')).toBe(false);
     expect(v.get('NOPE')).toBeUndefined();
-    v.set('EMPTY', '');
-    expect(v.get('EMPTY')).toBe('');
+    // Too short to redact (review L10): refused instead of stored.
+    expect(() => v.set('EMPTY', '')).toThrow(/at least 4 characters/);
+    expect(() => v.set('PIN', '123')).toThrow(/at least 4 characters/);
+    v.set('PIN', '1234');
+    expect(v.get('PIN')).toBe('1234');
     v.set('UNICODE', 'pässwörd ✓ 🔑');
     expect(v.get('UNICODE')).toBe('pässwörd ✓ 🔑');
   });
 
   it('updates in place, keeping createdAt', async () => {
     const v = await openFileVault();
-    v.set('A', 'one');
-    const m = v.set('A', 'two');
+    v.set('A', 'one-1');
+    const m = v.set('A', 'two-2');
     expect(m).toEqual({
       name: 'A',
       createdAt: '2026-10-04T12:00:00.000Z',
       updatedAt: '2026-10-04T12:00:01.000Z',
     });
-    expect(v.get('A')).toBe('two');
+    expect(v.get('A')).toBe('two-2');
     expect(v.list()).toHaveLength(1);
   });
 
@@ -120,8 +123,8 @@ describe('SecretVault basics', () => {
 
   it('removes secrets', async () => {
     const v = await openFileVault();
-    v.set('A', 'one');
-    v.set('B', 'two');
+    v.set('A', 'one-1');
+    v.set('B', 'two-2');
     expect(v.remove('A')).toBe(true);
     expect(v.remove('A')).toBe(false);
     expect(v.remove('NEVER')).toBe(false);

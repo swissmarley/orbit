@@ -1,6 +1,12 @@
 import type { Tier } from '@orbit/core';
 import { describe, expect, it } from 'vitest';
-import { type Classification, type ToolTierOverride, classifyTool, globToRegExp } from './tiers';
+import {
+  type Classification,
+  type ToolTierOverride,
+  classifyTool,
+  effectivePluginTier,
+  globToRegExp,
+} from './tiers';
 
 const contained = { shellContained: true } as const;
 const open = { shellContained: false } as const;
@@ -304,5 +310,34 @@ describe('classifyTool: compound and ambiguous names resolve to the riskier tier
     ['mcp__billing__prepare_payment', 'WRITE_LOCAL'],
   ])('%s → %s', (name, tier) => {
     expect(classifyTool(name, { shellContained: false })?.tier).toBe(tier);
+  });
+});
+
+describe('plugin tier floors (ADR-014)', () => {
+  it.each<[string, Tier, Tier, boolean]>([
+    // A manifest may remove false positives…
+    ['mcp__github__git_status', 'READ', 'READ', false],
+    ['mcp__github__git_commit', 'WRITE_LOCAL', 'WRITE_LOCAL', false],
+    ['mcp__gmail__create_draft', 'WRITE_LOCAL', 'WRITE_LOCAL', false],
+    ['mcp__filesystem__write_file', 'EXTERNAL', 'EXTERNAL', false],
+    // …but never lower a sending or money-moving name.
+    ['mcp__gmail__send_draft', 'WRITE_LOCAL', 'EXTERNAL', true],
+    ['mcp__slack__post_message', 'READ', 'EXTERNAL', true],
+    ['mcp__github__merge_pull_request', 'WRITE_LOCAL', 'EXTERNAL', true],
+    ['mcp__shop__get_and_pay_invoice', 'READ', 'FINANCIAL', true],
+    ['mcp__bank__create_payment', 'EXTERNAL', 'FINANCIAL', true],
+    ['mcp__x__send_payment', 'EXTERNAL', 'FINANCIAL', true],
+    // Raising is always allowed.
+    ['mcp__github__list_issues', 'EXTERNAL', 'EXTERNAL', false],
+  ])('%s declared %s → %s', (name, declared, tier, raised) => {
+    expect(effectivePluginTier(name, declared)).toEqual({ tier, raised });
+  });
+
+  it('an egress override is carried into the classification', () => {
+    const cls = classifyTool('mcp__browser__open_page', {
+      shellContained: false,
+      overrides: [{ pattern: 'mcp__browser__open_page', tier: 'READ', egress: true }],
+    });
+    expect(cls).toMatchObject({ tier: 'READ', egress: true, basis: 'override' });
   });
 });

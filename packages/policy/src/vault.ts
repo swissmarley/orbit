@@ -3,7 +3,7 @@ import { closeSync, mkdirSync, openSync, readFileSync, statSync, writeSync } fro
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import type { Entry as KeyringEntry } from '@napi-rs/keyring';
-import { OrbitError } from '@orbit/core';
+import { MIN_SHORT_SECRET_LENGTH, OrbitError } from '@orbit/core';
 import { type OrbitDb, schema } from '@orbit/store';
 import { asc, eq } from 'drizzle-orm';
 
@@ -222,6 +222,16 @@ export class SecretVault {
   /** Create or replace a secret. */
   set(name: string, value: string): SecretMeta {
     assertName(name);
+    // Anything shorter could not be redacted without mangling ordinary text (review L10).
+    if (value.length < MIN_SHORT_SECRET_LENGTH) {
+      throw new OrbitError(
+        'invalid_input',
+        `A secret must be at least ${MIN_SHORT_SECRET_LENGTH} characters`,
+        {
+          hint: 'Orbit hides secret values in everything it shows; shorter values cannot be told apart from ordinary text.',
+        },
+      );
+    }
     const iv = randomBytes(IV_BYTES);
     const cipher = createCipheriv(ALGORITHM, this.key, iv);
     cipher.setAAD(Buffer.from(name, 'utf8'));

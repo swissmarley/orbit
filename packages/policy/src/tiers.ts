@@ -174,6 +174,8 @@ export interface ToolTierOverride {
   tier: Tier;
   /** Output of the tool is untrusted content (email bodies, web pages…). Default true for MCP. */
   untrusted?: boolean;
+  /** Sends Bot-chosen data to arbitrary hosts (like WebFetch): asks in a tainted Run. */
+  egress?: boolean;
 }
 
 export interface Classification {
@@ -182,6 +184,8 @@ export interface Classification {
   untrustedSource: string | null;
   /** How the tier was determined (shown on approval cards). */
   basis: 'builtin' | 'shell' | 'override' | 'heuristic' | 'default';
+  /** Bot-chosen arguments can reach arbitrary hosts (WebFetch, plugin egress tools). */
+  egress?: boolean;
 }
 
 export function globToRegExp(glob: string): RegExp {
@@ -212,7 +216,12 @@ export function classifyTool(
   for (const o of opts.overrides ?? []) {
     if (globToRegExp(o.pattern).test(name)) {
       const untrusted = o.untrusted ?? name.startsWith('mcp__');
-      return { tier: o.tier, untrustedSource: untrusted ? name : null, basis: 'override' };
+      return {
+        tier: o.tier,
+        untrustedSource: untrusted ? name : null,
+        basis: 'override',
+        ...(o.egress ? { egress: true } : {}),
+      };
     }
   }
   const builtin = BUILTIN[name];
@@ -266,4 +275,42 @@ export function classifyTool(
     tier: 'EXTERNAL',
     basis: mutatingWords.length || compound ? 'heuristic' : 'default',
   };
+}
+
+const TIER_RANK: Readonly<Record<Tier, number>> = {
+  READ: 0,
+  WRITE_LOCAL: 1,
+  EXTERNAL: 2,
+  FINANCIAL: 3,
+};
+
+/** The riskier of two tiers. */
+export function maxTier(a: Tier, b: Tier): Tier {
+  return TIER_RANK[a] >= TIER_RANK[b] ? a : b;
+}
+
+/**
+ * The lowest tier a declared (plugin) tier may give a tool, from its name
+ * alone (ADR-014): a money-moving name stays FINANCIAL and a sending name
+ * (`send_*`, `post_message`, `publish`, `merge`, …) stays at least EXTERNAL.
+ * Everything else may be declared lower than the heuristics say (a read that
+ * looks like a write), which is what manifests are for (ADR-009).
+ */
+export function tierFloor(toolName: string): Tier {
+  const m = /^mcp__[^_]+(?:_[^_]+)*?__(.+)$/.exec(toolName);
+  const toolWords = words(m?.[1] ?? toolName);
+  const has = (verbs: readonly string[]) => toolWords.some((w) => verbs.includes(w));
+  if (has(FINANCIAL_VERBS)) return 'FINANCIAL';
+  const sends = has(SEND_VERBS) || LEADING_SEND_VERBS.includes(toolWords[0] ?? '');
+  if (has(FINANCIAL_NOUNS) && (sends || has(COMMIT_VERBS))) return 'FINANCIAL';
+  return sends ? 'EXTERNAL' : 'READ';
+}
+
+/** A plugin's declared tier, raised to the floor its name sets. */
+export function effectivePluginTier(
+  toolName: string,
+  declared: Tier,
+): { tier: Tier; raised: boolean } {
+  const tier = maxTier(declared, tierFloor(toolName));
+  return { tier, raised: tier !== declared };
 }
