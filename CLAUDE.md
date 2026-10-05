@@ -20,6 +20,8 @@ ORBIT_DRIVER=mock pnpm orbit bot create --name Demo --goal 'Summarize notes' && 
 pnpm orbit approvals | approve <id> [--edit json] [--always] | deny <id> --reason …
 pnpm orbit stop <run> | bot pause <bot> | kill [--off] | audit verify | secret set NAME < file
 pnpm orbit daemon start|stop|status|restart | queue | schedules | bot create … --cron '0 9 * * 1-5'
+pnpm orbit              # in a terminal: the full-screen TUI (also `orbit tui`; ? shows the keys)
+pnpm orbit tail <run> | bot run|logs <bot> | completion bash|zsh|fish
 pnpm orbitd             # the daemon in the foreground (log otherwise: $ORBIT_HOME/logs/orbitd.log)
 pnpm --filter @orbit/api openapi   # regenerate packages/api/openapi.json after contract changes
 ```
@@ -42,8 +44,10 @@ pnpm --filter @orbit/api openapi   # regenerate packages/api/openapi.json after 
 - `packages/sdk-client` typed client (validated responses), SSE reconnect with
   Last-Event-ID, local discovery (`$ORBIT_HOME/daemon.json` + `daemon.token`)
 - `apps/orbitd` daemon composition root (single writer, loopback only, token
-  auth); `apps/orbit-tui` `orbit` bin (thin client); `apps/orbit-app` (M5);
-  `plugins/*` (M7)
+  auth); `apps/orbit-tui` `orbit` bin (thin client): commands in
+  `src/commands`, the Ink TUI in `src/tui` (`model.ts` pure key handling,
+  `feed.ts` data over the client, `views.tsx`, `app.tsx`); `apps/orbit-app`
+  (M5); `plugins/*` (M7)
 - `tools/guards` repo-wide security invariant tests
 
 Dependency direction: `core` ← `store` ← `policy`, `memory`, `sandbox` ← `runtime` ←
@@ -61,6 +65,14 @@ Dependency direction: `core` ← `store` ← `policy`, `memory`, `sandbox` ← `
   contract table first, then its handler, then `openapi.json`.
 - State transitions that can race (start, resume, stop) append with
   compare-and-set (`EventStore.append(…, { expectSeq })`).
+- TUI: bindings live in `model.ts` (`onKey`, `HELP`) and are unit-tested
+  there; views only render. 16 basic colors only, never colour alone (a
+  symbol or word too). Every `.tsx` file starts with
+  `/** @jsxRuntime automatic @jsxImportSource react */` (tsx run from the repo
+  root ignores the package tsconfig; a test enforces it).
+- Every CLI command that prints data takes `--json` (a test walks the
+  command tree); model-written text shown in a terminal goes through
+  `clean()`.
 - Conventional Commits (`feat(runtime): …`, `test(policy): …`, `docs: …`).
 - No TODO stubs in shipped code paths; record deferrals in `docs/PLAN.md` §7.
 - Deviations from the brief get an ADR in `docs/decisions/`.
@@ -97,6 +109,9 @@ Dependency direction: `core` ← `store` ← `policy`, `memory`, `sandbox` ← `
 - API tests use `@orbit/api/testing` (in-memory service, injectable clock);
   CLI tests start orbitd in-process through `Io.startDaemon`. Real-process
   tests set `ORBIT_PORT=0` (a developer's own orbitd may hold 7420).
+- TUI tests render into memory with `apps/orbit-tui/test/render.ts`
+  (configurable size, `press`, `waitFor`) over `test/tui-fixtures.ts`
+  (fake client); update snapshots with `npx vitest run -u --project @orbit/tui`.
 - Tests first for policy, budgets, replay, AuthResolver, driver contract.
 - New guards get a positive-control test that proves they fire.
 

@@ -3,19 +3,14 @@ import type { Approval } from '@orbit/sdk-client';
 import { OrbitError } from '@orbit/core';
 import type { Context } from '../context';
 import { painter } from '../io';
-import { formatRelative, renderDiff } from '../render';
+import { formatRelative, renderDiff, scrubControls } from '../render';
 import { follow } from './run';
 
 type Paint = ReturnType<typeof painter>;
 
-/** Model-derived text may contain control characters that spoof terminal lines. */
+/** Model-derived text on one line: controls neutralised, newlines shown as ⏎. */
 export function clean(text: string): string {
-  return (
-    text
-      // eslint-disable-next-line no-control-regex
-      .replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, '\ufffd')
-      .replace(/\n/g, ' \u23ce ')
-  );
+  return scrubControls(text.replace(/\t/g, ' ')).replace(/\n/g, ' \u23ce ');
 }
 
 function card(a: Approval, p: Paint): string[] {

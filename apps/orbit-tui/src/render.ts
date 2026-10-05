@@ -4,6 +4,32 @@ import { type painter } from './io';
 
 type Paint = ReturnType<typeof painter>;
 
+// C0/C1 controls (but newline and tab), DEL, and bidi overrides/isolates.
+// eslint-disable-next-line no-control-regex
+const CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
+
+/**
+ * Neutralise terminal escapes in text a model, tool or web page wrote: an
+ * ESC sequence could move the cursor, recolour or fake a line ("✔ approved").
+ */
+export function scrubControls(text: string): string {
+  return text.replace(CONTROLS, '\ufffd');
+}
+
+function scrubDeep<T>(value: T): T {
+  if (typeof value === 'string') return scrubControls(value) as T;
+  if (Array.isArray(value)) return value.map(scrubDeep) as T;
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, scrubDeep(v)])) as T;
+  }
+  return value;
+}
+
+/** Every string of an event scrubbed: what the renderers below may print. */
+export function safeEvent(e: RunEvent): RunEvent {
+  return { ...e, data: scrubDeep(e.data) } as RunEvent;
+}
+
 function oneLine(text: string, max = 100): string {
   const flat = text.replace(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
@@ -59,6 +85,7 @@ export function renderDiff(diff: string, paint: Paint): string[] {
       (l) =>
         !l.startsWith('===') && !l.startsWith('Index:') && l !== '\\ No newline at end of file',
     )
+    .map(scrubControls)
     .map((l) => {
       if (l.startsWith('+++') || l.startsWith('---')) return paint('dim', l);
       if (l.startsWith('+')) return paint('green', l);
@@ -69,7 +96,8 @@ export function renderDiff(diff: string, paint: Paint): string[] {
 }
 
 /** Human-readable rendering of one event; null = not shown. */
-export function renderEvent(e: RunEvent, paint: Paint, cwd: string | null): string | null {
+export function renderEvent(raw: RunEvent, paint: Paint, cwd: string | null): string | null {
+  const e = safeEvent(raw);
   const indent =
     (e.type === 'tool.call' || e.type === 'message.assistant') &&
     'parentToolUseId' in e.data &&

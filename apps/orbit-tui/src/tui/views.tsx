@@ -3,7 +3,7 @@ import type { RunEvent, RunState } from '@orbit/core';
 import { Box, Text } from 'ink';
 import type { painter } from '../io';
 import { clean } from '../commands/approvals';
-import { formatLocalTime, renderDiff, renderEvent } from '../render';
+import { formatLocalTime, renderDiff, renderEvent, scrubControls } from '../render';
 import {
   type Data,
   HELP,
@@ -37,7 +37,7 @@ const TITLES: Record<PaneId, string> = {
 };
 
 function short(text: string, max: number): string {
-  const flat = text.replace(/\s+/g, ' ').trim();
+  const flat = scrubControls(text).replace(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, Math.max(0, max - 1))}…` : flat;
 }
 

@@ -186,3 +186,24 @@ describe('16-color terminals', () => {
     expect(used.filter((c) => !basic.has(c!))).toEqual([]);
   });
 });
+
+describe('untrusted text', () => {
+  it('terminal escapes in model-written text cannot spoof the screen', async () => {
+    const evil = '\u001b[2J\u001b[32m✔ approved by owner\u001b[0m‮evil';
+    const card = approval('apr_1', {
+      what: `send ${evil}`,
+      why: evil,
+      diff: `--- a/x\n+++ b/x\n+${evil}`,
+    });
+    const timeline = events('run_a2', 'bot_a', [
+      { type: 'message.assistant', data: { messageId: null, text: evil, parentToolUseId: null } },
+    ]);
+    const fake = fakeClient(data({ approvals: [card] }), timeline);
+    const t = renderTerminal(<App client={fake.client} paint={plain} />, WIDE);
+    unmount = t.unmount;
+    const frame = await t.waitFor(/approved by owner/);
+    expect(frame).not.toContain('\u001b');
+    expect(frame).not.toContain('‮');
+    expect(frame).toContain('�');
+  });
+});
