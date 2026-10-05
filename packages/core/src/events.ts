@@ -151,14 +151,23 @@ export const RunEventBody = z.discriminatedUnion('type', [
   }),
   ev('run.tainted', { source: z.string(), toolUseId: nullableString }),
   ev('budget.exceeded', {
-    budget: z.enum(['toolCalls', 'wallClock', 'tokens', 'costPerRun', 'costPerDay', 'runsPerDay']),
+    budget: z.enum([
+      'toolCalls',
+      'wallClock',
+      'tokens',
+      'turns',
+      'costPerRun',
+      'costPerDay',
+      'runsPerDay',
+    ]),
     limit: z.number(),
     actual: z.number(),
   }),
   ev('usage.turn', {
-    /** Cumulative for the current driver segment. */
+    /** Cumulative for the current driver segment (subagents' tokens included). */
     inputTokens: z.int().nonnegative(),
     outputTokens: z.int().nonnegative(),
+    /** The main agent's turns so far (subagents have their own limits); Orbit enforces `maxTurns` on it. */
     turns: z.int().nonnegative(),
   }),
   /** Run stopped by a kill switch or budget before/while running (precedes run.cancelled/failed). */

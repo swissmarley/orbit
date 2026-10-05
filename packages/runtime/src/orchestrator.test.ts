@@ -287,6 +287,23 @@ describe('Orchestrator', () => {
       expect(run.budgetExceeded).toBe('tokens');
     });
 
+    it('stops an engine that ignores maxTurns (Orbit counts the turns itself)', async () => {
+      // The MockDriver never honours maxTurns: it plays the role of such an engine.
+      const run = await w.orchestrator().run(w.bot({ fixture: 'many-reads', maxTurns: 2 }));
+      expect(run.status).toBe('failed');
+      expect(run.budgetExceeded).toBe('turns');
+      const allowed = w.store
+        .listRunEvents(run.runId)
+        .filter((e) => e.type === 'permission.decision' && e.data.behavior === 'allow');
+      expect(allowed.length).toBeLessThanOrEqual(2);
+    });
+
+    it('a Run within maxTurns is not stopped by the turn budget', async () => {
+      const run = await w.orchestrator().run(w.bot({ fixture: 'many-reads', maxTurns: 50 }));
+      expect(run.status).toBe('completed');
+      expect(run.budgetExceeded).toBeNull();
+    });
+
     it('stops a Run that exceeds its wall-clock budget', async () => {
       const run = await w
         .orchestrator(new MockDriver({ delayMs: 200 }))

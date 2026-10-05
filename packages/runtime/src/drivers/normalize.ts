@@ -149,7 +149,7 @@ export class Normalizer {
           int(usage.cache_read_input_tokens) +
           int(usage.cache_creation_input_tokens),
         outputTokens: this.live.outputTokens + int(usage.output_tokens),
-        turns: this.live.turns + 1,
+        turns: this.live.turns + (parent ? 0 : 1),
       };
       out.push(event('usage.turn', { ...this.live }));
     }

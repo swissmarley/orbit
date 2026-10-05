@@ -271,7 +271,7 @@ type StopCause =
   | { kind: 'exposure'; toolName: string }
   | {
       kind: 'budget';
-      budget: 'toolCalls' | 'wallClock' | 'tokens' | 'costPerRun' | 'costPerDay';
+      budget: 'toolCalls' | 'wallClock' | 'tokens' | 'turns' | 'costPerRun' | 'costPerDay';
       limit: number;
       actual: number;
     };
@@ -787,12 +787,16 @@ export class Orchestrator {
     bot: Bot,
     state: RunState,
   ): {
-    budget: 'wallClock' | 'tokens' | 'costPerRun' | 'costPerDay';
+    budget: 'wallClock' | 'tokens' | 'turns' | 'costPerRun' | 'costPerDay';
     limit: number;
     actual: number;
   } | null {
     const b = effectiveBudgets(bot, state.budgetCap);
     const spent = spentSoFar(state);
+    const maxTurns = bot.spec.maxTurns ?? null;
+    if (maxTurns !== null && state.totals.turns >= maxTurns) {
+      return { budget: 'turns', limit: maxTurns, actual: state.totals.turns };
+    }
     if (state.totals.activeMs >= b.maxWallClockMinutes * 60_000) {
       return {
         budget: 'wallClock',
@@ -947,6 +951,10 @@ export class Orchestrator {
     // Budgets carry across delegation: a child Run gets at most what its parent had left.
     const budgets = effectiveBudgets(bot, prior.budgetCap);
     const spentBefore = spentSoFar(prior);
+    // Turns are a per-Run budget like the others: Orbit counts them itself, so
+    // an engine that ignores its own limit is stopped all the same (M8 corpus).
+    const maxTurns = bot.spec.maxTurns ?? null;
+    const turnsBefore = prior.totals.turns;
     // Grants decided before this segment are usable in it, and only in it.
     const segmentStart = this.now().toISOString();
 
@@ -1289,7 +1297,7 @@ export class Orchestrator {
         model,
         appendSystemPrompt: composeBotSystemPrompt(bot) + context.tools,
         tools: bot.spec.tools ?? null,
-        maxTurns: bot.spec.maxTurns ?? null,
+        maxTurns: maxTurns === null ? null : Math.max(1, maxTurns - turnsBefore),
         resumeSessionId: seg.resumeSessionId,
         sessionId: seg.resumeSessionId ? null : randomUUID(),
         permission,
@@ -1322,6 +1330,12 @@ export class Orchestrator {
               limit: budgets.maxCostUsdPerRun,
               actual: Number(total.toFixed(4)),
             });
+          }
+        }
+        if (body.type === 'usage.turn' && maxTurns !== null) {
+          const turns = turnsBefore + body.data.turns;
+          if (turns > maxTurns) {
+            abort({ kind: 'budget', budget: 'turns', limit: maxTurns, actual: turns });
           }
         }
         if (body.type === 'usage.turn' && budgets.maxTokensPerRun !== null) {
