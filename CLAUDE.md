@@ -24,12 +24,16 @@ pnpm orbit              # in a terminal: the full-screen TUI (also `orbit tui`; 
 pnpm orbit tail <run> | bot run|logs <bot> | completion bash|zsh|fish
 pnpm orbitd             # the daemon in the foreground (log otherwise: $ORBIT_HOME/logs/orbitd.log)
 pnpm --filter @orbit/api openapi   # regenerate packages/api/openapi.json after contract changes
+pnpm --filter @orbit/app build && pnpm orbit app   # the App, served by orbitd; one-time sign-in link (ADR-011)
+pnpm test:e2e           # build the App, Playwright against a real orbitd (mock driver) + axe, both themes
+pnpm --filter @orbit/app dev | storybook   # Vite dev server (needs ORBIT_ALLOWED_ORIGINS, see its README) / Storybook
 ```
 
 ## Layout
 
 - `packages/core` domain types, zod schemas, `RunEvent`, run projection, config,
-  permission types, redaction
+  permission types, redaction, the shared status/tier vocabulary and local
+  times (`vocabulary.ts`); `@orbit/core/browser` is the Node-free subset
 - `packages/store` SQLite (Drizzle): append-only events, run projections, bots
 - `packages/runtime` orchestrator, scheduler, triggers, drivers (Sdk/Cli/Mock),
   AuthResolver, rate limits
@@ -42,12 +46,17 @@ pnpm --filter @orbit/api openapi   # regenerate packages/api/openapi.json after 
   (`src/contract.ts`, also `@orbit/api/contract`), OpenAPI, and `OrbitService`
   (queue, scheduler, rate limits, approval expiry behind the API)
 - `packages/sdk-client` typed client (validated responses), SSE reconnect with
-  Last-Event-ID, local discovery (`$ORBIT_HOME/daemon.json` + `daemon.token`)
+  Last-Event-ID, local discovery (`$ORBIT_HOME/daemon.json` + `daemon.token`);
+  `@orbit/sdk-client/browser` is the client without discovery (no `node:fs`)
 - `apps/orbitd` daemon composition root (single writer, loopback only, token
   auth); `apps/orbit-tui` `orbit` bin (thin client): commands in
   `src/commands`, the Ink TUI in `src/tui` (`model.ts` pure key handling,
-  `feed.ts` data over the client, `views.tsx`, `app.tsx`); `apps/orbit-app`
-  (M5); `plugins/*` (M7)
+  `feed.ts` data over the client, `views.tsx`, `app.tsx`); `apps/orbit-app` the
+  web App (React 19, Vite, Tailwind v4, Radix/shadcn-style `components/ui`,
+  TanStack Router/Query): pure logic in `src/lib` (`inbox.ts` key model,
+  `timeline.ts`, `diff.ts`, `wizard.ts`, `actions.ts` writes with toasts/Undo,
+  `live.ts` SSE feed), `src/components`, `src/screens`, stories in
+  `src/stories`, Playwright in `e2e/`; `plugins/*` (M7)
 - `tools/guards` repo-wide security invariant tests
 
 Dependency direction: `core` ← `store` ← `policy`, `memory`, `sandbox` ← `runtime` ←
@@ -65,6 +74,14 @@ Dependency direction: `core` ← `store` ← `policy`, `memory`, `sandbox` ← `
   contract table first, then its handler, then `openapi.json`.
 - State transitions that can race (start, resume, stop) append with
   compare-and-set (`EventStore.append(…, { expectSeq })`).
+- Statuses, tiers and times shown to people come from `@orbit/core`
+  (`RUN_STATUS`, `TIER_WORD`, `formatWhen`, …): one vocabulary for TUI, CLI and
+  App, always a symbol or word with the colour, always local time.
+- App: imports only `@orbit/core/browser` and `@orbit/sdk-client/browser`
+  (guarded); never holds the bearer token (HttpOnly session cookie + CSRF
+  header, ADR-011); approvals are decided only from the full card; key
+  bindings live in pure, unit-tested models (`src/lib/inbox.ts`); model text
+  goes through `scrubControls` and is rendered as text, never as HTML.
 - TUI: bindings live in `model.ts` (`onKey`, `HELP`) and are unit-tested
   there; views only render. 16 basic colors only, never colour alone (a
   symbol or word too). Every `.tsx` file starts with
@@ -86,7 +103,10 @@ Dependency direction: `core` ← `store` ← `policy`, `memory`, `sandbox` ← `
   `ANTHROPIC_AUTH_TOKEN`; the API key never reaches unrelated children.
 - CliDriver is local single-user only (loopback bind, one principal, not
   `ORBIT_MODE=hosted`). orbitd itself binds loopback only and refuses hosted
-  mode until TLS + OIDC (M8); its API needs the 0600 bearer token.
+  mode until TLS + OIDC (M8); its API needs the 0600 bearer token, or (the
+  App) a session cookie from a one-time ticket plus `X-Orbit-CSRF: 1`. Browser
+  origins: orbitd's own plus `api.allowedOrigins`, which accepts loopback and
+  Tauri origins only (ADR-011).
 - No hardcoded model IDs: use `ORBIT_DEFAULT_MODEL` / `ORBIT_TRIAGE_MODEL` or
   aliases (`opus`, `sonnet`, `haiku`).
 - Default-deny tool policy; EXTERNAL actions need approval; FINANCIAL is
@@ -109,6 +129,10 @@ Dependency direction: `core` ← `store` ← `policy`, `memory`, `sandbox` ← `
 - API tests use `@orbit/api/testing` (in-memory service, injectable clock);
   CLI tests start orbitd in-process through `Io.startDaemon`. Real-process
   tests set `ORBIT_PORT=0` (a developer's own orbitd may hold 7420).
+- App tests (`npx vitest run --project @orbit/app`, jsdom) mount the real App
+  over the real API service in-process (`src/test/harness.tsx`); every story
+  renders with axe; e2e (`pnpm test:e2e`) starts orbitd through
+  `e2e/orbitd.ts` (allowlisted env, `ORBIT_PORT=0`, always stopped).
 - TUI tests render into memory with `apps/orbit-tui/test/render.ts`
   (configurable size, `press`, `waitFor`) over `test/tui-fixtures.ts`
   (fake client); update snapshots with `npx vitest run -u --project @orbit/tui`.
