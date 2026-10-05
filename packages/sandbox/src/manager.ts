@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
@@ -13,10 +13,16 @@ import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { type Bot, type DriverKind, OrbitError, slugify } from '@orbit/core';
 import { engineSandboxSettings, pluginDeniedPaths } from './engine-sandbox';
+import type { ApiProxyOptions } from './proxy/api-proxy';
+import type { Lookup } from './proxy/egress-proxy';
+import { API_SOCKET, type BotProxyStatus, EGRESS_SOCKET, ProxyHost } from './proxy/host';
+import type { ApiKeySource } from './proxy/key-source';
+import type { ProxyRefusal } from './proxy/stats';
 import { detectSandboxSupport } from './support';
 import type {
   CommandResult,
   CommandRunner,
+  PathMount,
   SandboxSupport,
   SpawnOptions,
   SpawnedProcess,
@@ -33,6 +39,20 @@ export const CONTAINER_WORKDIR = '/workspace';
 export const CONTAINER_HOME = `${CONTAINER_WORKDIR}/.orbit-home`;
 export const CONTAINER_PREFIX = 'orbit-bot-';
 export const BOT_LABEL = 'orbit.bot';
+/** Hash of everything that shapes a container (image, limits, network, mounts, user, layout). */
+export const CONFIG_LABEL = 'orbit.config';
+/** Where a Bot's host-side proxy sockets appear inside its container (read-only mount). */
+export const CONTAINER_SOCKET_DIR = '/run/orbit';
+/** In-container loopback ports socat bridges to the API and egress sockets (ADR-018). */
+export const CONTAINER_API_PORT = 47180;
+export const CONTAINER_EGRESS_PORT = 47181;
+/**
+ * The engine's ANTHROPIC_API_KEY inside a container. Not a secret: the
+ * host-side API proxy replaces it with the real key (ADR-018).
+ */
+export const API_KEY_PLACEHOLDER = 'orbit-key-proxy-placeholder';
+/** Bump when the container layout (mounts, entry command, ports) changes: containers are recreated. */
+const SANDBOX_LAYOUT = 2;
 
 /** `sh -c` script run as `<script> <pidfile> <command> <args…>`: record PID, then exec. */
 const PID_WRAPPER = 'echo $$ > "$0" && exec "$@"';
@@ -73,6 +93,34 @@ const HOST_LOCAL: ReadonlySet<string> = new Set([
 ]);
 const HOST_LOCAL_PREFIXES: readonly string[] = ['XDG_', 'DOCKER_'];
 
+/**
+ * Never forwarded from the host into a container engine (ADR-018): API and
+ * cloud credentials, the host's API endpoint and proxies, and provider
+ * switches. The container gets its own placeholder key, base URL and proxy
+ * (containerEngineEnv) instead.
+ */
+const CONTAINER_REPLACED: ReadonlySet<string> = new Set([
+  'CLAUDE_CODE_USE_BEDROCK',
+  'CLAUDE_CODE_USE_VERTEX',
+  'CLAUDE_CODE_USE_FOUNDRY',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'ALL_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
+  'all_proxy',
+]);
+const CONTAINER_REPLACED_PREFIXES: readonly string[] = [
+  'ANTHROPIC_',
+  'AWS_',
+  'GOOGLE_',
+  'VERTEX_REGION_',
+  'CLOUD_ML_',
+  'CLAUDE_CODE_CLIENT_',
+];
+
 /** Variables the Agent SDK itself adds to the engine env (protocol flags, no secrets). */
 const SDK_PROTOCOL_PREFIXES: readonly string[] = ['CLAUDE_CODE_', 'CLAUDE_AGENT_SDK_'];
 
@@ -93,9 +141,73 @@ function forwardable(name: string): boolean {
   return (
     !NEVER_FORWARD.has(name) &&
     !HOST_LOCAL.has(name) &&
-    !HOST_LOCAL_PREFIXES.some((p) => name.startsWith(p))
+    !HOST_LOCAL_PREFIXES.some((p) => name.startsWith(p)) &&
+    !CONTAINER_REPLACED.has(name) &&
+    !CONTAINER_REPLACED_PREFIXES.some((p) => name.startsWith(p))
   );
 }
+
+/**
+ * The engine environment inside a container (ADR-018): a placeholder key,
+ * the API through the in-container bridge to the key proxy, and — only with
+ * an allowlist — the egress proxy. Nothing here is secret.
+ */
+export function containerEngineEnv(network: 'none' | 'allowlist'): Record<string, string> {
+  const env: Record<string, string> = {
+    ANTHROPIC_API_KEY: API_KEY_PLACEHOLDER,
+    ANTHROPIC_BASE_URL: `http://127.0.0.1:${CONTAINER_API_PORT}`,
+    // Telemetry, error reporting and update checks have nowhere to go.
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+    // Scrubbing strips credentials from the engine's children (ADR-005); here
+    // there are none to strip, and Claude Code's scrubbing needs bubblewrap,
+    // which cannot run in an unprivileged container (verified with 2.1.289).
+    CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '0',
+    NO_PROXY: '127.0.0.1,localhost',
+    no_proxy: '127.0.0.1,localhost',
+  };
+  if (network === 'allowlist') {
+    const proxy = `http://127.0.0.1:${CONTAINER_EGRESS_PORT}`;
+    Object.assign(env, {
+      HTTPS_PROXY: proxy,
+      HTTP_PROXY: proxy,
+      https_proxy: proxy,
+      http_proxy: proxy,
+    });
+  }
+  return env;
+}
+
+/**
+ * Bash in a container counts as sandboxed (WRITE_LOCAL) only when the
+ * container has no network at all — its only socket reaches the Anthropic
+ * API with the owner's key — and the running container really is the
+ * network-less one (a stale container kept for an active Run may still have
+ * its egress bridge). With an allowlist, Bash stays EXTERNAL (ADR-018).
+ */
+export function dockerShellContained(network: 'none' | 'allowlist', stale: boolean): boolean {
+  return network === 'none' && !stale;
+}
+
+/** The container's entry command: socat bridges for the proxies, then sleep. */
+export function containerEntryScript(network: 'none' | 'allowlist'): string {
+  const bridge = (port: number, socket: string) =>
+    `socat TCP-LISTEN:${port},bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:${CONTAINER_SOCKET_DIR}/${socket} &`;
+  return [
+    bridge(CONTAINER_API_PORT, API_SOCKET),
+    ...(network === 'allowlist' ? [bridge(CONTAINER_EGRESS_PORT, EGRESS_SOCKET)] : []),
+    'exec sleep infinity',
+  ].join(' ');
+}
+
+/**
+ * How the engine in a docker sandbox authenticates (ADR-018): through the
+ * host-side key proxy with orbitd's key or apiKeyHelper output, or not at all
+ * (Bedrock / Vertex cannot go through the proxy; mock mode needs no key).
+ */
+export type EngineCredential =
+  | { kind: 'key'; source: ApiKeySource }
+  | { kind: 'unsupported'; provider: 'bedrock' | 'vertex' }
+  | { kind: 'none' };
 
 function defaultDockerClientEnv(): Record<string, string> {
   const env: Record<string, string> = {};
@@ -169,6 +281,25 @@ export interface SandboxManagerOptions {
    * user (needed for rootless Docker / Docker Desktop setups that remap ids).
    */
   containerUser?: string | null;
+  /**
+   * How docker-sandboxed engines authenticate (ADR-018). Default: none —
+   * the key proxy answers 503 and the SDK driver is refused.
+   */
+  credential?: EngineCredential;
+  /** orbitd's API base URL for the key proxy. Default https://api.anthropic.com. */
+  apiUpstream?: string;
+  /** Test hooks for the host-side proxies (DNS, upstream TLS). */
+  proxy?: { lookup?: Lookup; api?: Pick<ApiProxyOptions, 'ca' | 'agent' | 'maxBodyBytes'> };
+  /** Told about every refused API request or egress tunnel (for orbitd's log). */
+  onProxyRefusal?: (botId: string, proxy: 'api' | 'egress', refusal: ProxyRefusal) => void;
+}
+
+/** One image's readiness for docker sandboxes (doctor). */
+export interface SandboxImageStatus {
+  image: string;
+  present: boolean;
+  /** socat runs in the image (null when the image is missing or the check failed). */
+  socat: boolean | null;
 }
 
 export interface EngineSpawnerOptions {
@@ -189,6 +320,11 @@ export class SandboxManager {
   private readonly containerUser: string | null;
   private readonly extraDenied: readonly string[];
   private readonly legacyName: (bot: Bot) => string | null;
+  private readonly credential: EngineCredential;
+  private readonly opts: SandboxManagerOptions;
+  private proxies: ProxyHost | undefined;
+  /** Per-Bot queue: two Runs of one Bot never prepare its container at the same time. */
+  private readonly locks = new Map<string, Promise<unknown>>();
   private supportPromise: Promise<SandboxSupport> | undefined;
 
   constructor(opts: SandboxManagerOptions) {
@@ -200,7 +336,48 @@ export class SandboxManager {
     this.dockerClientEnv = opts.dockerClientEnv ?? defaultDockerClientEnv();
     this.containerUser =
       opts.containerUser === undefined ? defaultContainerUser() : opts.containerUser;
+    this.credential = opts.credential ?? { kind: 'none' };
+    this.opts = opts;
     if (opts.support) this.supportPromise = Promise.resolve(opts.support);
+  }
+
+  /** The host-side proxies, started with the first docker Bot (the upstream URL is checked then). */
+  private proxyHost(): ProxyHost {
+    this.proxies ??= new ProxyHost({
+      upstream: this.opts.apiUpstream ?? 'https://api.anthropic.com',
+      key: this.credential.kind === 'key' ? this.credential.source : null,
+      ...(this.opts.proxy?.lookup ? { lookup: this.opts.proxy.lookup } : {}),
+      ...(this.opts.proxy?.api ? { api: this.opts.proxy.api } : {}),
+      ...(this.opts.onProxyRefusal ? { onRefusal: this.opts.onProxyRefusal } : {}),
+    });
+    return this.proxies;
+  }
+
+  /** Run `fn` after every earlier call for the same Bot has settled. */
+  private serialized<T>(botId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.locks.get(botId) ?? Promise.resolve();
+    const next = prev.then(fn, fn);
+    const settled = next.catch(() => undefined);
+    this.locks.set(botId, settled);
+    void settled.then(() => {
+      if (this.locks.get(botId) === settled) this.locks.delete(botId);
+    });
+    return next;
+  }
+
+  /** Per-Bot proxy counters (requests, tunnels, refusals) since orbitd started. */
+  proxyStatus(): BotProxyStatus[] {
+    return this.proxies?.status() ?? [];
+  }
+
+  /** Stop every host-side proxy (orbitd shutdown). Containers keep running. */
+  async close(): Promise<void> {
+    await this.proxies?.close();
+  }
+
+  /** Host directory holding a Bot's proxy sockets (mounted read-only into its container). */
+  socketDir(bot: Bot): string {
+    return join(realOrSelf(this.orbitHome), 'run', 'sandbox', safeBotId(bot));
   }
 
   /** Host sandbox capabilities (detected once, then cached). */
@@ -254,6 +431,27 @@ export class SandboxManager {
           },
         );
       }
+      if (driver === 'sdk' && this.credential.kind === 'unsupported') {
+        const provider =
+          this.credential.provider === 'bedrock' ? 'Amazon Bedrock' : 'Google Vertex AI';
+        throw new OrbitError(
+          'invalid_config',
+          `Bot "${bot.spec.name}" uses a docker sandbox, which cannot be used with ${provider}`,
+          {
+            hint:
+              'The API key stays on the host and reaches the Anthropic API through a key-injecting proxy ' +
+              `(ADR-018), which ${provider} credentials cannot use. Set sandbox.kind to "worktree" or ` +
+              '"directory" for this Bot, or use an Anthropic API key.',
+          },
+        );
+      }
+      if (driver === 'sdk' && this.credential.kind === 'none') {
+        throw new OrbitError(
+          'auth_required',
+          `Bot "${bot.spec.name}" uses a docker sandbox, but orbitd has no API key for it`,
+          { hint: 'Set ANTHROPIC_API_KEY or ORBIT_API_KEY_HELPER for orbitd, then retry.' },
+        );
+      }
       const support = await this.support();
       if (!support.docker.available) {
         throw new OrbitError(
@@ -282,7 +480,7 @@ export class SandboxManager {
 
     switch (sb.kind) {
       case 'docker':
-        return this.prepareDocker(bot, path);
+        return this.serialized(bot.id, () => this.prepareDocker(bot, path));
       case 'worktree': {
         const repo = resolve(sb.repo ?? '');
         await this.prepareWorktree(bot, path, repo);
@@ -322,7 +520,11 @@ export class SandboxManager {
   async destroy(bot: Bot, opts: { purge?: boolean } = {}): Promise<void> {
     const sb = bot.spec.sandbox;
     const path = this.workspacePath(bot);
-    if (sb.kind === 'docker') await this.removeContainer(bot);
+    if (sb.kind === 'docker') {
+      await this.serialized(bot.id, () => this.removeContainer(bot));
+      await this.proxies?.stop(bot.id);
+      if (opts.purge === true) rmSync(this.socketDir(bot), { recursive: true, force: true });
+    }
     if (sb.kind === 'worktree' && sb.repo !== undefined && isAbsolute(sb.repo)) {
       await this.removeWorktree(resolve(sb.repo), path, opts.purge === true);
     }
@@ -342,7 +544,10 @@ export class SandboxManager {
    * process environment, so secrets never appear in `ps` or `docker inspect`.
    * Host-specific variables (PATH, HOME, CA paths, DOCKER_*) are not forwarded;
    * SDK protocol flags (CLAUDE_CODE_*, CLAUDE_AGENT_SDK_*) set by the SDK on
-   * `options.env` are. Set the SDK's `pathToClaudeCodeExecutable` to the
+   * `options.env` are. API and cloud credentials, the host's base URL and
+   * proxies are never forwarded: the workspace's own container env (a
+   * placeholder key, the key proxy's URL, the egress proxy) takes their
+   * place (ADR-018). Set the SDK's `pathToClaudeCodeExecutable` to the
    * engine binary inside the image (`claude`); `options.cwd` is replaced by
    * the container workdir.
    */
@@ -374,6 +579,7 @@ export class SandboxManager {
           forwarded[name] = value;
         }
       }
+      Object.assign(forwarded, target.env);
       const names = Object.keys(forwarded).sort();
       // `docker exec` does not proxy signals: killing the client leaves the
       // engine running in the container. A tiny sh wrapper records the
@@ -557,26 +763,40 @@ export class SandboxManager {
 
   // -------------------------------------------------------------- docker
 
-  private async inspectContainer(
-    name: string,
-  ): Promise<{ running: boolean; bot: string | null } | null> {
+  private async inspectContainer(name: string): Promise<{
+    running: boolean;
+    image: string;
+    bot: string | null;
+    config: string | null;
+  } | null> {
     const r = await this.run('docker', [
       'inspect',
       '--type',
       'container',
       '--format',
-      `{{.State.Running}} {{index .Config.Labels "${BOT_LABEL}"}}`,
+      `{{.State.Running}} {{.Image}} {{index .Config.Labels "${BOT_LABEL}"}} {{index .Config.Labels "${CONFIG_LABEL}"}}`,
       name,
     ]);
     if (r.code !== 0) {
       if (/no such (object|container)/i.test(r.stderr)) return null;
       throw new OrbitError('driver_unavailable', `docker inspect ${name} failed: ${detail(r)}`);
     }
-    const [running, label] = r.stdout.trim().split(' ');
+    const [running, image, bot, config] = r.stdout.trim().split(' ');
+    const label = (v: string | undefined) =>
+      v === undefined || v === '' || v === '<no value>' ? null : v;
     return {
       running: running === 'true',
-      bot: label === undefined || label === '' || label === '<no value>' ? null : label,
+      image: image ?? '',
+      bot: label(bot),
+      config: label(config),
     };
+  }
+
+  /** Id of a local image, or null when it is not present (or docker cannot tell). */
+  private async imageId(image: string): Promise<string | null> {
+    const r = await this.run('docker', ['image', 'inspect', '--format', '{{.Id}}', image]);
+    const id = r.stdout.trim();
+    return r.code === 0 && id.length > 0 ? id : null;
   }
 
   private assertOwned(bot: Bot, name: string, owner: string | null): void {
@@ -589,7 +809,45 @@ export class SandboxManager {
     }
   }
 
-  /** `docker run` arguments for a Bot's container. Never contains secrets. */
+  /** Mounts of a Bot's container: engine-visible path → host path (policy maps tool paths with them). */
+  containerMounts(bot: Bot, hostPath: string): PathMount[] {
+    const sb = bot.spec.sandbox;
+    return [
+      { container: CONTAINER_WORKDIR, host: hostPath, writable: true },
+      ...(sb.repo !== undefined
+        ? [{ container: '/repo', host: resolve(sb.repo), writable: false }]
+        : []),
+    ];
+  }
+
+  /**
+   * Hash of everything that shapes a Bot's container: image reference,
+   * limits, network mode, mounts, user and the layout version. A container
+   * whose label differs is recreated (when no Run of the Bot is active).
+   */
+  containerConfigHash(bot: Bot, hostPath: string): string {
+    const sb = bot.spec.sandbox;
+    const shape = {
+      layout: SANDBOX_LAYOUT,
+      image: sb.image,
+      cpus: sb.cpus,
+      memoryMb: sb.memoryMb,
+      pidsLimit: sb.pidsLimit,
+      network: sb.network,
+      user: this.containerUser,
+      mounts: this.containerMounts(bot, hostPath),
+      sockets: this.socketDir(bot),
+      ports: [CONTAINER_API_PORT, CONTAINER_EGRESS_PORT],
+    };
+    return createHash('sha256').update(JSON.stringify(shape)).digest('hex').slice(0, 16);
+  }
+
+  /**
+   * `docker run` arguments for a Bot's container. Never contains secrets.
+   * The container has no network at all (ADR-018): the engine reaches the
+   * API — and, with an allowlist, the egress proxy — only through orbitd's
+   * Unix sockets, bridged to loopback ports by socat.
+   */
   dockerRunArgs(bot: Bot, hostPath: string): string[] {
     const sb = bot.spec.sandbox;
     const args = [
@@ -599,6 +857,9 @@ export class SandboxManager {
       SandboxManager.containerName(bot),
       '--label',
       `${BOT_LABEL}=${bot.id}`,
+      '--label',
+      `${CONFIG_LABEL}=${this.containerConfigHash(bot, hostPath)}`,
+      '--init',
       '--cpus',
       String(sb.cpus),
       '--memory',
@@ -606,7 +867,7 @@ export class SandboxManager {
       '--pids-limit',
       String(sb.pidsLimit),
       '--network',
-      sb.network === 'none' ? 'none' : 'bridge',
+      'none',
       '--cap-drop',
       'ALL',
       '--security-opt',
@@ -618,21 +879,67 @@ export class SandboxManager {
       `HOME=${CONTAINER_HOME}`,
       '-v',
       `${hostPath}:${CONTAINER_WORKDIR}`,
+      // Read-only: the container can connect to the sockets but never replace them.
+      '-v',
+      `${this.socketDir(bot)}:${CONTAINER_SOCKET_DIR}:ro`,
       '-w',
       CONTAINER_WORKDIR,
     ];
     if (sb.repo !== undefined) args.push('-v', `${resolve(sb.repo)}:/repo:ro`);
-    args.push(sb.image, 'sleep', 'infinity');
+    args.push(sb.image, 'sh', '-c', containerEntryScript(sb.network));
     return args;
+  }
+
+  /** Wait until the container's socat bridge reaches the API proxy socket. */
+  private async probeBridge(bot: Bot, name: string): Promise<void> {
+    const script =
+      `socat -u OPEN:/dev/null UNIX-CONNECT:${CONTAINER_SOCKET_DIR}/${API_SOCKET} && ` +
+      `socat -u OPEN:/dev/null TCP:127.0.0.1:${CONTAINER_API_PORT}`;
+    let last: CommandResult | null = null;
+    for (let attempt = 0; attempt < 15; attempt++) {
+      last = await this.run('docker', ['exec', name, 'sh', '-c', script], { timeoutMs: 30_000 });
+      if (last.code === 0) return;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    throw new OrbitError(
+      'driver_unavailable',
+      `The container of Bot "${bot.spec.name}" cannot reach Orbit's API proxy: ${last === null ? 'no answer' : detail(last)}`,
+      {
+        hint:
+          `The sandbox image must contain socat: rebuild it with \`docker build -f docker/sandbox.Dockerfile -t ${bot.spec.sandbox.image} .\`. ` +
+          'The proxy sockets are bind-mounted from the host, which needs Docker Engine on Linux with ' +
+          'the container running as your user (ADR-018).',
+      },
+    );
   }
 
   private async prepareDocker(bot: Bot, path: string): Promise<Workspace> {
     const sb = bot.spec.sandbox;
     ensurePrivateDir(path);
     ensurePrivateDir(join(path, '.orbit-home'));
+    const sockets = this.socketDir(bot);
+    ensurePrivateDir(join(realOrSelf(this.orbitHome), 'run'));
+    ensurePrivateDir(join(realOrSelf(this.orbitHome), 'run', 'sandbox'));
+    ensurePrivateDir(sockets);
+    const proxies = this.proxyHost();
+    await proxies.ensure(bot.id, sockets, sb);
+
     const name = SandboxManager.containerName(bot);
-    const state = await this.inspectContainer(name);
+    let state = await this.inspectContainer(name);
     if (state !== null) this.assertOwned(bot, name, state.bot);
+    let stale = false;
+    if (state !== null) {
+      const imageId = await this.imageId(sb.image);
+      stale =
+        state.config !== this.containerConfigHash(bot, path) ||
+        (imageId !== null && state.image !== imageId);
+      // A Run of this Bot is using the container: keep it; the change applies at the next Run.
+      if (stale && proxies.activeRuns(bot.id) === 0) {
+        await this.rmContainer(name);
+        state = null;
+        stale = false;
+      }
+    }
     if (state === null) {
       const r = await this.run('docker', this.dockerRunArgs(bot, path), { timeoutMs: 300_000 });
       if (r.code !== 0) {
@@ -640,24 +947,51 @@ export class SandboxManager {
           hint: `Build the sandbox image with \`docker build -f docker/sandbox.Dockerfile -t ${sb.image} .\` or set sandbox.image.`,
         });
       }
+      await this.probeBridge(bot, name);
     } else if (!state.running) {
       const r = await this.run('docker', ['start', name]);
       if (r.code !== 0) {
         throw new OrbitError('driver_unavailable', `docker start ${name} failed: ${detail(r)}`);
       }
+      await this.probeBridge(bot, name);
     }
     return {
       botId: bot.id,
       kind: 'docker',
       path,
       isolation: 'container',
-      // The API key in the engine's environment is readable from inside the
-      // container (/proc/<pid>/environ) until the key proxy lands (M8): Bash
-      // therefore stays EXTERNAL here too (M2 review M3).
-      shellContained: false,
+      // The key never enters the container (ADR-018): without a network the
+      // shell reaches nothing but the API, with the owner's key, on the host.
+      shellContained: dockerShellContained(sb.network, stale),
       engineSandboxSettings: null,
-      docker: { container: name, workdir: CONTAINER_WORKDIR },
+      docker: { container: name, workdir: CONTAINER_WORKDIR, env: containerEngineEnv(sb.network) },
+      mounts: this.containerMounts(bot, path),
+      release: proxies.acquire(bot.id),
     };
+  }
+
+  /**
+   * Is each image present, and does socat run in it (doctor)? The socat
+   * check starts a throwaway container without network.
+   */
+  async imageStatus(images: readonly string[]): Promise<SandboxImageStatus[]> {
+    const support = await this.support();
+    return Promise.all(
+      [...new Set(images)].map(async (image): Promise<SandboxImageStatus> => {
+        if (!support.docker.available) return { image, present: false, socat: null };
+        if ((await this.imageId(image)) === null) return { image, present: false, socat: null };
+        try {
+          const r = await this.run(
+            'docker',
+            ['run', '--rm', '--network', 'none', '--entrypoint', 'socat', image, '-V'],
+            { timeoutMs: 60_000 },
+          );
+          return { image, present: true, socat: r.code === 0 };
+        } catch {
+          return { image, present: true, socat: null };
+        }
+      }),
+    );
   }
 
   private async removeContainer(bot: Bot): Promise<void> {
@@ -673,6 +1007,10 @@ export class SandboxManager {
     const state = await this.inspectContainer(name);
     if (state === null) return;
     this.assertOwned(bot, name, state.bot);
+    await this.rmContainer(name);
+  }
+
+  private async rmContainer(name: string): Promise<void> {
     const r = await this.run('docker', ['rm', '-f', name], { timeoutMs: 120_000 });
     if (r.code !== 0 && !/no such container/i.test(r.stderr)) {
       throw new OrbitError('driver_unavailable', `docker rm ${name} failed: ${detail(r)}`);
