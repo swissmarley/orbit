@@ -374,6 +374,8 @@ describe('orbitd API — approvals, controls and housekeeping', () => {
 
   it('usage limit: the Run pauses with a resume time and the queue holds new Runs', async () => {
     h = current = harness();
+    // The fixture's limit resets at a fixed instant: run the clock before it.
+    h.clock.set('2026-10-04T12:00:00.000Z');
     await createBot({ name: 'Limited', mock: { fixture: 'usage-limit' } });
     await createBot({ name: 'Other', mock: { fixture: 'pong' } });
     const run = (await h.json<RunState>('POST', '/v1/bots/limited/runs', {})).body;

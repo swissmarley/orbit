@@ -45,6 +45,8 @@ describe('TUI against a real orbitd (mock driver)', () => {
     await t.waitFor(/waiting for your approval/, 10_000);
     await t.waitFor(/Approvals 1 pending/);
     await t.press('3', 'a');
+    await t.waitFor(/a approve · A always allow/);
+    await t.press('a');
     const done = await t.waitFor(/✔ completed/, 10_000);
     expect(done).toMatch(/resumed after approval/);
     await t.waitFor(/Nothing needs you right now/);

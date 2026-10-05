@@ -12,10 +12,13 @@ import {
   reconcile,
   selectedRun,
 } from './model';
+import { scrubControls } from '../render';
 import {
   ApprovalsPane,
   BotsPane,
+  CardOverlay,
   ConfirmBar,
+  DENY_TITLE,
   DenyPrompt,
   HelpOverlay,
   NARROW_COLUMNS,
@@ -23,6 +26,8 @@ import {
   StatusBar,
   TabBar,
   TimelinePane,
+  promptHeight,
+  timelineLines,
 } from './views';
 
 const SEVEN_DAYS_MS = 7 * 86_400_000;
@@ -117,8 +122,9 @@ export function App({ client, paint, size, refreshDelayMs }: AppProps) {
     void feed.select(run?.runId ?? null);
   }, [feed, run?.runId]);
 
+  // Toasts quote orbitd and card text: scrub it like everything else shown.
   const toast = (text: string, tone: 'info' | 'error' = 'info') =>
-    setUi((u) => ({ ...u, toast: text ? { text, tone } : null }));
+    setUi((u) => ({ ...u, toast: text ? { text: scrubControls(text), tone } : null }));
 
   useInput((input, key) => {
     const result = onKey(uiRef.current, data, input, key);
@@ -142,10 +148,36 @@ export function App({ client, paint, size, refreshDelayMs }: AppProps) {
   });
 
   const narrow = columns < NARROW_COLUMNS;
-  const footer = ui.overlay?.kind === 'confirm' || ui.overlay?.kind === 'deny' ? 4 : 1;
-  const paneHeight = Math.max(6, rows - 1 - footer - (narrow ? 1 : 0));
+  const overlay = ui.overlay;
+  const footer =
+    overlay?.kind === 'confirm'
+      ? promptHeight(`${overlay.message} [y/N]`, columns)
+      : overlay?.kind === 'deny'
+        ? promptHeight(DENY_TITLE, columns) +
+          Math.ceil((overlay.text.length + 3) / Math.max(10, columns - 4))
+        : 1;
+  const bodyHeight = Math.max(3, rows - 1 - footer);
+  const paneHeight = Math.max(3, bodyHeight - (narrow ? 1 : 0));
   const sideWidth = Math.max(24, Math.floor(columns * 0.26));
   const rightWidth = Math.max(30, Math.floor(columns * 0.34));
+  const cardApproval =
+    overlay?.kind === 'card' ? data.approvals.find((a) => a.id === overlay.approvalId) : undefined;
+
+  // Keep the timeline scroll inside the text (g and overscroll would otherwise look dead).
+  const maxScroll = Math.max(
+    0,
+    timelineLines(data.events, paint).length - Math.max(1, paneHeight - 4),
+  );
+  useEffect(() => {
+    if (ui.scroll > maxScroll) setUi((u) => ({ ...u, scroll: maxScroll }));
+  }, [ui.scroll, maxScroll]);
+
+  const hints: Record<Ui['focus'], string> = {
+    bots: 'j/k select · r run · p pause · [ ] runs · Enter timeline · Tab panes · ? help · q quit',
+    timeline:
+      'j/k scroll · g/G top/live · s stop · u resume · [ ] runs · Tab panes · ? help · q quit',
+    approvals: 'j/k select · Enter/a open card to approve · d deny · Tab panes · ? help · q quit',
+  };
 
   const panes = {
     bots: (w: number | string) => (
@@ -184,11 +216,19 @@ export function App({ client, paint, size, refreshDelayMs }: AppProps) {
   return (
     <Box flexDirection="column" width={columns}>
       <StatusBar data={data} width={columns} />
-      {ui.overlay?.kind === 'help' ? (
-        <HelpOverlay width={Math.min(columns, 90)} />
+      {overlay?.kind === 'help' ? (
+        <HelpOverlay width={Math.min(columns, 90)} height={bodyHeight} scroll={overlay.scroll} />
+      ) : cardApproval && overlay?.kind === 'card' ? (
+        <CardOverlay
+          approval={cardApproval}
+          paint={paint}
+          width={columns}
+          height={bodyHeight}
+          scroll={overlay.scroll}
+        />
       ) : narrow ? (
         <Box flexDirection="column">
-          <TabBar focus={ui.focus} />
+          <TabBar focus={ui.focus} pending={data.approvals.length} />
           {panes[ui.focus](columns)}
         </Box>
       ) : (
@@ -198,17 +238,16 @@ export function App({ client, paint, size, refreshDelayMs }: AppProps) {
           {panes.approvals(rightWidth)}
         </Box>
       )}
-      {ui.overlay?.kind === 'confirm' ? <ConfirmBar message={ui.overlay.message} /> : null}
-      {ui.overlay?.kind === 'deny' ? <DenyPrompt text={ui.overlay.text} /> : null}
+      {overlay?.kind === 'confirm' ? (
+        <ConfirmBar message={overlay.message} width={columns} />
+      ) : null}
+      {overlay?.kind === 'deny' ? <DenyPrompt text={overlay.text} width={columns} /> : null}
       {footer === 1 ? (
         <Text
           wrap="truncate"
           color={ui.toast?.tone === 'error' ? 'red' : data.error ? 'red' : 'gray'}
         >
-          {ui.toast?.text ??
-            (data.error
-              ? `⚠ ${data.error}`
-              : 'Tab/h/l panes · j/k move · r run · a/d approve/deny · K kill · ? help · q quit')}
+          {ui.toast?.text ?? (data.error ? `⚠ ${scrubControls(data.error)}` : hints[ui.focus])}
         </Text>
       ) : null}
     </Box>

@@ -1,5 +1,6 @@
 import { type RunEvent, errorMessage } from '@orbit/core';
 import type { OrbitClient } from '@orbit/sdk-client';
+import { scrubDeep } from '../render';
 import { type Data, EMPTY_DATA } from './model';
 
 /** What the TUI needs from orbitd (an OrbitClient, or a fake in tests). */
@@ -21,6 +22,7 @@ const LIST_EVENTS = new Set<RunEvent['type']>([
   'run.rate_limited',
   'approval.requested',
   'approval.decided',
+  'run.killed',
 ]);
 
 /**
@@ -79,7 +81,16 @@ export class Feed {
           this.client.queue(),
           this.client.kill.status(),
         ]);
-        this.set({ bots, runs, approvals, queue, kill, error: null });
+        // Names, prompts and cards are model- or user-written: scrubbed once, here.
+        this.set({
+          bots: scrubDeep(bots),
+          runs: scrubDeep(runs),
+          approvals: scrubDeep(approvals),
+          queue,
+          kill,
+          loaded: true,
+          error: null,
+        });
       } catch (err) {
         this.set({ error: errorMessage(err) });
       } finally {

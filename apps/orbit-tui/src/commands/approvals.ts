@@ -3,7 +3,7 @@ import type { Approval } from '@orbit/sdk-client';
 import { OrbitError } from '@orbit/core';
 import type { Context } from '../context';
 import { painter } from '../io';
-import { formatRelative, renderDiff, scrubControls } from '../render';
+import { formatRelative, renderDiff, scrubControls, scrubDeep } from '../render';
 import { follow } from './run';
 
 type Paint = ReturnType<typeof painter>;
@@ -14,7 +14,8 @@ export function clean(text: string): string {
 }
 
 function card(a: Approval, p: Paint): string[] {
-  const c = a.card;
+  // Every field may be model-written (tool input, explanation, MCP tool names).
+  const c = scrubDeep(a.card);
   const tierColor = c.tier === 'EXTERNAL' ? 'yellow' : c.tier === 'FINANCIAL' ? 'red' : 'cyan';
   const lines = [
     `${p('bold', a.id)}  ${p(tierColor, c.tier)}  ${p('dim', `${a.status} · ${formatRelative(a.createdAt)}`)}`,
@@ -160,7 +161,7 @@ export async function approve(
   if (o.json) ctx.io.out(JSON.stringify(a));
   else
     ctx.io.out(
-      `${painter(ctx.io)('green', '✔')} Approved ${a.card.what}${a.decision?.editedInput ? ' (edited)' : ''}`,
+      `${painter(ctx.io)('green', '✔')} Approved ${clean(a.card.what)}${a.decision?.editedInput ? ' (edited)' : ''}`,
     );
   return afterDecision(ctx, result, o);
 }
@@ -180,7 +181,7 @@ export async function deny(
   if (o.json) ctx.io.out(JSON.stringify(a));
   else
     ctx.io.out(
-      `${painter(ctx.io)('red', '✘')} Denied ${a.card.what}${o.reason ? ` — ${o.reason}` : ''}`,
+      `${painter(ctx.io)('red', '✘')} Denied ${clean(a.card.what)}${o.reason ? ` — ${clean(o.reason)}` : ''}`,
     );
   return afterDecision(ctx, result, o);
 }

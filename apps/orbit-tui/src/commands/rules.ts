@@ -1,5 +1,6 @@
 import type { Context } from '../context';
 import { painter } from '../io';
+import { scrubControls } from '../render';
 import { DEFAULT_RULE_EXPIRY, parseExpiry } from './approvals';
 
 export async function rulesList(
@@ -16,14 +17,14 @@ export async function rulesList(
   if (rules.length === 0) ctx.io.out('No standing rules. Everything external asks first.');
   const names = new Map((await client.bots.list()).map((b) => [b.id, b.spec.name]));
   for (const r of rules) {
-    const scope = r.botId ? (names.get(r.botId) ?? r.botId) : 'all bots';
+    const scope = scrubControls(r.botId ? (names.get(r.botId) ?? r.botId) : 'all bots');
     const state = r.revokedAt
       ? p('dim', 'revoked')
       : r.expiresAt
         ? p('dim', `until ${r.expiresAt}`)
         : p('dim', 'no expiry');
     ctx.io.out(
-      `${p('bold', r.id)}  ${p(r.effect === 'allow' ? 'green' : 'red', r.effect.padEnd(5))} ${r.toolPattern}  ${p('dim', scope)}  ${state}`,
+      `${p('bold', r.id)}  ${p(r.effect === 'allow' ? 'green' : 'red', r.effect.padEnd(5))} ${scrubControls(r.toolPattern)}  ${p('dim', scope)}  ${state}`,
     );
   }
   return 0;

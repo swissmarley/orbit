@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { ExitCode } from '@orbit/core';
 import type { Context } from '../context';
 import { painter } from '../io';
+import { scrubControls } from '../render';
 
 export async function auditList(
   ctx: Context,
@@ -21,7 +22,7 @@ export async function auditList(
   if (records.length === 0) ctx.io.out('The audit log is empty.');
   for (const r of records) {
     ctx.io.out(
-      `${p('dim', `#${r.seq} ${r.ts}`)} ${p('bold', r.action.padEnd(20))} ${r.actor.padEnd(16)} ${r.subject ?? ''}`,
+      `${p('dim', `#${r.seq} ${r.ts}`)} ${p('bold', scrubControls(r.action).padEnd(20))} ${scrubControls(r.actor).padEnd(16)} ${scrubControls(r.subject ?? '')}`,
     );
   }
   return 0;

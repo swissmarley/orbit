@@ -21,7 +21,6 @@ import {
 } from './commands/run';
 import { secretList, secretRemove, secretSet } from './commands/secrets';
 import { Context } from './context';
-import { runTui } from './tui';
 import { type Io, painter } from './io';
 
 export const VERSION = '0.1.0';
@@ -48,7 +47,12 @@ export async function main(argv: string[], io: Io): Promise<number> {
   program
     .command('tui', { isDefault: false })
     .description('Full-screen terminal UI: Bots, live timeline, approvals (also `orbit` alone)')
-    .action(() => set(runTui(context())));
+    .action(async () => {
+      // Ink's colour library ignores NO_COLOR: decide before it loads.
+      if (!io.color) process.env.FORCE_COLOR = '0';
+      const { runTui } = await import('./tui');
+      await set(runTui(context()));
+    });
 
   program
     .command('doctor')
@@ -341,12 +345,13 @@ export async function main(argv: string[], io: Io): Promise<number> {
     } else if (err instanceof OrbitError) {
       const p = painter(io);
       const message = defaultRedactor.redactString(err.message);
+      const hint = err.hint ? defaultRedactor.redactString(err.hint) : null;
       // --json callers get a machine-readable error on stdout too.
       if (argv.includes('--json')) {
-        io.out(JSON.stringify({ error: { code: err.code, message, hint: err.hint ?? null } }));
+        io.out(JSON.stringify({ error: { code: err.code, message, hint } }));
       }
       io.err(`${p('red', '✘')} ${message}`);
-      if (err.hint) io.err(p('dim', err.hint));
+      if (hint) io.err(p('dim', hint));
       code = err.exitCode;
     } else {
       io.err(`✘ ${defaultRedactor.redactString(errorMessage(err))}`);

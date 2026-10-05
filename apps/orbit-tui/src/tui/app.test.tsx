@@ -35,9 +35,9 @@ describe('TUI rendering', () => {
   it('narrow: one pane at a time with a tab bar', async () => {
     const t = open(NARROW);
     await t.waitFor(/Mailer/);
-    expect(t.lastFrame()).toMatch(/1 Bots {2}2 Timeline {2}3 Approvals/);
+    expect(t.lastFrame()).toMatch(/▶1 Bots {2}2 Timeline {2}3 Approvals \(1\)/);
     await t.press('3');
-    expect(await t.waitFor(/a approve · A always · d deny/)).toMatchSnapshot();
+    expect(await t.waitFor(/Enter\/a open card to approve/)).toMatchSnapshot();
     expect(t.lastFrame()).not.toMatch(/Timeline\s*│/);
   });
 
@@ -79,6 +79,9 @@ describe('TUI actions', () => {
     const t = open();
     await t.waitFor(/Mailer/);
     await t.press('3', 'a');
+    expect(await t.waitFor(/a approve · A always allow/)).toMatchSnapshot();
+    expect(t.mock.approvals.approve).not.toHaveBeenCalled();
+    await t.press('a');
     await t.waitFor(/approved send email/);
     expect(t.mock.approvals.approve).toHaveBeenCalledWith('apr_1', { always: null });
   });
@@ -102,6 +105,9 @@ describe('TUI actions', () => {
     await t.press('K');
     await t.waitFor(/Engage the global kill switch\?/);
     await t.press('n');
+    expect(t.mock.kill.set).not.toHaveBeenCalled();
+    await t.press('K', KEYS.enter);
+    await t.waitFor(/Cancelled/);
     expect(t.mock.kill.set).not.toHaveBeenCalled();
     await t.press('K', 'y');
     await t.waitFor(/kill switch engaged/);
@@ -205,5 +211,45 @@ describe('untrusted text', () => {
     expect(frame).not.toContain('\u001b');
     expect(frame).not.toContain('‮');
     expect(frame).toContain('�');
+  });
+});
+
+describe('small terminals', () => {
+  it.each([
+    { columns: 120, rows: 10 },
+    { columns: 40, rows: 12 },
+    { columns: 72, rows: 18 },
+  ])('every frame fits $columns×$rows, overlays included', async (size) => {
+    const t = open(size);
+    await t.waitFor(/Mailer/);
+    const fits = () => t.lastFrame().split('\n').length <= size.rows;
+    expect(fits()).toBe(true);
+    for (const keys of [
+      ['?'],
+      [KEYS.escape, 'K'],
+      [KEYS.escape, '3', 'd', ...Array.from('too long a reason')],
+    ]) {
+      await t.press(...keys);
+      await new Promise((r) => setTimeout(r, 30));
+      expect(t.lastFrame().split('\n').length, t.lastFrame()).toBeLessThanOrEqual(size.rows);
+    }
+  });
+});
+
+describe('more untrusted text', () => {
+  it('Bot names, untrusted sources and toasts are scrubbed too (conceal, OSC 52)', async () => {
+    const conceal = '\u001b[8mHIDDEN\u001b[0m';
+    const osc52 = '\u001b]52;c;ZXZpbA==\u0007';
+    const card = approval('apr_1', { botName: `Mail${conceal}`, untrusted: [`web${osc52}`] });
+    const fake = fakeClient(data({ approvals: [card] }));
+    fake.mock.runs.start.mockRejectedValueOnce(new Error(`boom ${conceal}`));
+    const t = renderTerminal(<App client={fake.client} paint={plain} />, WIDE);
+    unmount = t.unmount;
+    await t.waitFor(/untrusted input/);
+    await t.press('1', 'r');
+    await t.waitFor(/boom/);
+    const frames = t.lastFrame();
+    expect(frames).not.toContain('\u001b');
+    expect(frames).not.toContain('\u0007');
   });
 });

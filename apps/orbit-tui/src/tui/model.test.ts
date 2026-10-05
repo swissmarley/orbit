@@ -32,7 +32,7 @@ describe('TUI key model', () => {
     expect(press(ui, ']', {}, d).ui.runIndex).toBe(0);
   });
 
-  it('r runs the selected Bot; p asks before pausing', () => {
+  it('r runs the selected Bot; p asks before pausing; only y confirms', () => {
     expect(press(INITIAL_UI, 'r').command).toEqual({ kind: 'runBot', botId: 'bot_a' });
     const p = press(INITIAL_UI, 'p');
     expect(p.command).toBeUndefined();
@@ -41,20 +41,40 @@ describe('TUI key model', () => {
       command: { kind: 'pauseBot', botId: 'bot_a', paused: true },
     });
     expect(press(p.ui, 'y').command).toEqual({ kind: 'pauseBot', botId: 'bot_a', paused: true });
-    expect(press(p.ui, 'n').ui.overlay).toBeNull();
-    expect(press(p.ui, 'x').ui.overlay).not.toBeNull();
+    // [y/N]: Enter, n, Esc and any other key cancel.
+    for (const [input, key] of [
+      ['', { return: true }],
+      ['n', {}],
+      ['x', {}],
+      ['', { escape: true }],
+    ] as const) {
+      const r = press(p.ui, input, key);
+      expect(r.command).toBeUndefined();
+      expect(r.ui.overlay).toBeNull();
+    }
   });
 
-  it('a approves at once; A asks first; d opens a reason prompt', () => {
+  it('approving always goes through the whole card; A asks (y only); d prompts for a reason', () => {
     const ui: Ui = { ...INITIAL_UI, focus: 'approvals' };
-    expect(press(ui, 'a').command).toEqual({ kind: 'approve', approvalId: 'apr_1', always: false });
-    const always = press(ui, 'A');
-    expect(always.ui.overlay).toMatchObject({ kind: 'confirm', message: /Always allow/ });
-    expect(press(always.ui, '', { return: true }).command).toEqual({
+    const opened = press(ui, 'a');
+    expect(opened.command).toBeUndefined();
+    expect(opened.ui.overlay).toEqual({ kind: 'card', approvalId: 'apr_1', scroll: 0 });
+    expect(press(ui, '', { return: true }).ui.overlay).toMatchObject({ kind: 'card' });
+    expect(press(opened.ui, 'j').ui.overlay).toMatchObject({ scroll: 1 });
+    expect(press(opened.ui, 'a').command).toEqual({
+      kind: 'approve',
+      approvalId: 'apr_1',
+      always: false,
+    });
+    const always = press(opened.ui, 'A');
+    expect(always.ui.overlay).toMatchObject({ kind: 'confirm', message: /with any arguments/ });
+    expect(press(always.ui, '', { return: true }).command).toBeUndefined();
+    expect(press(always.ui, 'y').command).toEqual({
       kind: 'approve',
       approvalId: 'apr_1',
       always: true,
     });
+    expect(press(opened.ui, '', { escape: true }).ui.overlay).toBeNull();
     let deny = press(ui, 'd').ui;
     for (const ch of 'not now') deny = press(deny, ch).ui;
     deny = press(deny, '', { backspace: true }).ui;
@@ -68,6 +88,38 @@ describe('TUI key model', () => {
     });
     expect(press(press(ui, 'd').ui, '', { return: true }).command).toMatchObject({ reason: null });
     expect(press(press(ui, 'd').ui, '', { escape: true }).ui.overlay).toBeNull();
+  });
+
+  it('a card replaced under the cursor is never acted on by the next key (selection by id)', () => {
+    const two = data({ approvals: [approval('apr_1'), approval('apr_2')] });
+    let ui = reconcile({ ...INITIAL_UI, focus: 'approvals' }, two);
+    expect(ui).toMatchObject({ approvalId: 'apr_1', approvalMoved: false });
+    // apr_1 is decided elsewhere: the cursor lands on apr_2, flagged.
+    ui = reconcile(ui, data({ approvals: [approval('apr_2')] }));
+    expect(ui).toMatchObject({ approvalId: 'apr_2', approvalIndex: 0, approvalMoved: true });
+    const ignored = press(ui, 'a', {}, data({ approvals: [approval('apr_2')] }));
+    expect(ignored.ui.overlay).toBeNull();
+    expect(ignored.ui.toast?.text).toMatch(/selected card changed/);
+    expect(
+      press(ignored.ui, 'a', {}, data({ approvals: [approval('apr_2')] })).ui.overlay,
+    ).toMatchObject({
+      kind: 'card',
+      approvalId: 'apr_2',
+    });
+    // A card inserted above keeps the selection on the same card.
+    const shifted = reconcile(
+      { ...ui, approvalMoved: false },
+      data({ approvals: [approval('apr_0'), approval('apr_2')] }),
+    );
+    expect(shifted).toMatchObject({ approvalId: 'apr_2', approvalIndex: 1, approvalMoved: false });
+    // An open card closes when its approval disappears.
+    const open: Ui = { ...shifted, overlay: { kind: 'card', approvalId: 'apr_2', scroll: 0 } };
+    expect(reconcile(open, data({ approvals: [approval('apr_0')] })).overlay).toBeNull();
+  });
+
+  it('a pane-specific key elsewhere says where it works', () => {
+    expect(press(INITIAL_UI, 'a').ui.toast?.text).toMatch(/Approvals — press 3/);
+    expect(press({ ...INITIAL_UI, focus: 'approvals' }, 'r').ui.toast?.text).toMatch(/Bots pane/);
   });
 
   it('approval keys do nothing when nothing is pending', () => {
@@ -96,7 +148,8 @@ describe('TUI key model', () => {
 
   it('help overlay opens with ? and swallows keys until closed', () => {
     const help = press(INITIAL_UI, '?').ui;
-    expect(help.overlay).toEqual({ kind: 'help' });
+    expect(help.overlay).toEqual({ kind: 'help', scroll: 0 });
+    expect(press(help, 'j').ui.overlay).toEqual({ kind: 'help', scroll: 1 });
     expect(press(help, 'r').command).toBeUndefined();
     expect(press(help, '', { escape: true }).ui.overlay).toBeNull();
   });
@@ -110,7 +163,8 @@ describe('TUI key model', () => {
     const ui: Ui = { ...INITIAL_UI, botIndex: 2, runIndex: 4, approvalIndex: 3 };
     const d = data({ bots: [bot('bot_a', 'Alpha')], approvals: [approval('apr_1')] });
     expect(reconcile(ui, d)).toMatchObject({ botIndex: 0, runIndex: 1, approvalIndex: 0 });
-    expect(reconcile(INITIAL_UI, data())).toBe(INITIAL_UI);
+    const settled = reconcile(INITIAL_UI, data());
+    expect(reconcile(settled, data())).toBe(settled);
     expect(run('x', 'bot_a', 'queued').status).toBe('queued');
   });
 });

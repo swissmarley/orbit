@@ -4,9 +4,11 @@ import { type painter } from './io';
 
 type Paint = ReturnType<typeof painter>;
 
-// C0/C1 controls (but newline and tab), DEL, and bidi overrides/isolates.
-// eslint-disable-next-line no-control-regex
-const CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
+// C0/C1 controls (but newline and tab), DEL, bidi marks/overrides/isolates,
+// zero-width characters and line/paragraph separators.
+const CONTROLS =
+  // eslint-disable-next-line no-control-regex
+  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/g;
 
 /**
  * Neutralise terminal escapes in text a model, tool or web page wrote: an
@@ -16,7 +18,8 @@ export function scrubControls(text: string): string {
   return text.replace(CONTROLS, '\ufffd');
 }
 
-function scrubDeep<T>(value: T): T {
+/** Every string inside `value` scrubbed (for data shown in a terminal). */
+export function scrubDeep<T>(value: T): T {
   if (typeof value === 'string') return scrubControls(value) as T;
   if (Array.isArray(value)) return value.map(scrubDeep) as T;
   if (value && typeof value === 'object') {
@@ -127,9 +130,12 @@ export function renderEvent(raw: RunEvent, paint: Paint, cwd: string | null): st
       return `${indent}${paint('yellow', '⚙')} ${paint('bold', e.data.name)} ${paint('dim', summarizeToolInput(e.data.name, e.data.input, cwd))}`;
     case 'permission.decision': {
       const tier = e.data.tier ? paint('dim', ` [${e.data.tier}]`) : '';
-      return e.data.behavior === 'allow'
-        ? `${paint('green', `      ✓ allowed — ${e.data.reason}`)}${tier}`
-        : `${paint('red', `      ✗ denied — ${e.data.reason}`)}${tier}`;
+      if (e.data.behavior === 'allow')
+        return `${paint('green', `      ✓ allowed — ${e.data.reason}`)}${tier}`;
+      // A call held for an approval is a pause, not a failure.
+      if (e.data.approvalId && e.data.reason.startsWith('Waiting for your owner'))
+        return `${paint('magenta', `      ⏸ held for your approval (${e.data.approvalId})`)}${tier}`;
+      return `${paint('red', `      ✗ denied — ${e.data.reason}`)}${tier}`;
     }
     case 'approval.requested':
       return `  ${paint('magenta', '⚑ approval needed')} ${paint('bold', e.data.summary)} ${paint('dim', `(${e.data.approvalId})`)}`;
@@ -222,5 +228,5 @@ export function renderRunRow(r: RunState, paint: Paint): string {
     waiting_approval: 'magenta',
     paused: 'yellow',
   };
-  return `${r.runId}  ${paint(status[r.status] ?? 'white', r.status.padEnd(14))} ${paint('dim', r.createdAt)}  ${oneLine(r.prompt, 60)}`;
+  return `${r.runId}  ${paint(status[r.status] ?? 'white', r.status.padEnd(14))} ${paint('dim', r.createdAt)}  ${oneLine(scrubControls(r.prompt), 60)}`;
 }

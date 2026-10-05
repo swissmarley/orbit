@@ -3,6 +3,7 @@ import { type BotSpecInput, OrbitError } from '@orbit/core';
 import { parse as parseYaml } from 'yaml';
 import type { Context } from '../context';
 import { painter } from '../io';
+import { scrubControls } from '../render';
 
 export interface BotCreateOptions {
   file?: string;
@@ -81,7 +82,7 @@ export async function botList(ctx: Context, o: { json?: boolean }): Promise<numb
       b.spec.triggers.length ? p('dim', `${b.spec.triggers.length} trigger(s)`) : '',
     ].filter(Boolean);
     ctx.io.out(
-      `${p('bold', b.spec.name.padEnd(24))} ${p('dim', `v${b.version}`)}  ${b.spec.goal}${flags.length ? `  ${flags.join(' ')}` : ''}`,
+      `${p('bold', scrubControls(b.spec.name).padEnd(24))} ${p('dim', `v${b.version}`)}  ${scrubControls(b.spec.goal)}${flags.length ? `  ${flags.join(' ')}` : ''}`,
     );
   }
   return 0;

@@ -2,7 +2,7 @@
 
 > Working name: **Orbit**. Self-hostable platform of always-on, goal-driven AI
 > agents ("Bots") powered by Claude Code and the Claude Agent SDK.
-> Status: **M3 complete; M4 next.**
+> Status: **M4 complete; M5 next.**
 > Owner of this document: lead engineer (Claude). Update it at every milestone.
 
 ## 0. Starting point
@@ -335,7 +335,7 @@ PLAN.md, ADRs, `.claude/agents` + `.claude/skills`.
   them until then).
   **Done when:** API contract tests + SSE resume test + scheduler/queue tests pass.
 
-### M4 — TUI complete
+### M4 — TUI complete ✅
 
 Three panes (Bots / timeline / approvals+context), vim keys, `?` overlay,
 mouse optional, status bar (driver, auth method, usage-limit), diff rendering,
@@ -343,6 +343,33 @@ approvals in TUI; commands `orbit bot create|list|run|pause|logs`,
 `orbit approve <id>`, `orbit tail <run>`, `orbit doctor`, `orbit login-help`,
 `--json` everywhere, exit codes, shell completions (bash/zsh/fish); 16-color
 and narrow-width layouts. Snapshot tests (ink-testing-library).
+
+- Shipped: `orbit` (alone, in a terminal) / `orbit tui`: Ink 8 TUI over
+  `@orbit/sdk-client` with three panes (Bots + run history, live timeline,
+  approval cards with diffs), a status bar ordered by importance (kill
+  switch, usage-limit hold, connection, queue, driver/auth), vim keys, `?`
+  help with a symbol legend, pane-aware footer hints, a full-screen card view
+  that every approval goes through, deny-with-reason prompt, `y`-only
+  confirmations, a tabbed one-pane layout below 100 columns, height-aware
+  overlays down to 40×12, 16 basic colours plus non-colour focus cues, and
+  NO_COLOR honoured. CLI: `orbit tail`, `bot run|logs`, `--json` on every
+  data command (JSON errors on stdout), `orbit completion bash|zsh|fish`.
+- Tests: key handling is a pure model (`onKey`) unit-tested without a
+  terminal; frames are snapshot-tested at several sizes with an in-memory
+  harness (`apps/orbit-tui/test/render.ts`, replacing ink-testing-library,
+  whose terminal is fixed at 100 columns); one test drives the TUI against a
+  real in-process orbitd; a real-terminal (pty) smoke run passed.
+- Reviews: safety — no CRITICAL/HIGH; all hard constraints PASS. Fixed:
+  terminal-escape injection from model/tool text everywhere it is shown
+  (TUI and CLI, incl. conceal and OSC 52), approval selection tracked by id
+  with a no-op on a card replaced under the cursor, approving only from the
+  full card, `y`-only confirmations, explicit always-allow scope, quoting
+  guard for completion names, redacted error hints, wider control-character
+  set. UI review — fixed focus without colour, overlay heights, loading
+  state, status-bar priority, approvals count in narrow mode, readable full
+  card, timeline scroll clamping, distinct symbols, out-of-pane key hints.
+  Also fixed a time-bombed API test (the usage-limit fixture resets at a
+  fixed instant; the test clock is now pinned).
 
 ### M5 — App
 
@@ -447,3 +474,6 @@ milestone that will pick them up. Shipped code paths contain no TODO stubs.
 | Loopback MCP endpoint `/mcp/orbit` (Orbit tools for Bots: memory, delegation)                                                                                                             | M3   | M6                                                   | its first tools arrive with memory and peer delegation                                                                                                     |
 | Packaged `orbitd` bin (the CLI starts the TypeScript bin through tsx in the dev tree)                                                                                                     | M3   | M8                                                   | packaging milestone                                                                                                                                        |
 | Automatic retry of Runs interrupted by a daemon stop (today: `run.failed: interrupted`, retryable, run it again)                                                                          | M3   | M8                                                   | needs an idempotency story for tool side effects                                                                                                           |
+| Mouse support in the TUI ("mouse optional")                                                                                                                                               | M4   | M8                                                   | keyboard covers every action; Ink mouse input needs raw escape parsing                                                                                     |
+| TUI selection of Bots by id (approvals already are); local-time and relative times everywhere (TUI run list shows UTC HH:MM, `orbit runs` ISO)                                            | M4   | M5                                                   | shared status/time vocabulary arrives with the App's design tokens                                                                                         |
+| Dynamic shell completion of Bot names and run ids                                                                                                                                         | M4   | M8                                                   | would start the daemon from the shell's completion hook                                                                                                    |

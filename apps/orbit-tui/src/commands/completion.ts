@@ -8,10 +8,22 @@ interface Node {
   children: Node[];
 }
 
+/** Names end up inside shell quotes: only plain words are allowed (review F6). */
+const SAFE_COMMAND = /^[a-z0-9][a-z0-9-]*$/;
+const SAFE_OPTION = /^--?[a-zA-Z0-9][a-zA-Z0-9-]*$/;
+
 function tree(cmd: Command): Node {
+  const name = cmd.name();
+  if (!SAFE_COMMAND.test(name)) throw new Error(`Unsafe command name for completion: ${name}`);
+  const options = cmd.options.flatMap((o) =>
+    [o.long, o.short].filter((x): x is string => Boolean(x)),
+  );
+  for (const o of options) {
+    if (!SAFE_OPTION.test(o)) throw new Error(`Unsafe option for completion: ${o}`);
+  }
   return {
-    name: cmd.name(),
-    options: cmd.options.flatMap((o) => [o.long, o.short].filter((x): x is string => Boolean(x))),
+    name,
+    options,
     children: cmd.commands.filter((c) => c.name() !== 'help').map(tree),
   };
 }

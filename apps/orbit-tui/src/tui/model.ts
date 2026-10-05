@@ -22,6 +22,8 @@ export interface Data {
   /** Events of the selected Run, in order. */
   events: RunEvent[];
   connected: boolean;
+  /** The first load finished (until then: "connecting…", never empty states). */
+  loaded: boolean;
   error: string | null;
 }
 
@@ -34,11 +36,14 @@ export const EMPTY_DATA: Data = {
   kill: null,
   events: [],
   connected: false,
+  loaded: false,
   error: null,
 };
 
 export type Overlay =
-  | { kind: 'help' }
+  | { kind: 'help'; scroll: number }
+  /** The whole approval card, unclipped: approving always happens from here. */
+  | { kind: 'card'; approvalId: string; scroll: number }
   | { kind: 'confirm'; message: string; command: Command }
   | { kind: 'deny'; approvalId: string; text: string };
 
@@ -48,6 +53,10 @@ export interface Ui {
   /** 0 = the selected Bot's newest Run. */
   runIndex: number;
   approvalIndex: number;
+  /** The approval the user selected, tracked by id (indexes shift when cards come and go). */
+  approvalId: string | null;
+  /** The selected card was replaced under the cursor: decision keys are ignored once. */
+  approvalMoved: boolean;
   /** Timeline lines scrolled up from the bottom (0 = follow live). */
   scroll: number;
   overlay: Overlay | null;
@@ -59,6 +68,8 @@ export const INITIAL_UI: Ui = {
   botIndex: 0,
   runIndex: 0,
   approvalIndex: 0,
+  approvalId: null,
+  approvalMoved: false,
   scroll: 0,
   overlay: null,
   toast: null,
@@ -105,7 +116,13 @@ export function selectedRun(data: Data, ui: Ui): RunState | undefined {
 }
 
 export function selectedApproval(data: Data, ui: Ui): Approval | undefined {
+  if (ui.approvalId !== null) return data.approvals.find((a) => a.id === ui.approvalId);
   return data.approvals[Math.min(ui.approvalIndex, data.approvals.length - 1)];
+}
+
+/** Confirmation text for "always allow" (says how broad it is). */
+export function alwaysAllowMessage(a: Approval): string {
+  return `Always allow ${a.toolName} for ${a.card.botName}, with any arguments, for 7 days? (Runs that read untrusted content still ask.)`;
 }
 
 const clamp = (n: number, max: number) => Math.max(0, Math.min(n, Math.max(0, max)));
@@ -125,11 +142,40 @@ export function onKey(ui: Ui, data: Data, input: string, key: KeyInfo): KeyResul
   // ── overlays capture input ───────────────────────────────────────────────
   const o = ui.overlay;
   if (o?.kind === 'help') {
-    return input === '?' || input === 'q' || key.escape ? next({ overlay: null }) : { ui };
+    if (input === '?' || input === 'q' || key.escape) return next({ overlay: null });
+    if (input === 'j' || key.downArrow)
+      return { ui: { ...ui, overlay: { ...o, scroll: o.scroll + 1 } } };
+    if (input === 'k' || key.upArrow) {
+      return { ui: { ...ui, overlay: { ...o, scroll: Math.max(0, o.scroll - 1) } } };
+    }
+    return { ui };
   }
   if (o?.kind === 'confirm') {
-    if (input === 'y' || key.return) return next({ overlay: null }, o.command);
-    if (input === 'n' || key.escape) return next({ overlay: null });
+    // Only an explicit y confirms; anything else (Enter included) cancels.
+    if (input === 'y') return next({ overlay: null }, o.command);
+    return next({ overlay: null, toast: { text: 'Cancelled', tone: 'info' } });
+  }
+  if (o?.kind === 'card') {
+    const card = data.approvals.find((a) => a.id === o.approvalId);
+    if (key.escape || input === 'q' || !card) return next({ overlay: null });
+    if (input === 'j' || key.downArrow)
+      return { ui: { ...ui, overlay: { ...o, scroll: o.scroll + 1 } } };
+    if (input === 'k' || key.upArrow) {
+      return { ui: { ...ui, overlay: { ...o, scroll: Math.max(0, o.scroll - 1) } } };
+    }
+    if (input === 'a') {
+      return next({ overlay: null }, { kind: 'approve', approvalId: card.id, always: false });
+    }
+    if (input === 'A') {
+      return next({
+        overlay: {
+          kind: 'confirm',
+          message: alwaysAllowMessage(card),
+          command: { kind: 'approve', approvalId: card.id, always: true },
+        },
+      });
+    }
+    if (input === 'd') return next({ overlay: { kind: 'deny', approvalId: card.id, text: '' } });
     return { ui };
   }
   if (o?.kind === 'deny') {
@@ -151,7 +197,7 @@ export function onKey(ui: Ui, data: Data, input: string, key: KeyInfo): KeyResul
 
   // ── global keys ──────────────────────────────────────────────────────────
   if (input === 'q' || (key.ctrl && input === 'c')) return next({}, { kind: 'quit' });
-  if (input === '?') return next({ overlay: { kind: 'help' } });
+  if (input === '?') return next({ overlay: { kind: 'help', scroll: 0 } });
   if (input === 'R') return next({}, { kind: 'refresh' });
   if (key.tab) {
     const i = PANES.indexOf(ui.focus);
@@ -237,39 +283,80 @@ export function onKey(ui: Ui, data: Data, input: string, key: KeyInfo): KeyResul
     }
     case 'approvals': {
       if (down || up) {
+        const approvalIndex = clamp(ui.approvalIndex + (down ? 1 : -1), data.approvals.length - 1);
         return next({
-          approvalIndex: clamp(ui.approvalIndex + (down ? 1 : -1), data.approvals.length - 1),
+          approvalIndex,
+          approvalId: data.approvals[approvalIndex]?.id ?? null,
+          approvalMoved: false,
         });
       }
       const approval = selectedApproval(data, ui);
       if (!approval) break;
-      if (input === 'a')
-        return next({}, { kind: 'approve', approvalId: approval.id, always: false });
-      if (input === 'A') {
+      const decision = input === 'a' || input === 'A' || input === 'd' || key.return;
+      if (decision && ui.approvalMoved) {
+        // The card under the cursor changed since the user looked (decided
+        // elsewhere, expired): never act on one they did not choose.
         return next({
-          overlay: {
-            kind: 'confirm',
-            message: `Always allow ${approval.toolName} for ${approval.card.botName} (7 days)?`,
-            command: { kind: 'approve', approvalId: approval.id, always: true },
-          },
+          approvalMoved: false,
+          toast: { text: 'The selected card changed — review it, then press again', tone: 'error' },
         });
+      }
+      // Approving always goes through the full, unclipped card.
+      if (input === 'a' || input === 'A' || key.return) {
+        return next({ overlay: { kind: 'card', approvalId: approval.id, scroll: 0 } });
       }
       if (input === 'd')
         return next({ overlay: { kind: 'deny', approvalId: approval.id, text: '' } });
       break;
     }
   }
+  // A pane-specific key pressed elsewhere: say where it works instead of ignoring it.
+  const where: Record<string, [PaneId, string]> = {
+    a: ['approvals', 'a approves in Approvals — press 3'],
+    A: ['approvals', 'A (always allow) works in Approvals — press 3'],
+    d: ['approvals', 'd denies in Approvals — press 3'],
+    s: ['timeline', 's stops a Run from the Timeline — press 2'],
+    u: ['timeline', 'u resumes a Run from the Timeline — press 2'],
+    r: ['bots', 'r runs a Bot from the Bots pane — press 1'],
+    p: ['bots', 'p pauses a Bot from the Bots pane — press 1'],
+  };
+  const hint = where[input];
+  if (hint && hint[0] !== ui.focus) return next({ toast: { text: hint[1], tone: 'info' } });
   return { ui };
 }
 
-/** Keep selections valid after the data changed (Bots or approvals disappeared). */
+/**
+ * Keep selections valid after the data changed. The approval selection
+ * follows its id; when that card disappears the cursor lands on another one
+ * and `approvalMoved` makes the next decision key a no-op (review F2).
+ */
 export function reconcile(ui: Ui, data: Data): Ui {
   const botIndex = clamp(ui.botIndex, data.bots.length - 1);
   const runIndex = clamp(ui.runIndex, runsOf(data, data.bots[botIndex]?.id).length - 1);
-  const approvalIndex = clamp(ui.approvalIndex, data.approvals.length - 1);
-  if (botIndex === ui.botIndex && runIndex === ui.runIndex && approvalIndex === ui.approvalIndex)
+  let { approvalIndex, approvalId, approvalMoved, overlay } = ui;
+  const at = approvalId === null ? -1 : data.approvals.findIndex((a) => a.id === approvalId);
+  if (at >= 0) {
+    approvalIndex = at;
+  } else {
+    approvalIndex = clamp(approvalIndex, data.approvals.length - 1);
+    const replacement = data.approvals[approvalIndex]?.id ?? null;
+    if (approvalId !== null && replacement !== null) approvalMoved = true;
+    approvalId = replacement;
+  }
+  const overlayCard =
+    overlay?.kind === 'card' || overlay?.kind === 'deny' ? overlay.approvalId : null;
+  if (overlayCard !== null && !data.approvals.some((a) => a.id === overlayCard)) overlay = null;
+  if (
+    botIndex === ui.botIndex &&
+    runIndex === ui.runIndex &&
+    approvalIndex === ui.approvalIndex &&
+    approvalId === ui.approvalId &&
+    approvalMoved === ui.approvalMoved &&
+    overlay === ui.overlay
+  ) {
     return ui;
-  return { ...ui, botIndex, runIndex, approvalIndex };
+  }
+  return { ...ui, botIndex, runIndex, approvalIndex, approvalId, approvalMoved, overlay };
 }
 
 /** Keys shown by the help overlay (single source for docs and the overlay). */
@@ -282,11 +369,27 @@ export const HELP: readonly { keys: string; does: string }[] = [
   { keys: 's', does: 'stop the selected Run (Timeline)' },
   { keys: 'u', does: 'resume a parked or rate-limited Run (Timeline)' },
   { keys: 'g G', does: 'Timeline top / follow live' },
-  { keys: 'a', does: 'approve the selected card' },
-  { keys: 'A', does: 'approve and always allow this tool for the Bot (7 days)' },
+  { keys: 'Enter / a', does: 'open the whole card; a there approves' },
+  { keys: 'A (in the card)', does: 'approve and always allow this tool for the Bot (7 days)' },
   { keys: 'd', does: 'deny, with a reason the Bot will see' },
-  { keys: 'K', does: 'global kill switch (asks first)' },
+  { keys: 'K', does: 'global kill switch (asks first; only y confirms)' },
   { keys: 'R', does: 'refresh' },
-  { keys: '?', does: 'this help' },
-  { keys: 'q', does: 'quit (Bots keep running in orbitd)' },
+  { keys: 'Enter', does: 'Bots: open the Timeline · Approvals: open the card' },
+  { keys: 'Esc', does: 'close a card, prompt or this help' },
+  { keys: 'y', does: 'confirm a question (any other key cancels)' },
+  { keys: '?', does: 'this help (j/k scroll)' },
+  { keys: 'q, Ctrl-C', does: 'quit (Bots keep running in orbitd)' },
+];
+
+/** Status symbols (also spelled out next to Runs), for the help overlay. */
+export const LEGEND: readonly { mark: string; means: string }[] = [
+  { mark: '●', means: 'running' },
+  { mark: '◆', means: 'waiting for your approval' },
+  { mark: '⧗', means: 'usage limit — resumes later' },
+  { mark: '⏸', means: 'Bot paused' },
+  { mark: '✔', means: 'done' },
+  { mark: '✘', means: 'failed' },
+  { mark: '■', means: 'cancelled' },
+  { mark: '·', means: 'queued' },
+  { mark: '⚑n', means: 'n approvals pending for this Bot' },
 ];

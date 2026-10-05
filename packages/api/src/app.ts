@@ -72,7 +72,11 @@ export function createApp(opts: AppOptions): Hono {
   const { service } = opts;
   // Error text can quote tool, git or engine output: redact with the vault-aware redactor (L1).
   const errorBody = (code: string, message: string, hint: string | null = null): ErrorBody => ({
-    error: { code, message: service.redactor.redactString(message), hint },
+    error: {
+      code,
+      message: service.redactor.redactString(message),
+      hint: hint === null ? null : service.redactor.redactString(hint),
+    },
   });
   const app = new Hono();
   // Lazy: orbitd knows its port only after it listens.

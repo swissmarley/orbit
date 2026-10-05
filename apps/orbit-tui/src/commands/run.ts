@@ -199,7 +199,7 @@ export async function schedulesShow(
   const names = new Map(bots.map((b) => [b.id, b.spec.name]));
   for (const e of entries) {
     ctx.io.out(
-      `${p('bold', (names.get(e.botId) ?? e.botId).padEnd(20))} ${e.description.padEnd(28)} ${
+      `${p('bold', scrubControls(names.get(e.botId) ?? e.botId).padEnd(20))} ${scrubControls(e.description).padEnd(28)} ${
         e.nextAt
           ? `next ${formatLocalTime(e.nextAt)}`
           : p('dim', e.enabled ? 'not scheduled' : 'off')
