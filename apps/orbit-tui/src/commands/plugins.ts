@@ -6,6 +6,7 @@ import {
   PLUGIN_STATE,
   type PluginStatus,
   TIER_WORD,
+  TRIGGER_KIND_WORD,
   TRIGGER_STATE,
   type Tone,
 } from '@orbit/core';
@@ -28,10 +29,13 @@ const TONE: Record<Tone, Color> = {
 
 const json = (ctx: Context, value: unknown) => ctx.io.out(JSON.stringify(value, null, 2));
 
-function stateWord(p: Paint, s: PluginStatus['state']): string {
+/** Pad the plain words, then paint (escape codes must not count as width). */
+function stateWord(p: Paint, s: PluginStatus['state'], width = 0): string {
   const w = PLUGIN_STATE[s];
-  return p(TONE[w.tone], `${w.mark} ${w.label}`);
+  return p(TONE[w.tone], `${w.mark} ${w.label}`.padEnd(width));
 }
+
+const TIER_ORDER = ['READ', 'WRITE_LOCAL', 'EXTERNAL', 'FINANCIAL'] as const;
 
 export async function pluginsList(ctx: Context, o: { json?: boolean }): Promise<number> {
   const list = await (await ctx.client()).plugins.list();
@@ -49,7 +53,7 @@ export async function pluginsList(ctx: Context, o: { json?: boolean }): Promise<
       ? `used by ${pl.bots.map((b) => clean(b.name)).join(', ')}`
       : 'no Bot uses it';
     ctx.io.out(
-      `${stateWord(p, pl.state).padEnd(20)} ${p('bold', pl.id.padEnd(12))} ${clean(pl.name)}  ${p('dim', `${pl.tools.length} tools · ${used}`)}`,
+      `${stateWord(p, pl.state, 14)} ${p('bold', clean(pl.id).padEnd(12))} ${clean(pl.name)}  ${p('dim', `${pl.tools.length} tools · ${used}`)}`,
     );
   }
   ctx.io.out(p('dim', '\nDetails: orbit plugin show <id>'));
@@ -58,24 +62,29 @@ export async function pluginsList(ctx: Context, o: { json?: boolean }): Promise<
 
 export function renderPlugin(pl: PluginStatus, p: Paint): string[] {
   const lines = [
-    `${p('bold', clean(pl.name))} ${p('dim', `(${pl.id} ${pl.version}${pl.builtIn ? ', ships with Orbit' : ''})`)}  ${stateWord(p, pl.state)}`,
+    `${p('bold', clean(pl.name))} ${p('dim', `(${clean(pl.id)} ${clean(pl.version)}${pl.builtIn ? ', ships with Orbit' : ''})`)}  ${stateWord(p, pl.state)}`,
     `  ${p('dim', PLUGIN_STATE[pl.state].meaning)}`,
   ];
   if (pl.description) lines.push(`  ${clean(pl.description)}`);
   lines.push(`  ${p('dim', 'server')} ${clean(pl.server)}`);
   lines.push('', p('bold', 'Tools'));
-  for (const t of pl.tools) {
+  const tools = [...pl.tools].sort(
+    (a, b) =>
+      TIER_ORDER.indexOf(a.tier) - TIER_ORDER.indexOf(b.tier) || a.name.localeCompare(b.name),
+  );
+  const nameWidth = Math.max(0, ...tools.map((t) => t.name.length));
+  for (const t of tools) {
     const w = TIER_WORD[t.tier];
     const avail = t.available === false ? p('red', ' (not offered by the server)') : '';
     lines.push(
-      `  ${p(TONE[w.tone], `${w.mark} ${w.label}`.padEnd(14))} ${t.name}${t.egress ? p('dim', ' · egress') : ''}${avail}  ${p('dim', clean(t.description))}`,
+      `  ${p(TONE[w.tone], `${w.mark} ${w.label}`.padEnd(14))} ${clean(t.name).padEnd(nameWidth)}${t.egress ? p('dim', ' · reaches any address') : ''}${avail}  ${p('dim', clean(t.description))}`,
     );
   }
   if (pl.secrets.length) {
     lines.push('', p('bold', 'Secrets') + p('dim', ' (only this plugin receives them)'));
     for (const s of pl.secrets) {
       lines.push(
-        `  ${s.set ? p('green', '✔ set    ') : p(s.required ? 'magenta' : 'dim', s.required ? '◌ missing' : '○ not set')} ${s.name}  ${p('dim', clean(s.description))}`,
+        `  ${s.set ? p('green', '✔ set    ') : p(s.required ? 'magenta' : 'dim', s.required ? '◌ missing' : '○ not set')} ${clean(s.name)}  ${p('dim', clean(s.description))}`,
       );
     }
   }
@@ -84,12 +93,15 @@ export function renderPlugin(pl: PluginStatus, p: Paint): string[] {
     for (const s of pl.settings) {
       const v = s.value ?? (s.default !== null ? `${s.default} (default)` : null);
       lines.push(
-        `  ${s.name} = ${v === null ? p(s.required ? 'magenta' : 'dim', s.required ? '(required, not set)' : '(not set)') : clean(v)}  ${p('dim', clean(s.description))}`,
+        `  ${clean(s.name)} = ${v === null ? p(s.required ? 'magenta' : 'dim', s.required ? '(required, not set)' : '(not set)') : clean(v)}  ${p('dim', clean(s.description))}`,
       );
     }
   }
   if (pl.env.length)
-    lines.push('', `${p('bold', 'Reads from orbitd’s environment')} ${pl.env.join(', ')}`);
+    lines.push(
+      '',
+      `${p('bold', 'Reads from orbitd’s environment')} ${pl.env.map(clean).join(', ')}`,
+    );
   lines.push(
     '',
     `${p('bold', 'Bots')} ${pl.bots.length ? pl.bots.map((b) => clean(b.name)).join(', ') : p('dim', 'none list it yet (add its id to a Bot’s plugins)')}`,
@@ -179,7 +191,9 @@ export async function pluginRemove(
 ): Promise<number> {
   await (await ctx.client()).plugins.remove(id);
   ctx.io.out(
-    o.json ? JSON.stringify({ id, removed: true }) : `Removed plugin ${id} and its secrets`,
+    o.json
+      ? JSON.stringify({ id, removed: true }, null, 2)
+      : `Removed plugin ${clean(id)} and its secrets`,
   );
   return 0;
 }
@@ -234,7 +248,8 @@ export async function pluginSetting(
     ctx,
     o,
     () => c.plugins.setSetting(id, name, o.clear ? null : (value ?? null)),
-    () => (o.clear ? `Cleared ${name}.` : `${name} set.`),
+    (pl) =>
+      `${o.clear ? `Cleared ${clean(name)}` : `${clean(name)} set`} for ${clean(pl.name)}.${pl.enabled ? '' : ` Turn it on with: orbit plugin enable ${clean(pl.id)}`}`,
   );
 }
 
@@ -254,7 +269,7 @@ export async function triggersList(ctx: Context, o: { json?: boolean }): Promise
   for (const t of list) {
     const w = TRIGGER_STATE[t.state];
     ctx.io.out(
-      `${p(TONE[w.tone], `${w.mark} ${w.label}`.padEnd(14))} ${p('bold', clean(t.botName))}  ${t.kind.padEnd(8)} ${clean(t.description)}${t.path ? p('dim', `  POST ${t.path}`) : ''}${t.detail ? p('dim', `  (${clean(t.detail)})`) : ''}`,
+      `${p(TONE[w.tone], `${w.mark} ${w.label}`.padEnd(14))} ${p('bold', clean(t.botName))}  ${TRIGGER_KIND_WORD[t.kind].padEnd(8)} ${clean(t.description)}${t.path ? p('dim', `  POST ${clean(t.path)}`) : ''}${t.detail ? p('dim', `  (${clean(t.detail)})`) : ''}`,
     );
   }
   return 0;
@@ -264,9 +279,21 @@ export async function webhookSecret(
   ctx: Context,
   bot: string,
   trigger: string,
-  o: { json?: boolean },
+  o: { json?: boolean; rotate?: boolean },
 ): Promise<number> {
   const c = await ctx.client();
+  // Rotating kills the old secret at once: only on purpose.
+  const existing = (await c.triggers.list()).find(
+    (t) =>
+      t.kind === 'webhook' &&
+      t.path?.endsWith(`/${trigger}`) &&
+      (t.botId === bot || t.botName === bot || t.botName.toLowerCase() === bot.toLowerCase()),
+  );
+  if (existing && existing.state !== 'needs_setup' && !o.rotate) {
+    throw new OrbitError('invalid_input', `${trigger} already has a signing secret`, {
+      hint: `Add --rotate to replace it (the old one stops working at once).`,
+    });
+  }
   const s = await c.triggers.webhookSecret(bot, trigger);
   if (o.json) {
     json(ctx, s);

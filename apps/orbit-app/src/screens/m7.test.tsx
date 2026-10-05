@@ -45,19 +45,25 @@ describe('Settings → Integrations', () => {
     expect(screen.getAllByTestId('plugin-card')).toHaveLength(5);
     const fs = card('Filesystem');
     expect(within(fs).getByText('off')).toBeTruthy();
-    expect(within(fs).getAllByText('read').length).toBeGreaterThanOrEqual(3);
-    expect(within(fs).getByText('external')).toBeTruthy();
+    expect(within(fs).getByText(/4 tools: 3 read, 1 external/)).toBeTruthy();
+    // Enabling would fail without FS_ROOTS: the card offers "Set up" instead (UI review H3).
+    expect(within(fs).queryByRole('button', { name: /^Enable/ })).toBeNull();
     const user = userEvent.setup();
-
-    // The required setting first.
+    await user.click(
+      within(fs).getByRole('button', { name: /Set up Filesystem: FS_ROOTS missing/ }),
+    );
     const roots = within(fs).getByLabelText('FS_ROOTS');
+    await waitFor(() => expect(document.activeElement).toBe(roots));
+    expect(within(fs).getAllByText('read').length).toBeGreaterThanOrEqual(3);
     await user.type(roots, h.home);
-    await user.click(within(fs).getByRole('button', { name: 'Save' }));
+    await user.click(within(fs).getByRole('button', { name: 'Save FS_ROOTS' }));
     await waitFor(() =>
       expect(h.service.plugins.get('filesystem').settings[0]?.value).toBe(h.home),
     );
 
-    await user.click(within(fs).getByRole('button', { name: /Enable/ }));
+    await user.click(
+      await within(card('Filesystem')).findByRole('button', { name: 'Enable Filesystem' }),
+    );
     const dialog = await screen.findByRole('dialog', { name: /Enable Filesystem\?/ });
     expect(dialog.textContent).toMatch(
       /3 reads \(automatic\), 1 external action \(each asks you\)/,
@@ -77,10 +83,11 @@ describe('Settings → Integrations', () => {
     await screen.findByRole('heading', { name: 'GitHub' });
     const gh = card('GitHub');
     const user = userEvent.setup();
-    const input = within(gh).getByLabelText(/GITHUB_TOKEN/);
+    await user.click(within(gh).getByText('Tools, secrets and settings'));
+    const input = within(gh).getByLabelText('GITHUB_TOKEN (optional)');
     expect(input.getAttribute('type')).toBe('password');
     await user.type(input, 'ghp_appsecret0123456789abcdefghijklmnop');
-    await user.click(within(gh).getByRole('button', { name: /Store/ }));
+    await user.click(within(gh).getByRole('button', { name: 'Store GITHUB_TOKEN' }));
     await waitFor(() => expect(within(card('GitHub')).getByText('set')).toBeTruthy());
     expect(document.body.innerHTML).not.toContain('appsecret');
     expect(h.service.vault.get('plugin_github_GITHUB_TOKEN')).toBe(
@@ -98,7 +105,7 @@ describe('Settings → Integrations', () => {
     m = mountApp('/settings?tab=integrations', { h });
     const row = await screen.findByTestId('inbound-row');
     expect(within(row).getByText('needs setup')).toBeTruthy();
-    expect(within(row).getByText(/POST \/hooks\/bot_.*\/deploys/)).toBeTruthy();
+    expect(within(row).getByText(/^POST http:\/\/.*\/hooks\/bot_.*\/deploys$/)).toBeTruthy();
     await userEvent
       .setup()
       .click(within(row).getByRole('button', { name: /Create signing secret/ }));

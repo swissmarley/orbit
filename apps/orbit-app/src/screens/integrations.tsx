@@ -2,6 +2,7 @@
 import {
   PLUGIN_STATE,
   type PluginStatus,
+  TIER_WORD,
   TRIGGER_KIND_WORD,
   TRIGGER_STATE,
   type Tier,
@@ -9,8 +10,18 @@ import {
 } from '@orbit/core/browser';
 import type { RouteResponse } from '@orbit/sdk-client/browser';
 import { Link } from '@tanstack/react-router';
-import { AlertTriangle, KeyRound, Plug, Power, RefreshCw, Webhook } from 'lucide-react';
-import { useId, useState } from 'react';
+import {
+  AlertTriangle,
+  Copy,
+  KeyRound,
+  Plug,
+  Power,
+  RefreshCw,
+  Settings2,
+  Webhook,
+} from 'lucide-react';
+import { useId, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import { confirmAction } from '../components/confirm';
 import { EmptyState, ErrorState, ListSkeleton } from '../components/states';
 import { TierBadge, Time } from '../components/status';
@@ -48,6 +59,34 @@ export function enableText(p: PluginStatus): string {
   ].join(' ');
 }
 
+/** "12 tools: 7 read, 1 local write, 4 external". */
+export function toolSummary(p: PluginStatus): string {
+  const parts = TIER_ORDER.flatMap((tier) => {
+    const n = p.tools.filter((x) => x.tier === tier).length;
+    return n ? [`${n} ${TIER_WORD[tier].label}`] : [];
+  });
+  return `${p.tools.length} tool${p.tools.length === 1 ? '' : 's'}: ${parts.join(', ')}`;
+}
+
+/** Required secrets or settings that are still missing (enabling would fail). */
+export function missingSetup(p: PluginStatus): string[] {
+  return [
+    ...p.secrets.filter((s) => s.required && !s.set).map((s) => s.name),
+    ...p.settings
+      .filter((s) => s.required && s.value === null && s.default === null)
+      .map((s) => s.name),
+  ];
+}
+
+async function copy(text: string, what: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast.success(`Copied the ${what}`);
+  } catch {
+    toast.error(`Could not copy the ${what}`, { description: 'Select it and copy it by hand.' });
+  }
+}
+
 function StateBadge({ state }: { state: PluginStatus['state'] }) {
   const w = PLUGIN_STATE[state];
   return (
@@ -63,7 +102,7 @@ function SecretRow({ plugin, s }: { plugin: PluginStatus; s: PluginStatus['secre
   const id = useId();
   const [value, setValue] = useState('');
   return (
-    <li className="flex flex-col gap-2 py-2">
+    <li className="flex flex-col gap-1 py-2">
       <form
         className="flex flex-wrap items-end gap-2"
         onSubmit={(e) => {
@@ -77,11 +116,12 @@ function SecretRow({ plugin, s }: { plugin: PluginStatus; s: PluginStatus['secre
         <Field
           id={id}
           label={`${s.name}${s.required ? '' : ' (optional)'}`}
-          {...(s.description ? { hint: t(s.description) } : {})}
           className="min-w-0 flex-1 basis-56"
         >
           <Input
             id={id}
+            {...(s.description ? { 'aria-describedby': `${id}-hint` } : {})}
+            data-field={s.name}
             type="password"
             autoComplete="off"
             value={value}
@@ -89,11 +129,14 @@ function SecretRow({ plugin, s }: { plugin: PluginStatus; s: PluginStatus['secre
             placeholder={s.set ? 'stored — type to replace' : 'not set'}
           />
         </Field>
-        <Badge tone={s.set ? 'success' : s.required ? 'attention' : 'neutral'}>
+        <Badge
+          tone={s.set ? 'success' : s.required ? 'attention' : 'neutral'}
+          className="mb-1.5 min-w-20 justify-center"
+        >
           <span aria-hidden>{s.set ? '✔' : s.required ? '◌' : '○'}</span>
           {s.set ? 'set' : s.required ? 'missing' : 'not set'}
         </Badge>
-        <Button type="submit" size="sm" disabled={!value}>
+        <Button type="submit" size="sm" disabled={!value} aria-label={`Store ${s.name}`}>
           <KeyRound aria-hidden /> Store
         </Button>
         {s.set ? (
@@ -117,6 +160,11 @@ function SecretRow({ plugin, s }: { plugin: PluginStatus; s: PluginStatus['secre
           </Button>
         ) : null}
       </form>
+      {s.description ? (
+        <p id={`${id}-hint`} className="text-xs text-fg-subtle">
+          {t(s.description)}
+        </p>
+      ) : null}
     </li>
   );
 }
@@ -126,7 +174,7 @@ function SettingRow({ plugin, s }: { plugin: PluginStatus; s: PluginStatus['sett
   const id = useId();
   const [value, setValue] = useState(s.value ?? '');
   return (
-    <li className="py-2">
+    <li className="flex flex-col gap-1 py-2">
       <form
         className="flex flex-wrap items-end gap-2"
         onSubmit={(e) => {
@@ -139,11 +187,12 @@ function SettingRow({ plugin, s }: { plugin: PluginStatus; s: PluginStatus['sett
         <Field
           id={id}
           label={`${s.name}${s.required ? '' : ' (optional)'}`}
-          {...(s.description ? { hint: t(s.description) } : {})}
           className="min-w-0 flex-1 basis-56"
         >
           <Input
             id={id}
+            {...(s.description ? { 'aria-describedby': `${id}-hint` } : {})}
+            data-field={s.name}
             value={value}
             maxLength={2000}
             onChange={(e) => setValue(e.target.value)}
@@ -151,10 +200,20 @@ function SettingRow({ plugin, s }: { plugin: PluginStatus; s: PluginStatus['sett
             className="font-mono"
           />
         </Field>
-        <Button type="submit" size="sm" disabled={value === (s.value ?? '')}>
+        <Button
+          type="submit"
+          size="sm"
+          disabled={value === (s.value ?? '')}
+          aria-label={`Save ${s.name}`}
+        >
           Save
         </Button>
       </form>
+      {s.description ? (
+        <p id={`${id}-hint`} className="text-xs text-fg-subtle">
+          {t(s.description)}
+        </p>
+      ) : null}
     </li>
   );
 }
@@ -191,8 +250,24 @@ function PluginCard({ plugin: p }: { plugin: PluginStatus }) {
     (a, b) =>
       TIER_ORDER.indexOf(a.tier) - TIER_ORDER.indexOf(b.tier) || a.name.localeCompare(b.name),
   );
+  const missing = missingSetup(p);
+  const noteId = `${headingId}-note`;
+  // Details stay open for plugins in use; the rest stay short (UI review M2).
+  const [open, setOpen] = useState(p.enabled);
+  const body = useRef<HTMLDivElement>(null);
+  const setUp = () => {
+    setOpen(true);
+    // Focus the first missing field once the details are open.
+    requestAnimationFrame(() => {
+      const field = missing[0];
+      const el = field
+        ? body.current?.querySelector<HTMLInputElement>(`[data-field="${field}"]`)
+        : null;
+      el?.focus();
+    });
+  };
   return (
-    <Card data-testid="plugin-card" aria-labelledby={headingId}>
+    <Card data-testid="plugin-card" role="group" aria-labelledby={headingId}>
       <CardHeader className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -207,11 +282,27 @@ function PluginCard({ plugin: p }: { plugin: PluginStatus }) {
         </div>
         <div className="flex flex-wrap gap-2">
           {p.enabled ? (
-            <Button size="sm" onClick={disable} disabled={busy}>
+            <Button size="sm" onClick={disable} disabled={busy} aria-label={`Disable ${t(p.name)}`}>
               <Power aria-hidden /> Disable
             </Button>
+          ) : missing.length > 0 ? (
+            // Enabling would fail until the required secrets and settings exist (UI review H3).
+            <Button
+              size="sm"
+              onClick={setUp}
+              aria-label={`Set up ${t(p.name)}: ${missing.join(', ')} missing`}
+              aria-describedby={noteId}
+            >
+              <Settings2 aria-hidden /> Set up
+            </Button>
           ) : (
-            <Button size="sm" variant="primary" onClick={enable} disabled={busy}>
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={enable}
+              disabled={busy}
+              aria-label={`Enable ${t(p.name)}`}
+            >
               <Power aria-hidden /> Enable
             </Button>
           )}
@@ -219,7 +310,7 @@ function PluginCard({ plugin: p }: { plugin: PluginStatus }) {
             size="sm"
             variant="ghost"
             onClick={() => act(() => actions.checkPlugin(p))}
-            disabled={busy}
+            disabled={busy || missing.length > 0}
             aria-label={`Check ${t(p.name)}: start it once and list its tools`}
           >
             <RefreshCw aria-hidden /> Check
@@ -230,6 +321,7 @@ function PluginCard({ plugin: p }: { plugin: PluginStatus }) {
         {p.warnings.length || p.error ? (
           <div
             role="note"
+            id={noteId}
             className="flex flex-col gap-1 rounded-md border border-warning/40 bg-warning-bg px-3 py-2 text-sm text-warning"
           >
             {p.error ? (
@@ -246,55 +338,62 @@ function PluginCard({ plugin: p }: { plugin: PluginStatus }) {
             ))}
           </div>
         ) : null}
-        <section aria-label={`${t(p.name)} tools`}>
-          <h4 className="mb-1 text-xs font-medium text-fg-muted">
-            Tools — each has a fixed tier; external ones always ask you
-          </h4>
-          <ul className="flex flex-col gap-1 text-sm">
-            {sorted.map((tool) => (
-              <li key={tool.name} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                <TierBadge tier={tool.tier} />
-                <span className="font-mono text-xs">{tool.name}</span>
-                {tool.egress ? (
-                  <span
-                    className="text-xs text-fg-muted"
-                    title="Bot-chosen addresses: asks you once untrusted content is in the Run"
-                  >
-                    · reaches any address
-                  </span>
-                ) : null}
-                {tool.available === false ? (
-                  <span className="text-xs text-danger">· not offered by the server</span>
-                ) : null}
-                {tool.description ? (
-                  <span className="text-xs text-fg-muted">{t(tool.description)}</span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </section>
-        {p.secrets.length ? (
-          <section aria-label={`${t(p.name)} secrets`}>
-            <h4 className="text-xs font-medium text-fg-muted">
-              Secrets — stored in the vault, only this plugin receives them
-            </h4>
-            <ul className="divide-y divide-border">
-              {p.secrets.map((s) => (
-                <SecretRow key={s.name} plugin={p} s={s} />
-              ))}
-            </ul>
-          </section>
-        ) : null}
-        {p.settings.length ? (
-          <section aria-label={`${t(p.name)} settings`}>
-            <h4 className="text-xs font-medium text-fg-muted">Settings</h4>
-            <ul className="divide-y divide-border">
-              {p.settings.map((s) => (
-                <SettingRow key={s.name} plugin={p} s={s} />
-              ))}
-            </ul>
-          </section>
-        ) : null}
+        <p className="text-sm text-fg-muted">
+          {toolSummary(p)} · each tool has a fixed tier; external ones always ask you
+        </p>
+        <details open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
+          <summary className="cursor-pointer text-sm font-medium text-fg">
+            {missing.length > 0 ? 'Set up and review its tools' : 'Tools, secrets and settings'}
+          </summary>
+          <div ref={body} className="mt-3 flex flex-col gap-4">
+            <section aria-label={`${t(p.name)} tools`}>
+              <ul className="flex flex-col gap-1 text-sm">
+                {sorted.map((tool) => (
+                  <li key={tool.name} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <TierBadge tier={tool.tier} />
+                    <span className="font-mono text-xs">{tool.name}</span>
+                    {tool.egress ? (
+                      <span
+                        className="text-xs text-fg-muted"
+                        title="Bot-chosen addresses: asks you once untrusted content is in the Run"
+                      >
+                        · reaches any address
+                      </span>
+                    ) : null}
+                    {tool.available === false ? (
+                      <span className="text-xs text-danger">· not offered by the server</span>
+                    ) : null}
+                    {tool.description ? (
+                      <span className="text-xs text-fg-muted">{t(tool.description)}</span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </section>
+            {p.secrets.length ? (
+              <section aria-label={`${t(p.name)} secrets`}>
+                <h4 className="text-xs font-medium text-fg-muted">
+                  Secrets — stored in the vault, only this plugin receives them
+                </h4>
+                <ul className="divide-y divide-border">
+                  {p.secrets.map((s) => (
+                    <SecretRow key={s.name} plugin={p} s={s} />
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+            {p.settings.length ? (
+              <section aria-label={`${t(p.name)} settings`}>
+                <h4 className="text-xs font-medium text-fg-muted">Settings</h4>
+                <ul className="divide-y divide-border">
+                  {p.settings.map((s) => (
+                    <SettingRow key={s.name} plugin={p} s={s} />
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+          </div>
+        </details>
         <p className="text-xs text-fg-muted">
           {p.bots.length ? (
             <>
@@ -331,6 +430,10 @@ function InboundRow({ trigger: tr }: { trigger: Inbound }) {
   const [minted, setMinted] = useState<RouteResponse<'webhookSecret'> | null>(null);
   const w = TRIGGER_STATE[tr.state];
   const webhookName = tr.path?.split('/').at(-1) ?? null;
+  const copyButton = useRef<HTMLButtonElement>(null);
+  // The App is served by orbitd: its origin is the address senders use (through a tunnel).
+  const origin = typeof window === 'undefined' ? '' : window.location.origin;
+  const address = tr.path ? `${origin}${tr.path}` : null;
   return (
     <li className="flex flex-col gap-2 py-2 text-sm" data-testid="inbound-row">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -341,9 +444,8 @@ function InboundRow({ trigger: tr }: { trigger: Inbound }) {
         <Link to="/bots/$botId" params={{ botId: tr.botId }} className="font-medium underline">
           {t(tr.botName)}
         </Link>
-        <span className="text-fg-muted">{TRIGGER_KIND_WORD[tr.kind]}</span>
+        <span className="text-fg-muted">· {TRIGGER_KIND_WORD[tr.kind]} ·</span>
         <span className="min-w-0 break-words">{t(tr.description)}</span>
-        {tr.path ? <code className="break-all text-xs text-fg-muted">POST {tr.path}</code> : null}
         {tr.detail ? <span className="text-xs text-fg-muted">({t(tr.detail)})</span> : null}
         {tr.kind === 'webhook' && webhookName ? (
           <Button
@@ -356,10 +458,12 @@ function InboundRow({ trigger: tr }: { trigger: Inbound }) {
                     title: 'Rotate the signing secret?',
                     body: 'The old secret stops working at once; update the sender with the new one.',
                     confirm: 'Rotate',
+                    danger: true,
                   });
                   if (!ok) return;
                 }
                 setMinted(await actions.mintWebhookSecret(tr.botId, webhookName));
+                requestAnimationFrame(() => copyButton.current?.focus());
               })().catch(() => undefined)
             }
           >
@@ -368,6 +472,19 @@ function InboundRow({ trigger: tr }: { trigger: Inbound }) {
           </Button>
         ) : null}
       </div>
+      {address ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <code className="break-all text-xs text-fg-muted">POST {address}</code>
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-label={`Copy the webhook address of ${t(tr.description)}`}
+            onClick={() => void copy(address, 'webhook address')}
+          >
+            <Copy aria-hidden /> Copy
+          </Button>
+        </div>
+      ) : null}
       {minted ? (
         <div
           role="status"
@@ -376,9 +493,19 @@ function InboundRow({ trigger: tr }: { trigger: Inbound }) {
           <p className="font-medium">
             Copy it now — it is shown once (Orbit keeps it in its vault):
           </p>
-          <code className="break-all font-mono text-xs text-fg" data-testid="webhook-secret">
-            {minted.secret}
-          </code>
+          <div className="flex flex-wrap items-center gap-2">
+            <code className="break-all font-mono text-xs text-fg" data-testid="webhook-secret">
+              {minted.secret}
+            </code>
+            <Button
+              ref={copyButton}
+              size="sm"
+              aria-label="Copy the signing secret"
+              onClick={() => void copy(minted.secret, 'signing secret')}
+            >
+              <Copy aria-hidden /> Copy
+            </Button>
+          </div>
           <p className="text-xs">
             {minted.style === 'github'
               ? 'Set it as the GitHub webhook secret. GitHub signs with X-Hub-Signature-256.'
@@ -399,7 +526,7 @@ function InboundTriggers() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Inbound triggers</CardTitle>
+        <h2 className="text-base font-semibold text-fg">Inbound triggers</h2>
       </CardHeader>
       <CardContent>
         <p className="mb-2 text-xs text-fg-muted">
@@ -433,7 +560,7 @@ function AddPlugin() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Add a plugin</CardTitle>
+        <h2 className="text-base font-semibold text-fg">Add a plugin</h2>
       </CardHeader>
       <CardContent>
         <form
@@ -449,11 +576,11 @@ function AddPlugin() {
           <Field
             id={id}
             label="Folder with an orbit-plugin.json"
-            hint="It stays off until you enable it; review its tools and tiers first."
             className="min-w-0 flex-1 basis-64"
           >
             <Input
               id={id}
+              aria-describedby={`${id}-hint`}
               value={dir}
               onChange={(e) => setDir(e.target.value)}
               placeholder="/home/me/orbit-plugins/linear"
@@ -464,6 +591,9 @@ function AddPlugin() {
             <Plug aria-hidden /> Add
           </Button>
         </form>
+        <p id={`${id}-hint`} className="mt-1 text-xs text-fg-subtle">
+          It stays off until you enable it; review its tools and tiers first.
+        </p>
       </CardContent>
     </Card>
   );

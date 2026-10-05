@@ -177,6 +177,8 @@ export function ApprovalCard({
               if (e.key === 'Escape') {
                 e.preventDefault();
                 onMode('card');
+                // The field is gone: keep focus on the step it came from.
+                requestAnimationFrame(() => document.getElementById(`${ids}-edit-button`)?.focus());
                 return;
               }
               if (
@@ -231,6 +233,7 @@ export function ApprovalCard({
               if (e.key === 'Escape') {
                 e.preventDefault();
                 onMode('card');
+                requestAnimationFrame(() => document.getElementById(`${ids}-deny-button`)?.focus());
               }
             }}
             placeholder="e.g. Don't email customers directly — draft it for me instead."
@@ -257,10 +260,19 @@ export function ApprovalCard({
       <div className="sticky bottom-0 -mx-5 -mb-4 flex flex-wrap items-center justify-end gap-2 border-t border-border bg-surface px-5 py-3">
         {mode === 'card' ? (
           <>
-            <Button variant="ghost" onClick={() => onMode('deny')} disabled={busy}>
+            <Button
+              id={`${ids}-deny-button`}
+              variant="ghost"
+              onClick={() => onMode('deny')}
+              disabled={busy}
+            >
               <X aria-hidden /> Deny <Kbd>d</Kbd>
             </Button>
-            <Button onClick={() => onMode('edit')} disabled={busy || financial}>
+            <Button
+              id={`${ids}-edit-button`}
+              onClick={() => onMode('edit')}
+              disabled={busy || financial}
+            >
               <Pencil aria-hidden /> Edit <Kbd>e</Kbd>
             </Button>
             <Button onClick={() => onMode('always')} disabled={busy || financial}>

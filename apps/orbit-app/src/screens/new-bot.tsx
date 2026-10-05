@@ -12,7 +12,7 @@ import {
   formatTokens,
   scrubControls,
 } from '@orbit/core/browser';
-import { useNavigate } from '@tanstack/react-router';
+import { Link, useNavigate } from '@tanstack/react-router';
 import { ArrowLeft, ArrowRight, Bot as BotIcon, Check, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -71,6 +71,9 @@ export function applyTemplate(d: Draft, t: BotTemplate): Draft {
     maxRunsPerDay: s.budgets?.maxRunsPerDay ?? d.maxRunsPerDay,
     summarize: s.memory?.summarize ?? d.summarize,
     fixture: s.mock?.fixture ?? '',
+    // Nothing from an earlier proposal carries over into a template.
+    model: s.model ?? '',
+    subagents: {},
   };
 }
 
@@ -153,6 +156,10 @@ export function NewBotScreen() {
     plugins: [],
   });
   const plugins = usePlugins();
+  const notReady = d.plugins.flatMap((id) => {
+    const p = plugins.data?.find((x) => x.id === id);
+    return p?.state === 'ready' ? [] : [p ? scrubControls(p.name) : id];
+  });
   const client = useClient();
   const triage = useTriage();
   const [asking, setAsking] = useState(false);
@@ -290,23 +297,6 @@ export function NewBotScreen() {
                   <Sparkles aria-hidden /> Suggest a setup
                 </Button>
               </div>
-              <div className="flex flex-col gap-2 border-t border-border pt-3">
-                <p className="text-xs font-medium text-fg-muted">Or start from a template</p>
-                {BOT_TEMPLATES.map((t) => (
-                  <div key={t.id} className="flex flex-wrap items-center gap-2 text-sm">
-                    <Button
-                      onClick={() => {
-                        setD((x) => applyTemplate(x, t));
-                        setReasons([t.summary, ...t.setup]);
-                        setStep(1);
-                      }}
-                    >
-                      Use {t.title}
-                    </Button>
-                    <span className="text-xs text-fg-muted">{t.summary}</span>
-                  </div>
-                ))}
-              </div>
               <p id={`${ids}-ask-cost`} className="text-xs text-fg-muted">
                 “Suggest a setup” uses local rules and is free.{' '}
                 {mock ? (
@@ -328,6 +318,23 @@ export function NewBotScreen() {
                     ? `${triageLeft} of ${triage.data.limit} triage calls left today.`
                     : ''}
               </p>
+              <div className="flex flex-col gap-2 border-t border-border pt-3">
+                <p className="text-xs font-medium text-fg-muted">Or start from a template</p>
+                {BOT_TEMPLATES.map((t) => (
+                  <div key={t.id} className="flex flex-wrap items-center gap-2 text-sm">
+                    <Button
+                      onClick={() => {
+                        setD((x) => applyTemplate(x, t));
+                        setReasons([t.summary, ...t.setup]);
+                        setStep(1);
+                      }}
+                    >
+                      Use {t.title}
+                    </Button>
+                    <span className="text-xs text-fg-muted">{t.summary}</span>
+                  </div>
+                ))}
+              </div>
             </>
           ) : null}
           {step === 1 ? (
@@ -396,10 +403,21 @@ export function NewBotScreen() {
                 </div>
               </fieldset>
               <fieldset className="flex flex-col gap-2">
-                <legend className="mb-1 text-xs font-medium text-fg-muted">
-                  Plugins (Settings → Integrations)
-                </legend>
-                {plugins.data && plugins.data.length > 0 ? (
+                <legend className="mb-1 text-xs font-medium text-fg-muted">Plugins</legend>
+                <p className="-mt-1 text-xs text-fg-muted">
+                  Each one is enabled and set up in{' '}
+                  <Link to="/settings" search={{ tab: 'integrations' }} className="underline">
+                    Settings → Integrations
+                  </Link>
+                  .
+                </p>
+                {plugins.isPending ? (
+                  <p className="text-xs text-fg-muted">Loading plugins…</p>
+                ) : plugins.isError ? (
+                  <p className="text-xs text-danger">
+                    Could not load plugins: {errorText(plugins.error)}
+                  </p>
+                ) : plugins.data.length > 0 ? (
                   <div className="grid gap-2 sm:grid-cols-2">
                     {plugins.data.map((p) => {
                       const on = d.plugins.includes(p.id);
@@ -616,6 +634,15 @@ export function NewBotScreen() {
               <pre className="max-h-96 overflow-auto rounded-md bg-surface-2 px-3 py-2 font-mono text-xs text-fg">
                 {prettyJson(spec)}
               </pre>
+              {notReady.length > 0 ? (
+                <p role="note" className="rounded-md bg-warning-bg px-3 py-2 text-sm text-warning">
+                  <span aria-hidden>⚠ </span>
+                  {notReady.join(', ')} {notReady.length === 1 ? 'is' : 'are'} not on yet: Runs
+                  can’t use {notReady.length === 1 ? 'its' : 'their'} tools until you enable{' '}
+                  {notReady.length === 1 ? 'it' : 'them'} in Settings → Integrations
+                  {mock ? ' (demo mode replays recorded results meanwhile)' : ''}.
+                </p>
+              ) : null}
             </>
           ) : null}
           {step > 0 && issues.length > 0 ? (

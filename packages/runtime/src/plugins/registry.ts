@@ -425,8 +425,16 @@ export class PluginRegistry {
     const m = loaded.manifest;
     const missing = this.missing(m, this.row(id));
     if (missing.length > 0) {
+      const hints = [
+        ...m.secrets
+          .filter((s) => s.required && !this.deps.vault.has(pluginSecretKey(id, s.name)))
+          .map((s) => `orbit plugin secret ${id} ${s.name} < file`),
+        ...m.settings
+          .filter((s) => missing.includes(`setting ${s.name}`))
+          .map((s) => `orbit plugin setting ${id} ${s.name} <value>`),
+      ];
       throw new OrbitError('invalid_input', `${m.name} needs ${missing.join(', ')} first`, {
-        hint: `Set them in Settings → Integrations, or: orbit plugin secret ${id} <NAME>`,
+        hint: `Set ${missing.length === 1 ? 'it' : 'them'} in Settings → Integrations, or: ${hints.join('; ')}`,
       });
     }
     const scratch = join(this.deps.home, 'plugins', id);

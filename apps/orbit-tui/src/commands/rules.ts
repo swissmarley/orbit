@@ -1,4 +1,4 @@
-import { OrbitError } from '@orbit/core';
+import { OrbitError, formatWhen } from '@orbit/core';
 import type { Context } from '../context';
 import { painter } from '../io';
 import { scrubControls } from '../render';
@@ -22,7 +22,7 @@ export async function rulesList(
     const state = r.revokedAt
       ? p('dim', 'revoked')
       : r.expiresAt
-        ? p('dim', `until ${r.expiresAt}`)
+        ? p('dim', `until ${formatWhen(r.expiresAt)}`)
         : p('dim', 'no expiry');
     const when = r.inputMatch
       ? ` when ${Object.entries(r.inputMatch)

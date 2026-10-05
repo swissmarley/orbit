@@ -6,6 +6,7 @@ import {
   type PluginStatus,
   RUN_STATUS,
   TIER_WORD,
+  TRIGGER_KIND_WORD,
   TRIGGER_STATE,
   type RunEvent,
   type RunState,
@@ -786,8 +787,11 @@ export function pluginDetailLines(
   const st = PLUGIN_STATE[pl.state];
   const out: { text: string; color?: string; bold?: boolean }[] = [
     { text: `${pl.name} (${pl.id} ${pl.version})`, bold: true },
-    { text: `${st.mark} ${st.label}: ${st.meaning}`, color: TONE_COLOR[st.tone] },
+    { text: `${st.mark} ${st.label} — ${st.meaning}`, color: TONE_COLOR[st.tone] },
   ];
+  // What needs the owner comes first (UI review M4): it must not fall below the fold.
+  if (pl.error) out.push({ text: `✘ ${pl.error}`, color: 'red' });
+  for (const w of pl.warnings) out.push({ text: `⚠ ${w}`, color: 'yellow' });
   if (pl.description) out.push({ text: pl.description });
   out.push(
     { text: `server ${pl.server}`, color: 'gray' },
@@ -797,7 +801,7 @@ export function pluginDetailLines(
   for (const t of pl.tools) {
     const w = TIER_WORD[t.tier];
     out.push({
-      text: `${w.mark} ${w.label.padEnd(12)} ${t.name}${t.egress ? ' · egress' : ''}${t.available === false ? ' · not offered by the server' : ''}`,
+      text: `${w.mark} ${w.label.padEnd(12)} ${t.name}${t.egress ? ' · reaches any address' : ''}${t.available === false ? ' · not offered by the server' : ''}`,
       color: TONE_COLOR[w.tone],
     });
   }
@@ -830,8 +834,6 @@ export function pluginDetailLines(
       text: `Bots: ${pl.bots.length ? pl.bots.map((b) => b.name).join(', ') : 'none list it yet'}`,
     },
   );
-  for (const w of pl.warnings) out.push({ text: `⚠ ${w}`, color: 'yellow' });
-  if (pl.error) out.push({ text: `✘ ${pl.error}`, color: 'red' });
   return out;
 }
 
@@ -875,7 +877,7 @@ export function IntegrationsOverlay(props: {
     for (const t of inbound) {
       const st = TRIGGER_STATE[t.state];
       lines.push({
-        text: `${`${st.mark} ${st.label}`.padEnd(14)} ${t.botName} · ${t.kind} · ${t.description}${t.detail ? ` (${t.detail})` : ''}`,
+        text: `${`${st.mark} ${st.label}`.padEnd(14)} ${t.botName} · ${TRIGGER_KIND_WORD[t.kind]} · ${t.description}${t.detail ? ` (${t.detail})` : ''}`,
         color: TONE_COLOR[st.tone],
       });
     }
@@ -898,7 +900,9 @@ export function IntegrationsOverlay(props: {
         Integrations
       </Text>
       {data.plugins === null ? (
-        <Text color="gray">loading…</Text>
+        <Text color={data.error ? 'red' : 'gray'} wrap="wrap">
+          {data.error ? `⚠ ${scrubControls(data.error)}` : 'loading…'}
+        </Text>
       ) : (
         lines.slice(scroll, scroll + room).map((l, i) => (
           <Text

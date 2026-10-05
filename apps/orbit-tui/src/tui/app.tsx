@@ -234,7 +234,7 @@ export function App({ client, paint, size, refreshDelayMs }: AppProps) {
   }, [ui.scroll, maxScroll]);
 
   const hints: Record<Ui['focus'], string> = {
-    bots: 'j/k select · r run · p pause · m memory · i integrations · [ ] runs · Enter timeline · Tab panes · ? help · q quit',
+    bots: 'j/k select · r run · p pause · m memory · i plugins · [ ] runs · Tab panes · ? help · q quit',
     timeline:
       'j/k scroll · g/G top/live · s stop · u resume · t tree · +/- rate · [ ] runs · Tab panes · ? help · q quit',
     approvals: 'j/k select · Enter/a open card to approve · d deny · Tab panes · ? help · q quit',

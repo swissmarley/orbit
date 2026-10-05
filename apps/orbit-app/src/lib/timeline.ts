@@ -101,6 +101,7 @@ export function buildTimeline(events: readonly RunEvent[]): TimelineItem[] {
   const tools = new Map<string, Extract<TimelineItem, { kind: 'tool' }>>();
   const early = new Map<string, NonNullable<Extract<TimelineItem, { kind: 'tool' }>['decision']>>();
   const depthOf = new Map<string, number>();
+  let taintNoted = false;
   const subagents = new Map<string, Extract<TimelineItem, { kind: 'subagent' }>>();
   let cwd: string | null = null;
   const childNames = new Map<string, string>();
@@ -213,17 +214,20 @@ export function buildTimeline(events: readonly RunEvent[]): TimelineItem[] {
         items.push(s);
         break;
       }
-      case 'subagent.backgrounded':
-        note(e, '⇢', 'info', 'Subagent keeps working in the background');
+      case 'subagent.backgrounded': {
+        const s = subagents.get(e.data.toolUseId);
+        note(e, '⇢', 'info', `${s ? s.text : 'Subagent'} keeps working in the background`);
         break;
+      }
       case 'subagent.stopped': {
         const s = subagents.get(e.data.toolUseId);
         if (s) s.done = true;
-        if (e.data.isError) note(e, '⇠', 'danger', 'Subagent finished with an error');
+        const who = s ? s.text : 'Subagent';
+        if (e.data.isError) note(e, '⇠', 'danger', `${who} finished with an error`);
         else if (e.data.outcome === 'stopped')
-          note(e, '⇠', 'warning', 'Background subagent was stopped');
+          note(e, '⇠', 'warning', `${who} (background) was stopped`);
         else if (e.data.outcome === 'completed')
-          note(e, '⇠', 'success', 'Background subagent finished');
+          note(e, '⇠', 'success', `${who} (background) finished`);
         break;
       }
       case 'approval.requested':
@@ -241,12 +245,18 @@ export function buildTimeline(events: readonly RunEvent[]): TimelineItem[] {
         );
         break;
       case 'run.tainted':
-        note(
-          e,
-          '⚠',
-          'warning',
-          `Untrusted content entered the run (${e.data.source}); external actions now always ask`,
-        );
+        // The full warning once; later sources as a quiet line (UI review M7 M8).
+        if (taintNoted) {
+          note(e, '⚠', 'neutral', `Also untrusted: ${e.data.source}`);
+        } else {
+          taintNoted = true;
+          note(
+            e,
+            '⚠',
+            'warning',
+            `Untrusted content entered the run (${e.data.source}); external actions now always ask`,
+          );
+        }
         break;
       case 'budget.exceeded':
         note(

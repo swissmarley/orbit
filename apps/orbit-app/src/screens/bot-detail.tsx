@@ -101,7 +101,9 @@ function Overview({ bot }: { bot: Bot }) {
                       {t.enabled ? 'on' : 'off'}
                     </Badge>
                     {t.name ? <span className="text-fg">{scrubControls(t.name)}</span> : null}
-                    <span className="text-xs text-fg-muted">{TRIGGER_KIND_WORD[t.kind]}</span>
+                    {t.kind === 'cron' || t.kind === 'interval' ? null : (
+                      <span className="text-xs text-fg-muted">{TRIGGER_KIND_WORD[t.kind]}</span>
+                    )}
                     <span className="font-mono text-xs text-fg-muted">{scrubControls(what)}</span>
                     {sched?.nextAt ? (
                       <span className="text-xs text-fg-muted">
@@ -155,13 +157,18 @@ function Overview({ bot }: { bot: Bot }) {
                 {s.plugins.map((id) => {
                   const p = plugins.data?.find((x) => x.id === id);
                   const w = p ? PLUGIN_STATE[p.state] : null;
+                  const ready = p?.state === 'ready';
                   return (
                     <li key={id}>
                       <Link to="/settings" search={{ tab: 'integrations' }}>
-                        <Badge tone={w?.tone ?? 'warning'} title={w?.meaning ?? 'not installed'}>
-                          {p ? scrubControls(p.name) : id}
-                          <span aria-hidden>{w ? ` ${w.mark}` : ' ⚠'}</span>
-                          <span>{w ? w.label : 'not installed'}</span>
+                        <Badge
+                          tone={ready ? 'success' : 'warning'}
+                          title={w?.meaning ?? 'not installed'}
+                        >
+                          {p ? scrubControls(p.name) : id}{' '}
+                          <span aria-hidden>{w ? w.mark : '⚠'}</span>{' '}
+                          {w ? w.label : 'not installed'}
+                          {ready ? null : <> · Runs can’t use it yet</>}
                         </Badge>
                       </Link>
                     </li>

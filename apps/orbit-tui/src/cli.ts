@@ -414,8 +414,9 @@ export async function main(argv: string[], io: Io): Promise<number> {
     .description("Mint (or rotate) a webhook trigger's signing secret; shown once")
     .argument('<bot>', 'bot name or id')
     .argument('<name>', 'the webhook trigger name')
+    .option('--rotate', 'replace an existing secret (the old one stops working at once)')
     .option('--json', 'machine-readable output')
-    .action((botRef: string, name: string, o: { json?: boolean }) =>
+    .action((botRef: string, name: string, o: { json?: boolean; rotate?: boolean }) =>
       set(webhookSecret(context(), botRef, name, o)),
     );
   program

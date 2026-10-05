@@ -362,30 +362,44 @@ function Policies() {
               </tr>
             </thead>
             <tbody>
-              {rules.data.map((r) => (
-                <tr key={r.id} className="border-b border-border last:border-0">
-                  <td className="px-4 py-2">
-                    <Badge tone={r.effect === 'allow' ? 'success' : 'danger'}>
-                      {r.effect === 'allow' ? '✓ allow' : '✗ deny'}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-2 font-mono text-xs">{scrubControls(r.toolPattern)}</td>
-                  <td className="px-4 py-2 text-fg-muted">{name(r.botId)}</td>
-                  <td className="px-4 py-2 text-xs text-fg-muted">
-                    {r.expiresAt ? <Time iso={r.expiresAt} /> : 'never'}
-                  </td>
-                  <td className="px-4 py-2 text-right">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      aria-label={`Revoke the rule for ${r.toolPattern}`}
-                      onClick={() => void actions.revokeRule(r).catch(() => undefined)}
-                    >
-                      <Trash2 aria-hidden /> Revoke
-                    </Button>
-                  </td>
-                </tr>
-              ))}
+              {rules.data.map((r) => {
+                const when = r.inputMatch
+                  ? Object.entries(r.inputMatch)
+                      .map(([k, v]) => `${k}=${v}`)
+                      .join(', ')
+                  : null;
+                return (
+                  <tr key={r.id} className="border-b border-border last:border-0">
+                    <td className="px-4 py-2">
+                      <Badge tone={r.effect === 'allow' ? 'success' : 'danger'}>
+                        {r.effect === 'allow' ? '✓ allow' : '✗ deny'}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-2 font-mono text-xs">
+                      {scrubControls(r.toolPattern)}
+                      {when ? (
+                        <span className="block font-sans text-fg-muted">
+                          only when {scrubControls(when)}
+                        </span>
+                      ) : null}
+                    </td>
+                    <td className="px-4 py-2 text-fg-muted">{name(r.botId)}</td>
+                    <td className="px-4 py-2 text-xs text-fg-muted">
+                      {r.expiresAt ? <Time iso={r.expiresAt} /> : 'never'}
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        aria-label={`Revoke the rule for ${scrubControls(r.toolPattern)}${when ? ` when ${scrubControls(when)}` : ''}`}
+                        onClick={() => void actions.revokeRule(r).catch(() => undefined)}
+                      >
+                        <Trash2 aria-hidden /> Revoke
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </Card>

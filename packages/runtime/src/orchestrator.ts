@@ -1256,7 +1256,7 @@ export class Orchestrator {
         append([
           event('diagnostic', {
             level: 'warn',
-            message: `This Bot lists the ${u.id} plugin, but its tools are not available: ${u.reason}.`,
+            message: `This Bot lists the ${u.id} plugin, but its tools are not available: ${u.reason}.${driver.kind === 'mock' ? ' Demo mode replays the recorded results instead; policy still decides every call.' : ''}`,
           }),
         ]);
       }

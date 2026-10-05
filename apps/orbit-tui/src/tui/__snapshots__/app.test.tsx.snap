@@ -168,5 +168,5 @@ exports[`TUI rendering > wide: three panes, status bar, the parked Run and its a
 ┃                             ┃│                                               ││                                      │
 ┃                             ┃│                                               ││                                      │
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛╰───────────────────────────────────────────────╯╰──────────────────────────────────────╯
-j/k select · r run · p pause · m memory · i integrations · [ ] runs · Enter timeline · Tab panes · ? help · q quit"
+j/k select · r run · p pause · m memory · i plugins · [ ] runs · Tab panes · ? help · q quit"
 `;

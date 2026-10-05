@@ -77,7 +77,12 @@ export function botSpecFromOptions(o: BotCreateOptions): BotSpecInput {
 export async function botCreate(ctx: Context, o: BotCreateOptions): Promise<number> {
   const bot = await (await ctx.client()).bots.create(botSpecFromOptions(o));
   if (o.json) ctx.io.out(JSON.stringify(bot, null, 2));
-  else ctx.io.out(`${painter(ctx.io)('green', '✔')} Created bot ${bot.spec.name} (${bot.id})`);
+  else {
+    const p = painter(ctx.io);
+    ctx.io.out(`${p('green', '✔')} Created bot ${scrubControls(bot.spec.name)} (${bot.id})`);
+    const t = o.template ? botTemplate(o.template) : undefined;
+    for (const step of t?.setup ?? []) ctx.io.out(p('dim', `  Next: ${step}`));
+  }
   return 0;
 }
 
