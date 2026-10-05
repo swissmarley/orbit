@@ -58,7 +58,10 @@ function fakeQuery(fixture: string): QueryFn {
 function setup(driver: AgentDriver, workspace: string) {
   const db: OrbitDb = openDatabase(':memory:');
   const store = new EventStore(db, new Redactor());
-  const approvals = new ApprovalQueue(db, { audit: new AuditLog(db), events: store });
+  const approvals = new ApprovalQueue(db, {
+    audit: new AuditLog(db, new Redactor()),
+    events: store,
+  });
   const bots = new BotRepo(db);
   const orchestrator = new Orchestrator({
     config: OrbitConfig.parse({ home: workspace }),

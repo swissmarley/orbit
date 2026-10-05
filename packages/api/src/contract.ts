@@ -469,7 +469,8 @@ export const routes = {
   stopDaemon: {
     method: 'POST',
     path: '/v1/daemon/stop',
-    summary: 'Gracefully stop orbitd (executing Runs end as interrupted)',
+    summary:
+      'Gracefully stop orbitd (executing Runs are interrupted; safe ones resume at the next start)',
     tag: 'daemon',
     status: 202,
     response: ok,

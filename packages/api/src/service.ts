@@ -467,7 +467,7 @@ export class OrbitService {
     this.triggers.sync();
   }
 
-  /** Graceful stop: no new dispatches, executing Runs end as interrupted. */
+  /** Graceful stop: no new dispatches, executing Runs close as interruptions (ADR-016). */
   async stop(): Promise<void> {
     clearInterval(this.ticker);
     this.unsubscribe?.();
