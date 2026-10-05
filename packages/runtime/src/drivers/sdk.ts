@@ -13,7 +13,7 @@ import { checkAuthSource } from './auth-source';
 import { Normalizer } from './normalize';
 import { decide, hookOutput, postHookOutput, postProcess } from './permission';
 import { EventSequencer } from './sequencer';
-import type { AgentDriver, DriverRunRequest } from './types';
+import type { AgentDriver, DriverRunRequest, EngineMcpServer } from './types';
 
 export type QueryFn = (params: { prompt: string; options: Options }) => AsyncIterable<SDKMessage>;
 
@@ -64,6 +64,32 @@ export async function orbitSdkServer(
   });
 }
 
+/**
+ * A plugin's tools as an in-process MCP server (ADR-014): the engine calls
+ * Orbit over the SDK's control channel and Orbit calls the plugin process.
+ * The plugin's own JSON schemas are served as-is (low-level handlers).
+ */
+export async function pluginSdkServer(binding: EngineMcpServer): Promise<McpServerConfig> {
+  const [{ McpServer }, types] = await Promise.all([
+    import('@modelcontextprotocol/sdk/server/mcp.js'),
+    import('@modelcontextprotocol/sdk/types.js'),
+  ]);
+  const server = new McpServer({ name: binding.name, version: '0.1.0' });
+  server.server.registerCapabilities({ tools: { listChanged: false } });
+  server.server.setRequestHandler(types.ListToolsRequestSchema, () => ({
+    tools: binding.tools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: { type: 'object' as const, ...t.inputSchema },
+    })),
+  }));
+  server.server.setRequestHandler(types.CallToolRequestSchema, async (request) => {
+    const r = await binding.call(request.params.name, request.params.arguments ?? {});
+    return { content: [{ type: 'text' as const, text: r.text }], isError: r.isError };
+  });
+  return { type: 'sdk', name: binding.name, instance: server };
+}
+
 /** Build Agent SDK options for a Run (exported for tests). */
 export function buildSdkOptions(
   req: DriverRunRequest,
@@ -77,6 +103,7 @@ export function buildSdkOptions(
   abortController: AbortController,
   onStderr: (line: string) => void,
   orbitServer: McpServerConfig | null = null,
+  pluginServers: Record<string, McpServerConfig> = {},
 ): Options {
   // CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: the engine strips API credentials from
   // the environment of its own children (Bash, hooks, MCP servers) — ADR-005.
@@ -89,7 +116,7 @@ export function buildSdkOptions(
     permissionMode: 'default',
     settingSources: [],
     strictMcpConfig: true,
-    mcpServers: orbitServer ? { orbit: orbitServer } : {},
+    mcpServers: { ...pluginServers, ...(orbitServer ? { orbit: orbitServer } : {}) },
     hooks: {
       PreToolUse: [{ hooks: [hooks.preToolUse] }],
       ...(hooks.postToolUse ? { PostToolUse: [{ hooks: [hooks.postToolUse] }] } : {}),
@@ -228,6 +255,10 @@ export class SdkDriver implements AgentDriver {
           req.orbitTools && req.orbitTools.tools.length > 0
             ? await orbitSdkServer(req.orbitTools)
             : null;
+        const pluginServers: Record<string, McpServerConfig> = {};
+        for (const p of req.pluginServers ?? []) {
+          if (p.tools.length > 0) pluginServers[p.name] = await pluginSdkServer(p);
+        }
         const options = buildSdkOptions(
           req,
           this.opts,
@@ -238,6 +269,7 @@ export class SdkDriver implements AgentDriver {
             stderrTail.splice(0, Math.max(0, stderrTail.length - 20));
           },
           orbitServer,
+          pluginServers,
         );
         const queryFn = this.opts.queryFn ?? (await defaultQuery());
         for await (const message of queryFn({ prompt: req.prompt, options })) {

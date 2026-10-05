@@ -2,11 +2,14 @@ import { Cron } from 'croner';
 import {
   type Bot,
   OrbitError,
+  type ScheduledTrigger,
   type TriggerRef,
   type TriggerSpec,
   canonicalJson,
   errorMessage,
+  isScheduledTrigger,
   sha256Hex,
+  triggerLabel,
 } from '@orbit/core';
 import type { TriggerFire } from '@orbit/store';
 
@@ -16,12 +19,8 @@ export function triggerKey(botId: string, trigger: TriggerSpec): string {
   return `${botId}:${sha256Hex(canonicalJson(definition)).slice(0, 16)}`;
 }
 
-export function describeTrigger(trigger: TriggerSpec): string {
-  if (trigger.name) return trigger.name;
-  return trigger.kind === 'cron'
-    ? `cron ${trigger.cron}${trigger.timezone ? ` (${trigger.timezone})` : ''}`
-    : `every ${trigger.everyMinutes}m`;
-}
+/** How people see a trigger (shared with the App and TUI through @orbit/core). */
+export const describeTrigger = triggerLabel;
 
 function cronFor(trigger: Extract<TriggerSpec, { kind: 'cron' }>): Cron {
   return new Cron(trigger.cron, {
@@ -50,7 +49,7 @@ export function validateTriggers(triggers: readonly TriggerSpec[]): void {
 }
 
 /** When `trigger` fires next, given its last fire (or when it was first seen). */
-export function nextFire(trigger: TriggerSpec, after: Date): Date | null {
+export function nextFire(trigger: ScheduledTrigger, after: Date): Date | null {
   if (trigger.kind === 'interval') return new Date(after.getTime() + trigger.everyMinutes * 60_000);
   try {
     return cronFor(trigger).nextRun(after);
@@ -62,7 +61,7 @@ export function nextFire(trigger: TriggerSpec, after: Date): Date | null {
 export interface ScheduleEntry {
   botId: string;
   key: string;
-  kind: TriggerSpec['kind'];
+  kind: ScheduledTrigger['kind'];
   description: string;
   enabled: boolean;
   nextAt: string | null;
@@ -116,7 +115,7 @@ export class Scheduler {
     return seen;
   }
 
-  private nextFor(bot: Bot, trigger: TriggerSpec): { key: string; next: Date | null } {
+  private nextFor(bot: Bot, trigger: ScheduledTrigger): { key: string; next: Date | null } {
     const key = triggerKey(bot.id, trigger);
     const last = this.deps.state.get(key);
     // Interval: from the last fire itself (a restart does not reset the cadence).
@@ -131,7 +130,8 @@ export class Scheduler {
     const results: { botId: string; key: string; outcome: FireOutcome }[] = [];
     for (const bot of this.deps.bots()) {
       for (const trigger of bot.spec.triggers) {
-        if (!trigger.enabled) continue;
+        // Inbound triggers (webhook, Slack, files, git) fire through the TriggerRouter.
+        if (!trigger.enabled || !isScheduledTrigger(trigger)) continue;
         const { key, next } = this.nextFor(bot, trigger);
         if (!next || next > now) continue;
         const previous = this.deps.state.get(key);
@@ -170,6 +170,7 @@ export class Scheduler {
     for (const bot of this.deps.bots()) {
       if (botId && bot.id !== botId) continue;
       for (const trigger of bot.spec.triggers) {
+        if (!isScheduledTrigger(trigger)) continue;
         const { key, next } = this.nextFor(bot, trigger);
         const last = this.deps.state.get(key);
         entries.push({

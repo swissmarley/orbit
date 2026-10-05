@@ -43,33 +43,38 @@ export interface CliDriverOptions {
 }
 
 /**
- * `--mcp-config` content for Orbit's loopback MCP endpoint. The token is a
- * header, so the file is written 0600 inside a fresh 0700 directory and its
- * path (never the token) goes on the command line.
+ * `--mcp-config` content for Orbit's loopback MCP endpoints: Orbit's own
+ * tools and each plugin of the segment (ADR-014). The token is a header, so
+ * the file is written 0600 inside a fresh 0700 directory and its path (never
+ * the token) goes on the command line.
  */
-export function buildMcpConfig(http: { url: string; token: string }): string {
-  return JSON.stringify({
-    mcpServers: {
-      orbit: {
-        type: 'http',
-        url: http.url,
-        headers: { Authorization: `Bearer ${http.token}` },
-        alwaysLoad: true,
-      },
-    },
+export function buildMcpConfig(
+  http: { url: string; token: string } | null,
+  plugins: readonly { name: string; http: { url: string; token: string } | null }[] = [],
+): string {
+  const server = (h: { url: string; token: string }) => ({
+    type: 'http',
+    url: h.url,
+    headers: { Authorization: `Bearer ${h.token}` },
+    alwaysLoad: true,
   });
+  const servers: Record<string, unknown> = {};
+  if (http) servers.orbit = server(http);
+  for (const p of plugins) if (p.http) servers[p.name] = server(p.http);
+  return JSON.stringify({ mcpServers: servers });
 }
 
 /** Write the MCP config privately; returns its path and a cleanup function. */
 export function writeMcpConfig(
   runDir: string | undefined,
-  http: { url: string; token: string },
+  http: { url: string; token: string } | null,
+  plugins: readonly { name: string; http: { url: string; token: string } | null }[] = [],
 ): { path: string; dispose: () => void } {
   const base = runDir ?? tmpdir();
   mkdirSync(base, { recursive: true, mode: 0o700 });
   const dir = mkdtempSync(join(base, 'orbit-mcp-'));
   const path = join(dir, 'mcp.json');
-  writeFileSync(path, buildMcpConfig(http), { mode: 0o600 });
+  writeFileSync(path, buildMcpConfig(http, plugins), { mode: 0o600 });
   return { path, dispose: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
@@ -244,9 +249,12 @@ export class CliDriver implements AgentDriver {
     assertChildEnvSafe('cli-engine', env);
 
     let mcp: { path: string; dispose: () => void } | null = null;
-    if (req.orbitTools?.http) {
-      this.secrets?.addSecret(req.orbitTools.http.token);
-      mcp = writeMcpConfig(this.runDir, req.orbitTools.http);
+    const plugins = (req.pluginServers ?? []).filter((p) => p.http !== null);
+    if (req.orbitTools?.http || plugins.length > 0) {
+      for (const h of [req.orbitTools?.http, ...plugins.map((p) => p.http)]) {
+        if (h) this.secrets?.addSecret(h.token);
+      }
+      mcp = writeMcpConfig(this.runDir, req.orbitTools?.http ?? null, plugins);
     }
     const args = buildCliArgs(
       req,

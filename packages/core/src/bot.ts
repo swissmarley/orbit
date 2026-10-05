@@ -67,7 +67,93 @@ export const IntervalTrigger = z.object({
   ...triggerBase,
 });
 
-export const TriggerSpec = z.discriminatedUnion('kind', [CronTrigger, IntervalTrigger]);
+/** Name in a webhook URL: /hooks/<bot>/<name>. */
+export const WEBHOOK_NAME = /^[a-z0-9][a-z0-9-]{0,39}$/;
+
+/**
+ * An HMAC-signed POST to orbitd's loopback port (ADR-014). The signing key is
+ * the vault secret `webhook_<bot id>_<name>`; the payload reaches the Run as
+ * untrusted data and the Run starts tainted.
+ */
+export const WebhookTrigger = z.object({
+  kind: z.literal('webhook'),
+  ...triggerBase,
+  name: z.string().regex(WEBHOOK_NAME, 'lowercase letters, digits and dashes'),
+  /** orbit: X-Orbit-Timestamp + X-Orbit-Signature over "<ts>.<body>"; github: X-Hub-Signature-256. */
+  style: z.enum(['orbit', 'github']).default('orbit'),
+  /** GitHub style only: event names (X-GitHub-Event) that start a Run; empty = all. */
+  events: z.array(z.string().trim().min(1).max(60)).max(20).default([]),
+});
+
+/** Slack messages over Socket Mode (no public URL), using the Slack plugin's tokens. */
+export const SlackTrigger = z.object({
+  kind: z.literal('slack'),
+  ...triggerBase,
+  /** Channel ids (C…, G…, D…) to listen in. */
+  channels: z
+    .array(z.string().regex(/^[CGD][A-Z0-9]{2,20}$/, 'a Slack channel id such as C0123ABCD'))
+    .min(1)
+    .max(20),
+  /** mention: only messages that mention the app; message: every new message. */
+  on: z.enum(['mention', 'message']).default('mention'),
+  /** Slack user ids (U…/W…) whose messages start Runs; empty = anyone in the channels. */
+  users: z
+    .array(z.string().regex(/^[UW][A-Z0-9]{2,20}$/, 'a Slack user id such as U0123ABCD'))
+    .max(50)
+    .default([]),
+});
+
+const absolutePath = z
+  .string()
+  .min(1)
+  .max(1000)
+  .refine((p) => p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p), 'must be an absolute path');
+
+/** Changes under files or folders (chokidar), debounced: a burst of changes is one Run. */
+export const FileTrigger = z.object({
+  kind: z.literal('file'),
+  ...triggerBase,
+  paths: z.array(absolutePath).min(1).max(10),
+  events: z
+    .array(z.enum(['add', 'change', 'unlink']))
+    .min(1)
+    .default(['add', 'change', 'unlink']),
+  /** Glob patterns (relative names) to ignore, e.g. "*.tmp". Dot-files are always ignored. */
+  ignore: z.array(z.string().min(1).max(200)).max(20).default([]),
+  debounceSeconds: z.int().min(1).max(3600).default(5),
+});
+
+/** New commits on a branch of a local repository. */
+export const GitTrigger = z.object({
+  kind: z.literal('git'),
+  ...triggerBase,
+  repo: absolutePath,
+  branch: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9._/-]{1,200}$/)
+    .refine((b) => !b.includes('..') && !b.startsWith('-'), 'not a branch name')
+    .default('main'),
+  debounceSeconds: z.int().min(1).max(3600).default(5),
+});
+
+export const TriggerSpec = z.discriminatedUnion('kind', [
+  CronTrigger,
+  IntervalTrigger,
+  WebhookTrigger,
+  SlackTrigger,
+  FileTrigger,
+  GitTrigger,
+]);
+export type WebhookTrigger = z.infer<typeof WebhookTrigger>;
+export type SlackTrigger = z.infer<typeof SlackTrigger>;
+export type FileTrigger = z.infer<typeof FileTrigger>;
+export type GitTrigger = z.infer<typeof GitTrigger>;
+/** Triggers that fire on a clock (Scheduler); the others are inbound (TriggerRouter). */
+export type ScheduledTrigger = z.infer<typeof CronTrigger> | z.infer<typeof IntervalTrigger>;
+export function isScheduledTrigger(t: TriggerSpec): t is ScheduledTrigger {
+  return t.kind === 'cron' || t.kind === 'interval';
+}
 export type TriggerSpec = z.infer<typeof TriggerSpec>;
 
 /**
@@ -166,6 +252,12 @@ export const BotSpec = z.object({
   /** Peer Bots this Bot may delegate to (each delegation is a child Run). */
   delegation: BotDelegation.prefault({}),
   memory: BotMemorySettings.prefault({}),
+  /** Plugins (ids) whose tools this Bot may use once the owner enabled them (ADR-014). */
+  plugins: z
+    .array(z.string().regex(/^[a-z][a-z0-9-]{1,31}$/, 'a plugin id'))
+    .max(20)
+    .refine((l) => new Set(l).size === l.length, 'listed twice')
+    .default([]),
 });
 export type BotSpec = z.infer<typeof BotSpec>;
 export type BotSpecInput = z.input<typeof BotSpec>;

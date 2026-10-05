@@ -1,6 +1,30 @@
 import type { OrbitRunSession } from './session';
 import type { OrbitToolset } from './tools';
 
+/** What the minimal server serves: Orbit's own tools, or one plugin of a segment (ADR-014). */
+export interface McpSurface {
+  name: string;
+  instructions: string;
+  tools(): { name: string; description: string; inputSchema: Record<string, unknown> }[];
+  call(name: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }>;
+}
+
+/** Orbit's own tools for one session, as an MCP surface. */
+export function orbitSurface(toolset: OrbitToolset, session: OrbitRunSession): McpSurface {
+  return {
+    name: 'orbit',
+    instructions:
+      'Orbit tools: memory for this Bot and delegation to peer Bots. Every call is checked by Orbit policy.',
+    tools: () =>
+      toolset.definitions(session.bot).map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.inputSchema,
+      })),
+    call: (name, args) => toolset.call(session, name, args),
+  };
+}
+
 /**
  * A minimal MCP server (JSON-RPC 2.0 over Streamable HTTP, stateless, JSON
  * responses only) for the Orbit tools. Small on purpose: it implements
@@ -21,12 +45,7 @@ function fail(id: unknown, code: number, message: string): Json {
   return { jsonrpc: '2.0', id: id ?? null, error: { code, message } };
 }
 
-async function one(
-  toolset: OrbitToolset,
-  session: OrbitRunSession,
-  msg: unknown,
-  version: string,
-): Promise<Json | null> {
+async function one(surface: McpSurface, msg: unknown, version: string): Promise<Json | null> {
   if (!isObj(msg) || msg.jsonrpc !== '2.0' || typeof msg.method !== 'string') {
     return fail(isObj(msg) ? msg.id : null, -32600, 'Invalid request');
   }
@@ -40,25 +59,18 @@ async function one(
       return reply(id, {
         protocolVersion: MCP_PROTOCOL_VERSIONS.includes(asked) ? asked : version,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'orbit', version: '0.1.0' },
-        instructions:
-          'Orbit tools: memory for this Bot and delegation to peer Bots. Every call is checked by Orbit policy.',
+        serverInfo: { name: surface.name, version: '0.1.0' },
+        instructions: surface.instructions,
       });
     }
     case 'ping':
       return reply(id, {});
     case 'tools/list':
-      return reply(id, {
-        tools: toolset.definitions(session.bot).map((t) => ({
-          name: t.name,
-          description: t.description,
-          inputSchema: t.inputSchema,
-        })),
-      });
+      return reply(id, { tools: surface.tools() });
     case 'tools/call': {
       const name = typeof params.name === 'string' ? params.name : '';
       const args = isObj(params.arguments) ? params.arguments : {};
-      const r = await toolset.call(session, name, args);
+      const r = await surface.call(name, args);
       return reply(id, { content: [{ type: 'text', text: r.text }], isError: r.isError });
     }
     default:
@@ -72,13 +84,18 @@ export async function handleMcpBody(
   session: OrbitRunSession,
   body: unknown,
 ): Promise<unknown> {
+  return handleMcpRequest(orbitSurface(toolset, session), body);
+}
+
+/** Serve one POSTed body for any surface (Orbit's tools or a plugin). */
+export async function handleMcpRequest(surface: McpSurface, body: unknown): Promise<unknown> {
   const version = MCP_PROTOCOL_VERSIONS[0] ?? '2025-06-18';
   if (Array.isArray(body)) {
     if (body.length === 0 || body.length > 20) return fail(null, -32600, 'Invalid batch');
-    const out = (await Promise.all(body.map((m) => one(toolset, session, m, version)))).filter(
+    const out = (await Promise.all(body.map((m) => one(surface, m, version)))).filter(
       (r) => r !== null,
     );
     return out.length ? out : null;
   }
-  return one(toolset, session, body, version);
+  return one(surface, body, version);
 }

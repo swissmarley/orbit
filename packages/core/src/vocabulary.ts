@@ -1,4 +1,5 @@
 import type { RunStatus, Tier } from './enums';
+import type { TriggerSpec } from './bot';
 
 /**
  * One status vocabulary for every client (TUI, CLI, App): a symbol, a word
@@ -209,3 +210,36 @@ export function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 }
+
+/** A trigger in words ("Weekday mornings", "every 15m", "Slack mentions in C0123…"). */
+export function triggerLabel(trigger: TriggerSpec): string {
+  return trigger.name ?? triggerDetail(trigger);
+}
+
+/** What a trigger does, whatever its name ("cron 0 8 * * 1-5", "signed webhook deploys"). */
+export function triggerDetail(trigger: TriggerSpec): string {
+  switch (trigger.kind) {
+    case 'cron':
+      return `cron ${trigger.cron}${trigger.timezone ? ` (${trigger.timezone})` : ''}`;
+    case 'interval':
+      return `every ${trigger.everyMinutes}m`;
+    case 'slack':
+      return `Slack ${trigger.on === 'mention' ? 'mentions' : 'messages'} in ${trigger.channels.join(', ')}`;
+    case 'file':
+      return `changes in ${trigger.paths.join(', ')}`;
+    case 'git':
+      return `commits on ${trigger.branch} in ${trigger.repo}`;
+    case 'webhook':
+      return `signed webhook ${trigger.name}`;
+  }
+}
+
+/** The kind of trigger in a word, for badges. */
+export const TRIGGER_KIND_WORD: Readonly<Record<TriggerSpec['kind'], string>> = {
+  cron: 'schedule',
+  interval: 'interval',
+  webhook: 'webhook',
+  slack: 'Slack',
+  file: 'files',
+  git: 'git',
+};

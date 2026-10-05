@@ -241,6 +241,40 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX triage_calls_created_idx ON triage_calls (created_at);
     `,
   },
+  {
+    id: 5,
+    name: 'plugins-and-inbound-triggers',
+    sql: `
+      -- Plugins the owner added, enabled or configured (ADR-014). Reference plugins
+      -- shipped with Orbit get a row once the owner touches them.
+      CREATE TABLE plugins (
+        id TEXT PRIMARY KEY,
+        dir TEXT NOT NULL,
+        built_in INTEGER NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        -- Manifest hash at enable time: a changed manifest is not offered until re-enabled.
+        manifest_hash TEXT,
+        enabled_at TEXT,
+        -- Declared tools the server offered at the last check, with their input schemas (JSON).
+        tools TEXT,
+        -- Tools the server offered that the manifest does not declare (JSON names).
+        undeclared TEXT,
+        checked_at TEXT,
+        error TEXT,
+        -- Non-secret owner settings (JSON object); secrets live in the vault.
+        settings TEXT NOT NULL DEFAULT '{}',
+        updated_at TEXT NOT NULL
+      );
+
+      -- Webhook signatures / delivery ids already accepted (replay protection).
+      CREATE TABLE webhook_deliveries (
+        key TEXT PRIMARY KEY,
+        bot_id TEXT NOT NULL,
+        received_at TEXT NOT NULL
+      );
+      CREATE INDEX webhook_deliveries_received_idx ON webhook_deliveries (received_at);
+    `,
+  },
 ];
 
 /** When migration `id` was applied to this database, or null. */

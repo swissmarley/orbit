@@ -180,6 +180,11 @@ export class MockDriver implements AgentDriver {
                 ? await req.orbitTools.call(toolName.slice(ORBIT_PREFIX.length), args)
                 : { text: `No such tool: ${toolName}`, isError: true },
             );
+          } else {
+            // Enabled plugins run for real; others replay the recording (demo mode).
+            const m = /^mcp__([a-z][a-z0-9-]*)__(.+)$/.exec(toolName);
+            const server = m ? req.pluginServers?.find((p) => p.name === m[1]) : undefined;
+            if (m && server) orbitResults.set(toolUseId, await server.call(m[2] ?? '', args));
           }
         }
         if (decision.behavior === 'deny' && decision.interrupt) {

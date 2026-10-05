@@ -40,7 +40,7 @@ import {
   workspaceRelative,
 } from '@orbit/memory';
 import type { BotRepo, Controls, EventStore } from '@orbit/store';
-import type { AgentDriver, EngineAgent, OrbitToolBinding } from './drivers/types';
+import type { AgentDriver, EngineAgent, EngineMcpServer, OrbitToolBinding } from './drivers/types';
 import {
   ORBIT_TOOL_PREFIX,
   type OrbitRunSession,
@@ -49,6 +49,8 @@ import {
   canonicalArgs,
   orbitToolOf,
 } from './orbit-tools';
+import type { PluginSegment, PluginSegments } from './plugins/host';
+import type { PluginRegistry } from './plugins/registry';
 import { composeBotSystemPrompt } from './prompt';
 
 /** What a sandbox hands the orchestrator for one Run (see @orbit/sandbox). */
@@ -104,7 +106,13 @@ export interface OrchestratorDeps {
   orbitSessions?: OrbitSessions;
   /** orbitd's base URL: the CLI engine reaches `/mcp/orbit` there. Null = not listening. */
   mcpUrl?: () => string | null;
+  /** Plugins (M7, ADR-014): tier overrides and the servers a Bot's Runs may use. */
+  plugins?: PluginRegistry;
+  pluginSegments?: PluginSegments;
 }
+
+/** `/mcp/plugins/<id>` on orbitd: where the CLI engine reaches a plugin. */
+export const PLUGIN_MCP_PREFIX = '/mcp/plugins/';
 
 /** Tiers of Orbit's own tools; listed first so no plugin can override them. */
 export const ORBIT_TOOL_TIERS: readonly ToolTierOverride[] = [
@@ -934,6 +942,12 @@ export class Orchestrator {
       readRoots: bot.spec.readRoots,
       orbitHome: config.home,
     });
+    // Orbit's own tiers first: no plugin declaration can reach Orbit's tools (ADR-014).
+    const overrides: readonly ToolTierOverride[] = [
+      ...ORBIT_TOOL_TIERS,
+      ...(this.deps.plugins?.toolTiers() ?? []),
+      ...(this.deps.toolTiers ?? []),
+    ];
 
     // Orbit's own tools (memory, delegation) for this segment: one session, one token.
     const orbit = this.openOrbitSession(
@@ -942,10 +956,12 @@ export class Orchestrator {
       prior.depth,
       prior.memoryWrites,
       driver.kind,
+      ws.path,
       taint,
       addTaint,
     );
     const session = orbit?.session ?? null;
+    const plugins = orbit?.plugins ?? null;
     let delegationsSeen = 0;
 
     /** Bookkeeping when a call is allowed: taint through files, Orbit tool authorization. */
@@ -962,6 +978,9 @@ export class Orchestrator {
         const args = canonicalArgs(orbitTool, input);
         if (args) session.authorize(req.toolName, args);
       }
+      // A plugin call runs only if it consumes exactly this authorization (ADR-014).
+      const plugin = /^mcp__([a-z][a-z0-9-]*)__/.exec(req.toolName)?.[1];
+      if (plugin && session && plugins?.binding(plugin)) session.authorize(req.toolName, input);
     };
 
     const isStopping = (): boolean => stopCause !== null;
@@ -1009,7 +1028,7 @@ export class Orchestrator {
         files,
         shellContained: ws.shellContained,
         tainted: taint.size > 0,
-        overrides: [...ORBIT_TOOL_TIERS, ...(this.deps.toolTiers ?? [])],
+        overrides,
       });
       if (outcome.decision === 'allow') {
         const taintBefore = taint.size;
@@ -1104,10 +1123,7 @@ export class Orchestrator {
         const edited = decided.decision?.editedInput;
         if (edited) d.updatedInput = edited;
         const taintBefore = taint.size;
-        const cls = classifyTool(req.toolName, {
-          shellContained: ws.shellContained,
-          overrides: [...ORBIT_TOOL_TIERS, ...(this.deps.toolTiers ?? [])],
-        });
+        const cls = classifyTool(req.toolName, { shellContained: ws.shellContained, overrides });
         if (cls?.untrustedSource) addTaint([cls.untrustedSource], req.toolUseId);
         onAllowed(req, edited ?? req.input, taintBefore);
         this.deps.audit?.append({
@@ -1190,6 +1206,7 @@ export class Orchestrator {
       seg.signal?.removeEventListener('abort', onCallerAbort);
       this.active.delete(runId);
       if (session) this.deps.orbitSessions?.close(session);
+      if (plugins) await this.deps.pluginSegments?.close(plugins, runId);
       throw err;
     }
 
@@ -1197,10 +1214,23 @@ export class Orchestrator {
     try {
       // Memory goes with the first prompt (stdin), never on a command line
       // (review M6 M3); a resumed session already has it.
-      const context = this.memoryContext(bot, seg.prompt, orbit !== null, !seg.resumeSessionId);
+      const context = this.memoryContext(
+        bot,
+        seg.prompt,
+        Boolean(orbit?.binding),
+        !seg.resumeSessionId,
+      );
       if (context.recalled.length > 0) {
         append([
           event('memory.recalled', { memoryIds: context.recalled, via: 'context', tainted: false }),
+        ]);
+      }
+      for (const u of plugins?.unavailable ?? []) {
+        append([
+          event('diagnostic', {
+            level: 'warn',
+            message: `This Bot lists the ${u.id} plugin, but its tools are not available: ${u.reason}.`,
+          }),
         ]);
       }
       for await (const body of driver.run({
@@ -1224,6 +1254,7 @@ export class Orchestrator {
         spawnEngine: ws.spawnEngine,
         mockFixture: seg.mockFixture ?? bot.spec.mock?.fixture,
         orbitTools: orbit?.binding ?? null,
+        pluginServers: orbit?.pluginServers ?? null,
         agents: this.engineAgents(bot),
       })) {
         if (isTerminalEvent(body)) {
@@ -1269,6 +1300,7 @@ export class Orchestrator {
       this.active.delete(runId);
       this.deps.approvals.revokeGrants(runId, segmentStart);
       if (session) this.deps.orbitSessions?.close(session);
+      if (plugins) await this.deps.pluginSegments?.close(plugins, runId);
     }
 
     const sessionId =
@@ -1329,20 +1361,31 @@ export class Orchestrator {
     );
   }
 
-  /** Open the Orbit tool session of a segment, or null when the Bot gets no Orbit tools. */
+  /**
+   * Open the tool session of a segment: Orbit's own tools and the Bot's
+   * plugins share one session (one token, one list of authorized calls).
+   * Null when the Bot gets neither.
+   */
   private openOrbitSession(
     bot: Bot,
     runId: string,
     depth: number,
     memoryWrites: number,
     driver: DriverKind,
+    workspace: string,
     taint: Set<string>,
     addTaint: (sources: readonly string[]) => void,
-  ): { session: OrbitRunSession; binding: OrbitToolBinding } | null {
-    const { orbitTools, orbitSessions } = this.deps;
-    if (!orbitTools || !orbitSessions) return null;
-    const defs = orbitTools.definitions(bot);
-    if (defs.length === 0) return null;
+  ): {
+    session: OrbitRunSession;
+    binding: OrbitToolBinding | null;
+    plugins: PluginSegment | null;
+    pluginServers: EngineMcpServer[];
+  } | null {
+    const { orbitTools, orbitSessions, plugins: registry, pluginSegments } = this.deps;
+    if (!orbitSessions) return null;
+    const defs = orbitTools?.definitions(bot) ?? [];
+    const wantsPlugins = Boolean(registry && pluginSegments && bot.spec.plugins.length > 0);
+    if (defs.length === 0 && !wantsPlugins) return null;
     // The CLI engine reaches the tools over loopback HTTP; without a listener it gets none.
     const base = driver === 'cli' ? (this.deps.mcpUrl?.() ?? null) : null;
     if (driver === 'cli' && !base) return null;
@@ -1355,13 +1398,28 @@ export class Orchestrator {
       addTaint,
     });
     this.deps.redactor.addSecret(session.token);
+    const http = (path: string) => (base ? { url: `${base}${path}`, token: session.token } : null);
+    const plugins =
+      wantsPlugins && registry && pluginSegments
+        ? pluginSegments.open(registry, bot, workspace, session)
+        : null;
     return {
       session,
-      binding: {
-        http: base ? { url: `${base}/mcp/orbit`, token: session.token } : null,
-        tools: defs,
-        call: (name, args) => orbitTools.call(session, name, args),
-      },
+      binding:
+        orbitTools && defs.length > 0
+          ? {
+              http: http('/mcp/orbit'),
+              tools: defs,
+              call: (name, args) => orbitTools.call(session, name, args),
+            }
+          : null,
+      plugins,
+      pluginServers: (plugins?.bindings ?? []).map((b) => ({
+        name: b.name,
+        http: http(`${PLUGIN_MCP_PREFIX}${b.name}`),
+        tools: b.tools,
+        call: (name: string, args: Record<string, unknown>) => b.call(name, args),
+      })),
     };
   }
 

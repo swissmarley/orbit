@@ -20,7 +20,12 @@
     "@orbit/policy": "workspace:*",
     "@orbit/sandbox": "workspace:*",
     "@orbit/store": "workspace:*",
+    "chokidar": "4.0.3",
     "croner": "10.0.1",
     "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.2",
+    "ws": "8.22.0"
   }
 }

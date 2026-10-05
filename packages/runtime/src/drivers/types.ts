@@ -39,6 +39,19 @@ export interface OrbitToolBinding {
   call(name: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }>;
 }
 
+/**
+ * A plugin's MCP server for one segment (ADR-014). orbitd runs the plugin;
+ * the engine reaches it through Orbit: over loopback HTTP with the segment
+ * token (CLI), an in-process server (SDK) or directly (MockDriver).
+ */
+export interface EngineMcpServer {
+  /** Server name: tools reach the engine as `mcp__<name>__<tool>`. */
+  name: string;
+  http: { url: string; token: string } | null;
+  tools: { name: string; description: string; inputSchema: Record<string, unknown> }[];
+  call(name: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }>;
+}
+
 export interface DriverRunRequest {
   runId: string;
   prompt: string;
@@ -69,6 +82,8 @@ export interface DriverRunRequest {
   mockFixture?: string | undefined;
   /** Orbit's MCP tools for this segment; null/omitted = none. */
   orbitTools?: OrbitToolBinding | null | undefined;
+  /** Plugin MCP servers for this segment; null/omitted = none. */
+  pluginServers?: EngineMcpServer[] | null | undefined;
   /** Subagents by name; null/omitted = none. */
   agents?: Record<string, EngineAgent> | null | undefined;
 }
