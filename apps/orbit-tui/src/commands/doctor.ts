@@ -44,8 +44,19 @@ export async function doctor(ctx: Context, opts: { json?: boolean }): Promise<nu
   row('API key', r.apiCredential ? p('bold', r.apiCredential) : p('dim', 'none configured'));
   row(
     'Mode',
-    `${r.mode} · API bind ${r.api.host}:${r.api.port} · ${r.humanPrincipals} human principal${r.humanPrincipals === 1 ? '' : 's'}`,
+    `${r.mode} · API bind ${r.api.host}:${r.api.port}${r.listen.container ? ' (inside a container)' : ''} · ${r.humanPrincipals} human principal${r.humanPrincipals === 1 ? '' : 's'}`,
   );
+  if (r.hosted) {
+    // Hosted mode (ADR-015): where browsers and webhooks arrive, who signs them in.
+    const roles = (['owner', 'operator', 'viewer'] as const)
+      .map((role) => `${r.principals[role]} ${role}${r.principals[role] === 1 ? '' : 's'}`)
+      .join(', ');
+    row(
+      'Hosted',
+      `${p('bold', r.hosted.publicUrl ?? 'no public URL')} · TLS ${r.hosted.tls ? 'in orbitd' : 'at your reverse proxy'}`,
+    );
+    row('Sign-in', `${r.hosted.issuer ?? p('red', 'no OIDC issuer')} · ${roles}`);
+  }
   row(
     'Compliance',
     r.compliance.allowed

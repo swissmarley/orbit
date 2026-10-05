@@ -84,7 +84,9 @@ export async function openApp(
   }
   const client = await ctx.client();
   const { ticket, expiresAt } = await client.call('createLoginTicket');
-  const url = `${origin ?? client.baseUrl}/login#ticket=${ticket}`;
+  // Hosted mode (ADR-015): the App lives at the public origin (its cookie is `__Host-`).
+  const base = origin ?? (await client.health()).publicUrl ?? client.baseUrl;
+  const url = `${base}/login#ticket=${ticket}`;
   if (o.json) {
     ctx.io.out(JSON.stringify({ url, expiresAt }));
     return 0;

@@ -265,10 +265,35 @@ describe('orbit CLI', () => {
     expect(`${report.refusal.message} ${report.refusal.hint}`).toMatch(/ANTHROPIC_API_KEY/);
   });
 
-  it('hosted mode: orbitd refuses to start, so nothing can use a subscription', async () => {
+  it('hosted mode without a public URL and OIDC: orbitd refuses to start', async () => {
     const h = harness({ ORBIT_HOME: home, ORBIT_MODE: 'hosted', ORBIT_CLAUDE_PATH: FAKE_CLAUDE });
     expect(await h.run('doctor')).toBe(ExitCode.usage);
-    expect(h.err.join('\n')).toMatch(/Hosted mode is not available yet/);
+    expect(h.err.join('\n')).toMatch(/Hosted mode needs its public https URL/);
+    expect(h.err.join('\n')).toMatch(/ORBIT_PUBLIC_URL/);
+  });
+
+  it('hosted mode never uses a subscription; doctor shows the public URL and sign-in (ADR-015)', async () => {
+    const h = harness({
+      ORBIT_HOME: home,
+      ORBIT_MODE: 'hosted',
+      ORBIT_PUBLIC_URL: 'https://orbit.example.com',
+      ORBIT_OIDC_ISSUER: 'https://id.example.com',
+      ORBIT_OIDC_CLIENT_ID: 'orbit',
+      ORBIT_CLAUDE_PATH: FAKE_CLAUDE,
+      PATH: process.env.PATH,
+    });
+    expect(await h.run('doctor')).toBe(ExitCode.complianceRefused);
+    expect(h.text()).toMatch(/Hosted\s+https:\/\/orbit\.example\.com · TLS at your reverse proxy/);
+    expect(h.text()).toMatch(
+      /Sign-in\s+https:\/\/id\.example\.com · 1 owner, 0 operators, 0 viewers/,
+    );
+    expect(h.text()).toMatch(/ORBIT_MODE=hosted is set/);
+    // The operator's way into the App: a one-time link on the public origin.
+    h.reset();
+    expect(await h.run('app', '--json')).toBe(0);
+    expect(h.json<{ url: string }>().url).toMatch(
+      /^https:\/\/orbit\.example\.com\/login#ticket=[\w-]{43}$/,
+    );
   });
 
   it('doctor warns about a stray API key while a subscription login exists', async () => {
