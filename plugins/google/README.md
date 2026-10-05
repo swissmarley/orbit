@@ -12,7 +12,7 @@ events. Sending mail and creating events wait for your approval.
 | `get_message`   | READ        | One message: headers, attachment names, and its text (text/plain, or HTML reduced to text; ~20,000 characters) |
 | `list_drafts`   | READ        | Drafts in the mailbox: draft id, to, subject, snippet                                                          |
 | `create_draft`  | WRITE_LOCAL | Create a draft, or a draft reply in the original thread (`replyToMessageId`); nothing is sent                  |
-| `send_draft`    | EXTERNAL    | Send a draft by its id; asks you                                                                               |
+| `send_draft`    | EXTERNAL    | Send a draft, naming its recipients and subject (sent only if the draft matches them); asks you                |
 | `list_events`   | READ        | Events between `timeMin` and `timeMax` (default: the next 7 days), up to 50, ordered by start                  |
 | `create_event`  | EXTERNAL    | Create an event; with `attendees`, Google emails them invitations; asks you                                    |
 

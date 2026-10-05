@@ -363,14 +363,50 @@ describe('google plugin', () => {
     expect(seen).toEqual([]);
   });
 
-  it('sends a draft by id', async () => {
+  it('sends a draft only when it matches the approved recipients and subject (review M4)', async () => {
+    const draft = (headers: Record<string, string>) => ({
+      json: {
+        id: 'r-1',
+        message: {
+          id: 'm9',
+          payload: { headers: Object.entries(headers).map(([name, value]) => ({ name, value })) },
+        },
+      },
+    });
+    replies[`GET ${GMAIL}/drafts/r-1`] = draft({
+      To: '"Ada Lovelace" <Ada@Example.com>',
+      Subject: 'Re: Launch window',
+    });
     replies[`POST ${GMAIL}/drafts/send`] = { json: { id: 'm10', threadId: 't10' } };
-    expect(await call('send_draft', { draftId: 'r-1' })).toEqual({
+    const approved = { draftId: 'r-1', to: 'ada@example.com', subject: 'Re: Launch window' };
+    expect(await call('send_draft', approved)).toEqual({
       isError: false,
       text: 'Sent draft r-1 as message m10 (thread t10).',
     });
-    expect(apiCalls()[0]!.body).toEqual({ id: 'r-1' });
-    expect((await call('send_draft', { draftId: 'r/1' })).isError).toBe(true);
+    expect(apiCalls().at(-1)!.body).toEqual({ id: 'r-1' });
+    expect((await call('send_draft', { ...approved, draftId: 'r/1' })).isError).toBe(true);
+    expect((await call('send_draft', { draftId: 'r-1' })).isError).toBe(true);
+
+    const sends = () => apiCalls().filter((c) => c.path.endsWith('/drafts/send')).length;
+    const before = sends();
+    for (const [headers, args] of [
+      // Another recipient than the approval names.
+      [{ To: 'eve@example.com', Subject: 'Re: Launch window' }, approved],
+      // A hidden extra recipient.
+      [{ To: 'ada@example.com', Cc: 'eve@example.com', Subject: 'Re: Launch window' }, approved],
+      [{ To: 'ada@example.com', Bcc: 'eve@example.com', Subject: 'Re: Launch window' }, approved],
+      // Another subject.
+      [{ To: 'ada@example.com', Subject: 'Wire the money' }, approved],
+    ] as const) {
+      replies[`GET ${GMAIL}/drafts/r-1`] = draft(headers);
+      expect(await call('send_draft', args)).toMatchObject({
+        isError: true,
+        text: expect.stringMatching(
+          /does not match the approved message.*Nothing was sent/s,
+        ) as unknown as string,
+      });
+    }
+    expect(sends()).toBe(before);
   });
 
   it('lists events in a window from the configured calendar', async () => {

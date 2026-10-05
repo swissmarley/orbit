@@ -203,6 +203,12 @@ function headerOf(payload: unknown, name: string): string {
   return h ? str(h.value) : '';
 }
 
+/** The bare addresses in an address header, lower-case, sorted, comma-separated. */
+export function emailsOf(header: string): string {
+  const found = header.match(/[^\s<>,;:"()]+@[^\s<>,;:"()]+/g) ?? [];
+  return [...new Set(found.map((a) => a.toLowerCase()))].sort().join(', ');
+}
+
 const decode64 = (data: string) => Buffer.from(data, 'base64url').toString('utf8');
 
 /** The text of a message: the first text/plain part, else the first text/html part as text. */
@@ -488,9 +494,40 @@ export const tools = [
   }),
   defineTool({
     name: 'send_draft',
-    description: 'Send an existing draft by its draft id (your owner approves it first).',
-    input: z.object({ draftId: z.string().trim().regex(GOOGLE_ID, 'a Gmail draft id') }),
-    run: async ({ draftId }, ctx) => {
+    description:
+      'Send an existing draft (your owner approves it first). Repeat its recipients and subject exactly ' +
+      'as create_draft or list_drafts showed them, so the approval shows what is sent; a draft that ' +
+      'does not match is not sent.',
+    input: z.object({
+      draftId: z.string().trim().regex(GOOGLE_ID, 'a Gmail draft id'),
+      to: z.string().trim().min(3).max(2000).describe("The draft's To addresses"),
+      cc: z.string().trim().max(2000).optional().describe("The draft's Cc addresses, if any"),
+      subject: z.string().max(500).describe("The draft's subject"),
+    }),
+    run: async ({ draftId, to, cc, subject }, ctx) => {
+      // The approval shows to/cc/subject: send only a draft that matches them (M7 review M4).
+      const d = await google(ctx, gmail(`/drafts/${draftId}`), {
+        query: [['format', 'metadata']],
+      });
+      const msg = isObj(d.message) ? d.message : {};
+      const actual = {
+        to: emailsOf(headerOf(msg.payload, 'To')),
+        cc: emailsOf(headerOf(msg.payload, 'Cc')),
+        bcc: emailsOf(headerOf(msg.payload, 'Bcc')),
+        subject: headerOf(msg.payload, 'Subject').trim(),
+      };
+      const mismatch =
+        actual.to !== emailsOf(to) ||
+        actual.cc !== emailsOf(cc ?? '') ||
+        actual.bcc !== '' ||
+        actual.subject !== subject.trim();
+      if (mismatch) {
+        throw new ToolError(
+          `Draft ${draftId} does not match the approved message (it goes to ${oneLine(actual.to || 'nobody')}` +
+            `${actual.cc ? `, cc ${oneLine(actual.cc)}` : ''}${actual.bcc ? `, bcc ${oneLine(actual.bcc)}` : ''}` +
+            `, subject "${oneLine(actual.subject)}"). Nothing was sent.`,
+        );
+      }
       const m = await google(ctx, gmail('/drafts/send'), { method: 'POST', body: { id: draftId } });
       return `Sent draft ${draftId} as message ${str(m.id)} (thread ${str(m.threadId)}).`;
     },

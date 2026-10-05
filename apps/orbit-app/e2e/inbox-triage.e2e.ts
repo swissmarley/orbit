@@ -39,6 +39,9 @@ test.describe('Inbox Triage demo (M7)', () => {
     await expect(card).toBeVisible();
     await expect(card.getByText(/untrusted content influenced/i).first()).toBeVisible();
     await expect(card.getByText(/r-5521/).first()).toBeVisible();
+    // The owner sees who receives the mail and its subject (review M4).
+    await expect(card.getByText(/ada@example\.com/).first()).toBeVisible();
+    await expect(card.getByText(/Re: Launch window/).first()).toBeVisible();
     await card
       .getByRole('button', { name: /^Approve/ })
       .first()

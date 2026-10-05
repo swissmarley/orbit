@@ -363,7 +363,8 @@ describe('Inbox Triage demo', () => {
     const [approval] = (await h.json<Approval[]>('GET', `/v1/approvals?run=${r.runId}`)).body;
     expect(approval).toMatchObject({
       toolName: 'mcp__google__send_draft',
-      input: { draftId: 'r-5521' },
+      // The approval names who receives what (review M4).
+      input: { draftId: 'r-5521', to: 'ada@example.com', subject: 'Re: Launch window' },
     });
     await h.json('POST', `/v1/approvals/${approval?.id}/approve`, {});
     await settle();
