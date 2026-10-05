@@ -4,8 +4,7 @@ import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { useMemo } from 'react';
 import { toast } from 'sonner';
-import { useClient } from './api';
-import { errorText } from './api';
+import { csrfSecret, errorText, useClient } from './api';
 import { keys } from './queries';
 
 /** Undo window for reversible actions. */
@@ -85,12 +84,15 @@ export function useActions() {
           void refresh(keys.bots, keys.runs, keys.queue);
         }
         toast.success(paused ? `Paused ${bot.spec.name}` : `Resumed ${bot.spec.name}`, {
-          description: paused ? 'Its Runs stopped; nothing new starts.' : 'It may run again.',
+          description: paused
+            ? 'Its Runs stopped; nothing new starts. Resuming does not restart stopped Runs.'
+            : 'It may run again.',
           duration: UNDO_MS,
           ...(undoable
             ? {
                 action: {
-                  label: 'Undo',
+                  // Undoing a pause cannot bring the stopped Runs back: name what it does.
+                  label: paused ? 'Resume Bot' : 'Undo',
                   onClick: () =>
                     void actions.setBotPaused(bot, !paused, false).catch(() => undefined),
                 },
@@ -274,6 +276,7 @@ export function useActions() {
 
       async signOut() {
         await c.call('deleteSession').catch(() => undefined);
+        csrfSecret.set(null);
         qc.clear();
         window.location.assign('/login');
       },

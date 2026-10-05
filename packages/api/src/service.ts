@@ -612,6 +612,16 @@ export class OrbitService {
   }
 
   approve(id: string, body: z.output<typeof ApproveBody>): z.infer<typeof DecisionResult> {
+    // Cards show (and edits start from) the redacted input: approving an edit
+    // that still holds a marker would run the tool with the marker instead of
+    // the value (review M5 LOW-4). Say so instead of doing something surprising.
+    if (body.editedInput && /\[REDACTED:[^\]]*\]/.test(JSON.stringify(body.editedInput))) {
+      throw new OrbitError(
+        'invalid_input',
+        'The edited arguments still contain a [REDACTED:…] placeholder',
+        { hint: 'Replace the placeholder with the real value, or approve without editing.' },
+      );
+    }
     const approval = this.approvals.decide(id, {
       approve: true,
       by: OWNER,
@@ -721,10 +731,22 @@ export class OrbitService {
         : null,
       apiCredential: r.apiCredential,
       compliance: r.guard,
-      warnings: r.warnings.map((w) => ({
-        code: w.code,
-        message: this.redactor.redactString(w.message),
-      })),
+      warnings: [
+        ...r.warnings.map((w) => ({
+          code: w.code,
+          message: this.redactor.redactString(w.message),
+        })),
+        // A dev origin is trusted with credentialed CORS: whatever else runs on
+        // that port later is trusted too (review M5 MEDIUM-2).
+        ...(c.api.allowedOrigins.length > 0
+          ? [
+              {
+                code: 'app_extra_origins',
+                message: `Browser origins besides orbitd's own are allowed (${c.api.allowedOrigins.join(', ')}). Keep this for App development only: any page served on those ports can call the API. Unset ORBIT_ALLOWED_ORIGINS / api.allowedOrigins when you are done.`,
+              },
+            ]
+          : []),
+      ],
       refusal: r.refusal,
       onboarding: r.onboarding,
       mode: c.mode,

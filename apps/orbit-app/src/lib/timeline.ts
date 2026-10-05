@@ -131,7 +131,7 @@ export function buildTimeline(events: readonly RunEvent[]): TimelineItem[] {
           e,
           '▶',
           'info',
-          `Started · ${e.data.driver} · ${e.data.authMethod}${e.data.model ? ` · ${e.data.model}` : ''}`,
+          `Started · driver ${e.data.driver} · auth ${e.data.authMethod}${e.data.model ? ` · requested model ${e.data.model}` : ''}`,
         );
         break;
       case 'message.assistant':
@@ -246,7 +246,7 @@ export function buildTimeline(events: readonly RunEvent[]): TimelineItem[] {
         break;
       case 'run.parked':
         note(e, RUN_STATUS.waiting_approval.mark, 'attention', 'Waiting for your approval', {
-          detail: e.data.approvalIds.join(', '),
+          ...(e.data.approvalIds[0] ? { approvalId: e.data.approvalIds[0] } : {}),
         });
         break;
       case 'run.resumed':

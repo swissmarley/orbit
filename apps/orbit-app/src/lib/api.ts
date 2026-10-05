@@ -3,16 +3,42 @@ import { CSRF_HEADER, OrbitClient } from '@orbit/sdk-client/browser';
 import { createContext, useContext } from 'react';
 import { createStore } from './store';
 
+const CSRF_KEY = 'orbit.csrf';
+
+/**
+ * The session's CSRF secret from sign-in. It lives in this origin's storage
+ * (scoped to scheme, host and port), so a listener on another loopback port
+ * that sees the cookie (cookies ignore ports) still cannot use it.
+ */
+export const csrfSecret = {
+  get(): string | null {
+    try {
+      return localStorage.getItem(CSRF_KEY);
+    } catch {
+      return null;
+    }
+  },
+  set(value: string | null): void {
+    try {
+      if (value === null) localStorage.removeItem(CSRF_KEY);
+      else localStorage.setItem(CSRF_KEY, value);
+    } catch {
+      // storage unavailable: this tab signs in again next time
+    }
+  },
+};
+
 /**
  * The App's client: same origin as orbitd, authenticated by the HttpOnly
- * session cookie plus the CSRF header (ADR-011). No token ever reaches the
- * browser.
+ * session cookie plus the session's CSRF secret (ADR-011). No API token ever
+ * reaches the browser.
  */
 export function createBrowserClient(baseUrl = ''): OrbitClient {
   return new OrbitClient({
     baseUrl,
     credentials: 'same-origin',
-    headers: { [CSRF_HEADER]: '1' },
+    // Before sign-in there is no secret yet; "1" lets the ticket be redeemed.
+    headers: () => ({ [CSRF_HEADER]: csrfSecret.get() ?? '1' }),
   });
 }
 

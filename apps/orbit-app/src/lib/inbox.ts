@@ -1,3 +1,4 @@
+import { scrubControls } from '@orbit/core/browser';
 import type { Approval } from '@orbit/sdk-client/browser';
 
 /**
@@ -79,18 +80,32 @@ export function onInboxKey(
   if (k.inField) return { state };
 
   if (mode.kind === 'always') {
-    // Only an explicit y confirms "always allow".
-    if (key === 'y')
+    // Only an explicit y confirms "always allow"; n cancels (Esc is handled
+    // above). Other keys (Tab, screen-reader navigation) are ignored so the
+    // buttons stay reachable.
+    if (key === 'y') {
       return {
         state: { ...state, mode: { kind: 'list' } },
         command: { kind: 'approve', id: mode.id, always: true },
       };
-    return {
-      state: { ...state, mode: { kind: 'card', id: mode.id } },
-      command: { kind: 'notice', text: 'Cancelled' },
-    };
+    }
+    if (key === 'n') {
+      return {
+        state: { ...state, mode: { kind: 'card', id: mode.id } },
+        command: { kind: 'notice', text: 'Cancelled' },
+      };
+    }
+    return { state };
   }
   if (mode.kind === 'card') {
+    // FINANCIAL is never approved (handed back); the server never queues it either.
+    const tier = list.find((a) => a.id === mode.id)?.tier;
+    if (tier === 'FINANCIAL' && (key === 'a' || key === 'A' || key === 'e')) {
+      return {
+        state,
+        command: { kind: 'notice', text: 'Financial actions are never executed by a Bot' },
+      };
+    }
     if (key === 'a')
       return {
         state: { ...state, mode: { kind: 'list' } },
@@ -147,5 +162,5 @@ export const INBOX_KEYS: readonly { keys: string; does: string }[] = [
 
 /** What "always allow" means, said before it happens. */
 export function alwaysAllowText(a: Approval): string {
-  return `Always allow ${a.toolName} for ${a.card.botName}, with any arguments, for 7 days? Runs that read untrusted content still ask.`;
+  return `Always allow ${scrubControls(a.toolName)} for ${scrubControls(a.card.botName)}, with any arguments, for 7 days? Runs that read untrusted content still ask.`;
 }

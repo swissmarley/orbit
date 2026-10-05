@@ -29,6 +29,33 @@ test.describe('browser security (ADR-011)', () => {
     await fresh.close();
   });
 
+  test('a harvested session cookie is useless without the page-held CSRF secret', async ({
+    signedIn: page,
+    orbitd,
+  }) => {
+    // Cookies ignore ports: any listener on 127.0.0.1 could see this one.
+    const cookies = await page.context().cookies(orbitd.url);
+    const session = cookies.find((c) => c.name.startsWith('orbit_session_'));
+    expect(session?.httpOnly).toBe(true);
+    expect(session?.sameSite).toBe('Strict');
+    const replay = (csrf: string) =>
+      fetch(`${orbitd.url}/v1/kill`, {
+        method: 'POST',
+        headers: {
+          cookie: `${session?.name}=${session?.value}`,
+          'x-orbit-csrf': csrf,
+          'content-type': 'application/json',
+        },
+        body: '{"on":true}',
+      });
+    expect((await replay('1')).status).toBe(401);
+    expect((await orbitd.api<{ engaged: boolean }>('GET', '/v1/kill')).engaged).toBe(false);
+    // The App itself still works: it holds the secret in its own origin's storage.
+    await page.goto(`${orbitd.url}/settings`);
+    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+    await expect(page.getByRole('status', { name: 'Connection: live' })).toBeVisible();
+  });
+
   test('the page is served with a strict CSP and no token anywhere in it', async ({
     request,
     orbitd,

@@ -1,9 +1,9 @@
 /** @jsxRuntime automatic @jsxImportSource react */
-import type { ComponentProps } from 'react';
+import { type ComponentProps, cloneElement, isValidElement } from 'react';
 import { cn } from '../../lib/cn';
 
 const field =
-  'w-full rounded-md border border-border-strong bg-surface px-2.5 text-sm text-fg placeholder:text-fg-subtle focus-visible:border-ring disabled:opacity-60';
+  'w-full rounded-md border border-border-input bg-surface px-2.5 text-sm text-fg placeholder:text-fg-subtle focus-visible:border-ring disabled:opacity-60';
 
 export function Input({ className, ...props }: ComponentProps<'input'>) {
   return <input className={cn(field, 'h-8', className)} {...props} />;
@@ -35,10 +35,15 @@ export function Field({
   children: React.ReactNode;
   className?: string;
 }) {
+  // Wire the hint to the control for screen readers.
+  const control =
+    hint && isValidElement<{ 'aria-describedby'?: string }>(children)
+      ? cloneElement(children, { 'aria-describedby': `${id}-hint` })
+      : children;
   return (
     <div className={cn('flex flex-col gap-1', className)}>
       <Label htmlFor={id}>{label}</Label>
-      {children}
+      {control}
       {hint ? (
         <p id={`${id}-hint`} className="text-xs text-fg-subtle">
           {hint}

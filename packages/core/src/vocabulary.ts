@@ -112,7 +112,7 @@ export function formatRelative(iso: string, now: number = Date.now()): string {
 export function formatClock(iso: string, now: number = Date.now()): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   const today = new Date(now);
   if (d.toDateString() === today.toDateString()) return time;
   if (Math.abs(now - d.getTime()) < 6 * DAY * 1000) {
@@ -125,7 +125,7 @@ export function formatClock(iso: string, now: number = Date.now()): string {
 export function formatTimeOfDay(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
 }
 
 /** Local time with zone, for moments a person acts on ("resumes at Mon 14:05 CET"). */
@@ -159,7 +159,7 @@ export function formatDuration(ms: number): string {
   if (s < 60) return `${s.toFixed(1)}s`;
   const m = Math.floor(s / 60);
   if (m < 60) return `${m}m ${Math.round(s % 60)}s`;
-  return `${Math.floor(m / 60)}h ${m % 60}m`;
+  return m % 60 === 0 ? `${m / 60}h` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
 /** "950", "12.3k", "1.2M". */

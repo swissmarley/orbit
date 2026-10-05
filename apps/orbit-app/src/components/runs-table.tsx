@@ -28,7 +28,13 @@ export function RunsTable({
 }) {
   const name = (id: string) => scrubControls(bots?.find((b) => b.id === id)?.spec.name ?? id);
   return (
-    <div className="overflow-x-auto rounded-lg border border-border bg-surface">
+    <div
+      className="overflow-x-auto rounded-lg border border-border bg-surface"
+      // Scrolls sideways on narrow screens: reachable from the keyboard.
+      tabIndex={0}
+      role="region"
+      aria-label="Runs table"
+    >
       <table className="w-full text-sm">
         <caption className="sr-only">Runs</caption>
         <thead className="border-b border-border text-left text-xs text-fg-muted">
@@ -37,14 +43,14 @@ export function RunsTable({
               Status
             </th>
             {showBot ? (
-              <th scope="col" className="px-3 py-2 font-medium">
+              <th scope="col" className="hidden px-3 py-2 font-medium lg:table-cell">
                 Bot
               </th>
             ) : null}
             <th scope="col" className="px-3 py-2 font-medium">
               Task
             </th>
-            <th scope="col" className="px-3 py-2 font-medium">
+            <th scope="col" className="hidden px-3 py-2 font-medium lg:table-cell">
               Trigger
             </th>
             <th scope="col" className="px-3 py-2 font-medium">
@@ -66,9 +72,11 @@ export function RunsTable({
                 <StatusBadge status={r.status} />
               </td>
               {showBot ? (
-                <td className="px-3 py-2 whitespace-nowrap text-fg-muted">{name(r.botId)}</td>
+                <td className="hidden px-3 py-2 whitespace-nowrap text-fg-muted lg:table-cell">
+                  {name(r.botId)}
+                </td>
               ) : null}
-              <td className="max-w-md px-3 py-2">
+              <td className="max-w-md min-w-48 px-3 py-2">
                 <Link
                   to="/runs/$runId"
                   params={{ runId: r.runId }}
@@ -82,7 +90,9 @@ export function RunsTable({
                   </span>
                 ) : null}
               </td>
-              <td className="px-3 py-2 text-xs text-fg-muted">{r.trigger?.kind ?? '—'}</td>
+              <td className="hidden px-3 py-2 text-xs text-fg-muted lg:table-cell">
+                {r.trigger?.kind ?? '—'}
+              </td>
               <td className="px-3 py-2 text-xs whitespace-nowrap text-fg-muted">
                 <Time iso={r.createdAt} />
               </td>

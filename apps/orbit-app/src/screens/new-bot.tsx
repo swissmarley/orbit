@@ -2,7 +2,7 @@
 import { BotSpec, type BotSpecInput, TriggerSpec } from '@orbit/core/browser';
 import { useNavigate } from '@tanstack/react-router';
 import { ArrowLeft, ArrowRight, Check, Sparkles } from 'lucide-react';
-import { useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { PageHeader } from '../components/states';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
@@ -86,6 +86,15 @@ export function NewBotScreen() {
     autoResume: true,
     fixture: '',
   });
+  const stepHeading = useRef<HTMLHeadingElement>(null);
+  const firstStep = useRef(true);
+  useEffect(() => {
+    if (firstStep.current) {
+      firstStep.current = false;
+      return;
+    }
+    stepHeading.current?.focus();
+  }, [step]);
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((x) => ({ ...x, [k]: v }));
   const spec = useMemo(() => draftToSpec(d), [d]);
   const parsed = BotSpec.safeParse(spec);
@@ -148,6 +157,10 @@ export function NewBotScreen() {
       </ol>
       <Card>
         <CardContent className="flex flex-col gap-4 pt-4">
+          {/* Focus lands here on every step change (the button that was pressed is gone). */}
+          <h2 ref={stepHeading} tabIndex={-1} className="text-sm font-semibold focus:outline-none">
+            Step {step + 1} of {STEPS.length}: {STEPS[step]}
+          </h2>
           {step === 0 ? (
             <>
               <Field
@@ -161,11 +174,16 @@ export function NewBotScreen() {
                   onChange={(e) => set('goal', e.target.value)}
                   maxLength={4000}
                   className="min-h-28"
-                  placeholder="Summarize new notes in my workspace into a daily digest every weekday at 9"
+                  placeholder="e.g. Summarize new notes in my workspace into a daily digest every weekday at 9"
                   autoFocus
                 />
               </Field>
-              <div className="flex justify-end">
+              <div className="flex items-center justify-end gap-3">
+                {d.goal.trim().length < 3 ? (
+                  <span className="text-xs text-fg-subtle">
+                    Describe the goal in a few words first.
+                  </span>
+                ) : null}
                 <Button variant="primary" disabled={d.goal.trim().length < 3} onClick={suggest}>
                   <Sparkles aria-hidden /> Suggest a setup
                 </Button>

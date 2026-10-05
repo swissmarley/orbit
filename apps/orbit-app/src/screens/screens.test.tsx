@@ -25,18 +25,18 @@ async function seeded() {
 }
 
 describe('Bots', () => {
-  it('grid shows status in words; pausing asks first and offers Undo', async () => {
+  it('grid shows status in words; pausing asks first and offers to resume', async () => {
     const h = await seeded();
     m = mountApp('/bots', { h });
     const card = await screen.findByTestId('bot-card');
     expect(within(card).getByText('Notes')).toBeTruthy();
-    expect(within(card).getByText(/done|failed/)).toBeTruthy();
-    expect(within(card).getByRole('img', { name: /Last 1 run/ })).toBeTruthy();
+    expect(within(card).getAllByText(/done|failed/).length).toBeGreaterThan(0);
+    expect(within(card).getByText(/1 run ·/)).toBeTruthy();
     const user = userEvent.setup();
     await user.click(within(card).getByRole('button', { name: 'Pause Notes' }));
     await user.click(await screen.findByRole('button', { name: /^Pause/ }));
     await waitFor(() => expect(h.service.bots.get('notes').pausedAt).not.toBeNull());
-    await user.click(await screen.findByRole('button', { name: 'Undo' }));
+    await user.click(await screen.findByRole('button', { name: 'Resume Bot' }));
     await waitFor(() => expect(h.service.bots.get('notes').pausedAt).toBeNull());
   });
 

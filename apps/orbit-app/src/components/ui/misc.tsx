@@ -9,7 +9,7 @@ export function Skeleton({ className, ...props }: ComponentProps<'div'>) {
     <div
       aria-hidden
       className={cn(
-        'rounded-md bg-[linear-gradient(90deg,var(--surface-2),var(--surface-3),var(--surface-2))] bg-[length:200%_100%] [animation:orbit-shimmer_1.6s_linear_infinite]',
+        'rounded-md motion-reduce:[animation:none] bg-[linear-gradient(90deg,var(--surface-2),var(--surface-3),var(--surface-2))] bg-[length:200%_100%] [animation:orbit-shimmer_1.6s_linear_infinite]',
         className,
       )}
       {...props}
@@ -21,7 +21,7 @@ export function Kbd({ className, ...props }: ComponentProps<'kbd'>) {
   return (
     <kbd
       className={cn(
-        'inline-flex h-5 min-w-5 items-center justify-center rounded border border-border-strong bg-surface-2 px-1 font-mono text-[11px] text-fg-muted',
+        'inline-flex h-5 min-w-5 items-center justify-center rounded border border-border-input bg-surface-2 px-1 font-mono text-[11px] text-fg-muted',
         className,
       )}
       {...props}

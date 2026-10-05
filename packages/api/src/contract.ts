@@ -20,8 +20,9 @@ import { z } from 'zod';
 export const API_VERSION = '1';
 
 /**
- * Header every cookie-authenticated (App) request carries (ADR-011): a page
- * on another origin cannot set it without orbitd's CORS consent.
+ * Header every cookie-authenticated (App) request carries (ADR-011): the
+ * session's CSRF secret from POST /v1/session. A page on another origin can
+ * neither read it nor send the header without orbitd's CORS consent.
  */
 export const CSRF_HEADER = 'x-orbit-csrf';
 
@@ -285,6 +286,11 @@ export const SessionInfo = z.object({
 });
 export const LoginTicket = z.object({ ticket: z.string(), expiresAt: z.string() });
 export const CreateSessionBody = z.object({ ticket: z.string().min(16).max(128) });
+/**
+ * The session's CSRF secret: the App keeps it in its own origin's storage and
+ * sends it as X-Orbit-CSRF. The HttpOnly cookie alone is not a credential.
+ */
+export const SessionCreated = z.object({ ok: z.literal(true), csrf: z.string() });
 
 const boolQuery = z
   .enum(['true', 'false', '1', '0'])
@@ -388,7 +394,7 @@ export const routes = {
     auth: false,
     body: CreateSessionBody,
     status: 201,
-    response: ok,
+    response: SessionCreated,
   },
   deleteSession: {
     method: 'DELETE',

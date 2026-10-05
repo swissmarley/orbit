@@ -10,6 +10,9 @@ import { EmptyState, ErrorState, ListSkeleton, PageHeader } from '../components/
 import { TierBadge, Time } from '../components/status';
 import { Dialog, DialogContent } from '../components/ui/dialog';
 import { Kbd } from '../components/ui/misc';
+import { confirmOpen } from '../components/confirm';
+import { helpStore } from '../components/keyboard-help';
+import { paletteStore } from '../components/palette';
 import { useActions } from '../lib/actions';
 import { cn } from '../lib/cn';
 import {
@@ -21,6 +24,15 @@ import {
   selected,
 } from '../lib/inbox';
 import { usePendingApprovals } from '../lib/queries';
+
+/** A focused button or link that is not an Inbox row: its own keys win. */
+function isOtherControl(t: EventTarget | null): boolean {
+  return (
+    t instanceof HTMLElement &&
+    t.closest('button, a, [role="button"], [role="option"], [role="tab"]') !== null &&
+    t.dataset.testid !== 'inbox-row'
+  );
+}
 
 function isField(t: EventTarget | null): boolean {
   return (
@@ -72,26 +84,39 @@ export function InboxScreen() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+      // Another dialog (palette, help, a confirmation) owns the keyboard.
+      if (paletteStore.get() || helpStore.get() || confirmOpen()) return;
+      // Enter and Space on a focused control (nav link, toast Undo, …) belong to it.
+      if ((e.key === 'Enter' || e.key === ' ') && isOtherControl(e.target)) return;
       const r = onInboxKey(state, list, { key: e.key, inField: isField(e.target) });
       if (r.state === state && !r.command) return;
       if (e.key !== 'Escape' || state.mode.kind !== 'list') e.preventDefault();
       setState(r.state);
       if (r.command?.kind === 'notice') toast(r.command.text);
       const cmd = r.command;
-      if (cmd?.kind === 'approve') {
+      if (cmd?.kind === 'approve' && !busy) {
         const a = list.find((x) => x.id === cmd.id);
-        if (a) approve(a, { always: cmd.always });
+        // Same gate as the buttons: FINANCIAL is never approved (handed back).
+        if (a && a.tier !== 'FINANCIAL') approve(a, { always: cmd.always });
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [state, list, approve]);
+  }, [state, list, approve, busy]);
 
   const current = selected(state, list);
+  // Focus and selection are one thing (roving tabindex): j/k move focus too,
+  // so screen readers announce the card and Enter opens what has focus.
   useEffect(() => {
-    if (current) rows.current.get(current.id)?.scrollIntoView({ block: 'nearest' });
-  }, [current]);
+    if (!current || state.mode.kind !== 'list') return;
+    const el = rows.current.get(current.id);
+    const active = document.activeElement;
+    const inList = active instanceof HTMLElement && active.dataset.testid === 'inbox-row';
+    if (el && (inList || active === document.body || active === null))
+      el.focus({ preventScroll: true });
+    el?.scrollIntoView({ block: 'nearest' });
+  }, [current, state.mode.kind]);
 
   const mode = state.mode;
   const open = mode.kind === 'list' ? null : (list.find((a) => a.id === mode.id) ?? null);
@@ -141,6 +166,12 @@ export function InboxScreen() {
               >
                 <button
                   type="button"
+                  tabIndex={isSel ? 0 : -1}
+                  onFocus={() =>
+                    setState((s) =>
+                      s.selectedId === a.id ? s : { ...s, selectedId: a.id, moved: false },
+                    )
+                  }
                   aria-current={isSel ? 'true' : undefined}
                   onClick={() =>
                     setState((s) => ({
@@ -200,6 +231,7 @@ export function InboxScreen() {
             <ApprovalCard
               key={open.id}
               approval={open}
+              titled
               mode={cardMode}
               onMode={setMode}
               busy={busy}

@@ -20,6 +20,8 @@
   --fg-subtle: #6b6b7d;
   --border: #dcdce5;
   --border-strong: #b9b9c8;
+  /* form-control outlines: ≥ 3:1 against --surface (WCAG 1.4.11) */
+  --border-input: #8c8c9e;
   --ring: #6d5ae6;
   --accent: #5b47d6;
   --accent-fg: #ffffff;
@@ -61,6 +63,7 @@
     --fg-subtle: #9393a6;
     --border: #2c2c38;
     --border-strong: #42424f;
+    --border-input: #6a6a78;
     --ring: #9d8cff;
     --accent: #8f7dff;
     --accent-fg: #0e0e13;
@@ -97,6 +100,7 @@
   --fg-subtle: #9393a6;
   --border: #2c2c38;
   --border-strong: #42424f;
+  --border-input: #6a6a78;
   --ring: #9d8cff;
   --accent: #8f7dff;
   --accent-fg: #0e0e13;
@@ -131,6 +135,7 @@
   --color-fg-subtle: var(--fg-subtle);
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
+  --color-border-input: var(--border-input);
   --color-ring: var(--ring);
   --color-accent: var(--accent);
   --color-accent-fg: var(--accent-fg);
@@ -188,6 +193,7 @@
     *::before,
     *::after {
       animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
     }
   }

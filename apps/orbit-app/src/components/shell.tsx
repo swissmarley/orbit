@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { type ReactNode, useEffect } from 'react';
 import { useActions } from '../lib/actions';
+import { MOD } from '../lib/platform';
 import { authStore, isUnauthorized, useClient } from '../lib/api';
 import { cn } from '../lib/cn';
 import { type Connection, connectionStore, startLiveFeed } from '../lib/live';
@@ -57,6 +58,17 @@ const CONNECTION: Record<
   },
 };
 
+const AUTH_SHORT: Record<string, string> = {
+  subscription: 'subscription',
+  api_key: 'API key',
+  api_key_helper: 'API key helper',
+  bedrock: 'Bedrock',
+  vertex: 'Vertex',
+  claude_cli_other: 'CLI login',
+  mock: 'mock',
+  none: 'not signed in',
+};
+
 /** Driver and auth method, always visible (never hidden behind a menu). */
 function DriverBadge() {
   const doctor = useDoctor();
@@ -69,8 +81,12 @@ function DriverBadge() {
       : d.authMethod === 'subscription'
         ? 'info'
         : 'neutral';
+  // Short in the header (it must never scroll away); the full label is in the tooltip.
   const text =
-    d.driver === 'mock' ? 'Demo mode · mock driver' : `${d.driver ?? 'no driver'} · ${d.authLabel}`;
+    d.driver === 'mock'
+      ? 'Demo · mock driver'
+      : `${d.driver ?? 'no driver'} · ${AUTH_SHORT[d.authMethod] ?? d.authMethod}`;
+
   return (
     <Tooltip
       content={
@@ -111,7 +127,7 @@ function StatusChips() {
       {queue.data ? (
         <Badge
           tone="neutral"
-          className="hidden sm:inline-flex"
+          className="hidden lg:inline-flex"
           title="Runs executing / concurrency limit; queued"
         >
           {queue.data.active.length}/{queue.data.limit} running
@@ -275,7 +291,7 @@ export function AppShell() {
           aria-label="Open the command palette"
           className="hidden text-fg-muted sm:inline-flex"
         >
-          <CommandIcon aria-hidden /> Search <Kbd>⌘K</Kbd>
+          <CommandIcon aria-hidden /> Search <Kbd>{MOD}K</Kbd>
         </Button>
         <Tooltip content="Keyboard shortcuts (?)">
           <Button
@@ -289,10 +305,10 @@ export function AppShell() {
         </Tooltip>
         <ThemeToggle />
       </header>
-      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <nav
           aria-label="Main"
-          className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-2 py-2 md:w-52 md:flex-col md:border-r md:border-b-0 md:px-3 md:py-4"
+          className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-2 py-2 lg:w-52 lg:flex-col lg:border-r lg:border-b-0 lg:px-3 lg:py-4"
         >
           <NavLink to="/inbox" icon={<Inbox aria-hidden />} count={pending}>
             Inbox

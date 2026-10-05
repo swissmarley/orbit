@@ -39,33 +39,45 @@ Options considered:
   Radix positioning), `X-Frame-Options: DENY`, `nosniff` and
   `Referrer-Policy: no-referrer`.
 - **Sign-in:** `orbit app` (bearer token) calls `POST /v1/session/tickets` and
-  opens `<origin>/login#ticket=<ticket>`. The ticket is 256 random bits,
+  opens `<origin>/login#ticket=<ticket>`. The link never goes on a command
+  line (other local users can read argv): the CLI writes a 0600
+  `$ORBIT_HOME/app-sign-in.html` that redirects to it and hands the browser
+  launcher that file (environment from the allowlist plus display variables). The ticket is 256 random bits,
   single-use, valid for 2 minutes, at most 16 outstanding, and sits in the URL
   **fragment**, which browsers never send to servers or put in `Referer`. The
   page posts it to `POST /v1/session` and removes it from the address bar;
   orbitd answers with `Set-Cookie: orbit_session_<port>=…; HttpOnly;
-SameSite=Strict; Path=/`. Only the bearer token can mint tickets, so a
+SameSite=Strict; Path=/` **and** a per-session CSRF secret in the JSON body,
+  which the App keeps in its own origin's storage. Only the bearer token can mint tickets, so a
   session cannot extend itself.
 - **Sessions** live in orbitd's memory: 12 h idle expiry (sliding), 7 days at
   most, at most 32. A daemon restart (which also rotates the bearer token)
   signs every browser out; `DELETE /v1/session` signs one out. The cookie
   name carries the port because cookies ignore ports and two daemons (two
   `ORBIT_HOME`s) may share `127.0.0.1`.
-- **CSRF:** every cookie-authenticated request must carry `X-Orbit-CSRF: 1`.
-  `<img>`, forms and simple cross-origin requests cannot set it, and a
-  scripted cross-origin request with it needs a CORS preflight that orbitd
-  refuses for unknown origins. `SameSite=Strict` is not enough on its own:
-  another port on `localhost` is _same-site_.
+- **The cookie alone is not a credential.** Cookies ignore ports, so any
+  listener on another `127.0.0.1` port that the browser visits receives the
+  cookie (M5 safety review HIGH-1). Every cookie-authenticated request must
+  therefore also carry `X-Orbit-CSRF: <the session's secret>`, compared in
+  constant time; a valid cookie with a missing or wrong secret gets 401. Web
+  storage is scoped to scheme, host **and port**, so another loopback origin
+  cannot read the secret, and a page on another origin cannot send the header
+  without a CORS preflight orbitd refuses. `SameSite=Strict` is not enough on
+  its own: another port on `localhost` is _same-site_. A script running on the
+  App's own origin could use both — the CSP (`script-src 'self'`, model text
+  rendered as text) is what stands there.
 - **Origin allowlist:** a request with an `Origin` header is accepted only
   when the origin is orbitd's own (`http://` + the already-checked Host
   header) or listed in `api.allowedOrigins` / `ORBIT_ALLOWED_ORIGINS`. That
   list accepts **only** loopback `http(s)` origins (the Vite dev server,
   `http://localhost:5173`) and the Tauri origins (`tauri://localhost`,
   `http://tauri.localhost`) — never a remote site; the config loader refuses
-  anything else. Allowlisted foreign origins get CORS headers with
+  anything else. Doctor warns while the list is non-empty: whatever later runs
+  on such a port is trusted too, so it is for App development only.
+  Allowlisted foreign origins get CORS headers with
   credentials and preflights; all others get 403, including a `cross-site`
   `Sec-Fetch-Site` without a known origin. The Host allowlist (DNS
-  rebinding) is unchanged.
+  rebinding) is unchanged, and a request without a Host header gets 400.
 - **Browser-safe client:** the App imports `@orbit/sdk-client/browser` and
   `@orbit/core/browser` only (no `node:fs` daemon discovery, no
   `node:crypto`), with `credentials: 'same-origin'` and the CSRF header

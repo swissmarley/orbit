@@ -60,7 +60,8 @@ function setup(opts: { appRoot?: string | null; allowedOrigins?: string[] } = {}
       body: JSON.stringify({ ticket: t.ticket }),
     });
     const cookie = /orbit_session_7420=([^;]+)/.exec(res.headers.get('set-cookie') ?? '')?.[1];
-    return { res, cookie: `${COOKIE}=${cookie ?? ''}` };
+    const body = res.status === 201 ? ((await res.clone().json()) as { csrf: string }) : null;
+    return { res, cookie: `${COOKIE}=${cookie ?? ''}`, csrf: body?.csrf ?? '' };
   };
   return { app, req, bearer, signIn, sessions };
 }
@@ -82,45 +83,59 @@ describe('SessionStore', () => {
   it('sessions slide on use, expire when idle and after seven days at most', () => {
     const clock = clockAt('2026-10-05T10:00:00Z');
     const s = new SessionStore({ now: clock.now });
-    const id = s.redeem(s.mintTicket().ticket)?.session ?? '';
+    const one = s.redeem(s.mintTicket().ticket);
+    const check = (x: typeof one) => s.check(x?.session ?? '', x?.csrf);
     clock.advance(11 * 3_600_000);
-    expect(s.check(id)).toBe(true);
+    expect(check(one)).toBe('ok');
     clock.advance(11 * 3_600_000);
-    expect(s.check(id)).toBe(true);
+    expect(check(one)).toBe('ok');
     clock.advance(13 * 3_600_000);
-    expect(s.check(id)).toBe(false);
-    const long = s.redeem(s.mintTicket().ticket)?.session ?? '';
+    expect(check(one)).toBe('none');
+    const long = s.redeem(s.mintTicket().ticket);
     for (let i = 0; i < 16; i++) {
       clock.advance(11 * 3_600_000);
-      s.check(long);
+      check(long);
     }
-    expect(s.check(long)).toBe(false);
+    expect(check(long)).toBe('none');
+  });
+
+  it('a session needs its own CSRF secret, not just the cookie (review HIGH-1)', () => {
+    const s = new SessionStore();
+    const a = s.redeem(s.mintTicket().ticket);
+    const b = s.redeem(s.mintTicket().ticket);
+    expect(s.check(a?.session ?? '', a?.csrf)).toBe('ok');
+    expect(s.check(a?.session ?? '', undefined)).toBe('bad_csrf');
+    expect(s.check(a?.session ?? '', '1')).toBe('bad_csrf');
+    expect(s.check(a?.session ?? '', b?.csrf)).toBe('bad_csrf');
+    expect(a?.csrf).not.toBe(a?.session);
   });
 
   it('revoke and the session cap drop sessions', () => {
     const s = new SessionStore({ maxSessions: 2 });
-    const [a, b, c] = [1, 2, 3].map(() => s.redeem(s.mintTicket().ticket)?.session ?? '');
-    expect(s.check(a ?? '')).toBe(false);
-    expect(s.check(b ?? '')).toBe(true);
-    s.revoke(c ?? '');
-    expect(s.check(c ?? '')).toBe(false);
+    const [a, b, c] = [1, 2, 3].map(() => s.redeem(s.mintTicket().ticket));
+    expect(s.check(a?.session ?? '', a?.csrf)).toBe('none');
+    expect(s.check(b?.session ?? '', b?.csrf)).toBe('ok');
+    s.revoke(c?.session ?? '');
+    expect(s.check(c?.session ?? '', c?.csrf)).toBe('none');
   });
 });
 
 describe('App sign-in (ADR-011)', () => {
-  it('ticket → HttpOnly SameSite=Strict per-port cookie; the ticket works once', async () => {
+  it('ticket → HttpOnly SameSite=Strict per-port cookie plus a CSRF secret; the ticket works once', async () => {
     const t = setup();
-    const { res, cookie } = await t.signIn();
+    const { res, cookie, csrf } = await t.signIn();
     expect(res.status).toBe(201);
+    expect(csrf.length).toBeGreaterThanOrEqual(43);
+    expect(res.headers.get('set-cookie')).not.toContain(csrf);
     const set = res.headers.get('set-cookie') ?? '';
     expect(set).toMatch(/^orbit_session_7420=/);
     expect(set).toMatch(/HttpOnly/);
     expect(set).toMatch(/SameSite=Strict/);
     expect(set).toMatch(/Path=\//);
-    const ok = await t.req('/v1/session', { headers: { cookie, [CSRF_HEADER]: '1' } });
+    const ok = await t.req('/v1/session', { headers: { cookie, [CSRF_HEADER]: csrf } });
     expect(await ok.json()).toEqual({ via: 'session' });
     expect(
-      (await t.req('/v1/bots', { headers: { cookie, [CSRF_HEADER]: '1', origin: BASE } })).status,
+      (await t.req('/v1/bots', { headers: { cookie, [CSRF_HEADER]: csrf, origin: BASE } })).status,
     ).toBe(200);
   });
 
@@ -146,28 +161,47 @@ describe('App sign-in (ADR-011)', () => {
 
   it('a cookie alone is not enough: the CSRF header, a known origin and a live session are', async () => {
     const t = setup();
-    const { cookie } = await t.signIn();
-    expect((await t.req('/v1/bots', { headers: { cookie } })).status).toBe(403);
+    const { cookie, csrf } = await t.signIn();
+    expect((await t.req('/v1/bots', { headers: { cookie } })).status).toBe(401);
+    // Review HIGH-1: a cookie harvested by another loopback listener, replayed
+    // without an Origin and with a guessable header, gets nothing.
+    for (const value of ['1', 'x', '']) {
+      expect((await t.req('/v1/bots', { headers: { cookie, [CSRF_HEADER]: value } })).status).toBe(
+        401,
+      );
+    }
+    expect(
+      (
+        await t.req('/v1/kill', {
+          method: 'POST',
+          headers: { cookie, [CSRF_HEADER]: '1', 'content-type': 'application/json' },
+          body: '{"on":false}',
+        })
+      ).status,
+    ).toBe(401);
+    expect((await t.req('/v1/bots', { headers: { cookie, [CSRF_HEADER]: csrf } })).status).toBe(
+      200,
+    );
     // Another loopback port is same-site (the cookie is sent) but not same-origin.
     const sibling = await t.req('/v1/bots', {
-      headers: { cookie, [CSRF_HEADER]: '1', origin: 'http://127.0.0.1:3000' },
+      headers: { cookie, [CSRF_HEADER]: csrf, origin: 'http://127.0.0.1:3000' },
     });
     expect(sibling.status).toBe(403);
     expect(
-      (await t.req('/v1/bots', { headers: { cookie: `${COOKIE}=forged`, [CSRF_HEADER]: '1' } }))
+      (await t.req('/v1/bots', { headers: { cookie: `${COOKIE}=forged`, [CSRF_HEADER]: csrf } }))
         .status,
     ).toBe(401);
     // A cookie for another daemon's port is ignored.
     const other = cookie.replace(COOKIE, 'orbit_session_7421');
     expect(
-      (await t.req('/v1/bots', { headers: { cookie: other, [CSRF_HEADER]: '1' } })).status,
+      (await t.req('/v1/bots', { headers: { cookie: other, [CSRF_HEADER]: csrf } })).status,
     ).toBe(401);
   });
 
   it('only the bearer token mints tickets; sign-out ends the session', async () => {
     const t = setup();
-    const { cookie } = await t.signIn();
-    const app = { cookie, [CSRF_HEADER]: '1' };
+    const { cookie, csrf } = await t.signIn();
+    const app = { cookie, [CSRF_HEADER]: csrf };
     expect((await t.req('/v1/session/tickets', { method: 'POST', headers: app })).status).toBe(403);
     const out = await t.req('/v1/session', { method: 'DELETE', headers: app });
     expect(out.status).toBe(200);
@@ -198,6 +232,12 @@ describe('origin allowlist', () => {
       );
       expect((await t.req('/v1/bots', { headers: { ...t.bearer, origin } })).status).toBe(403);
     }
+  });
+
+  it('a request without a Host header is refused when hosts are pinned (review L5)', async () => {
+    const t = setup();
+    const res = await t.app.request(`${BASE}/v1/health`);
+    expect(res.status).toBe(400);
   });
 
   it('same-origin requests need no CORS headers; cross-site without an origin is refused', async () => {

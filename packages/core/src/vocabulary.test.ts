@@ -48,6 +48,7 @@ describe('times', () => {
     expect(formatDuration(4200)).toBe('4.2s');
     expect(formatDuration(190_000)).toBe('3m 10s');
     expect(formatDuration(3_900_000)).toBe('1h 5m');
+    expect(formatDuration(3_600_000)).toBe('1h');
     expect(formatTokens(950)).toBe('950');
     expect(formatTokens(12_300)).toBe('12.3k');
     expect(formatTokens(1_200_000)).toBe('1.2M');

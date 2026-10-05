@@ -28,8 +28,8 @@ export interface ClientOptions {
   token?: string;
   /** fetch credentials mode; the App uses 'same-origin' so the session cookie is sent. */
   credentials?: 'omit' | 'same-origin' | 'include';
-  /** Extra headers on every request (the App sends its CSRF marker). */
-  headers?: Record<string, string>;
+  /** Extra headers on every request, or a function read per request (the App's CSRF secret). */
+  headers?: Record<string, string> | (() => Record<string, string>);
   fetch?: FetchLike;
   /** Per-request timeout for JSON calls (not streams). Default 30 s. */
   timeoutMs?: number;
@@ -127,7 +127,7 @@ export class OrbitClient {
   readonly baseUrl: string;
   private readonly token: string | undefined;
   private readonly credentials: 'omit' | 'same-origin' | 'include' | undefined;
-  private readonly extraHeaders: Record<string, string>;
+  private readonly extraHeaders: () => Record<string, string>;
   private readonly fetchFn: FetchLike;
   private readonly timeoutMs: number;
 
@@ -135,14 +135,15 @@ export class OrbitClient {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
     this.token = options.token;
     this.credentials = options.credentials;
-    this.extraHeaders = options.headers ?? {};
+    const extra = options.headers ?? {};
+    this.extraHeaders = typeof extra === 'function' ? extra : () => extra;
     this.fetchFn = options.fetch ?? ((input, init) => fetch(input, init));
     this.timeoutMs = options.timeoutMs ?? 30_000;
   }
 
   private headers(extra: Record<string, string> = {}): Record<string, string> {
     return {
-      ...this.extraHeaders,
+      ...this.extraHeaders(),
       ...(this.token === undefined ? {} : { authorization: `Bearer ${this.token}` }),
       ...extra,
     };

@@ -45,14 +45,16 @@ describe('Inbox key model', () => {
     expect(press(start, 'd').state.mode).toEqual({ kind: 'deny', id: 'a1' });
   });
 
-  it('always-allow needs an explicit y; any other key cancels', () => {
+  it('always-allow needs an explicit y; n cancels; Tab and other keys leave it open', () => {
     const open = press(start, 'Enter').state;
     const ask = press(open, 'A').state;
     expect(ask.mode).toEqual({ kind: 'always', id: 'a1' });
     expect(press(ask, 'y').command).toEqual({ kind: 'approve', id: 'a1', always: true });
-    const enter = press(ask, 'Enter');
-    expect(enter.command).toEqual({ kind: 'notice', text: 'Cancelled' });
-    expect(enter.state.mode).toEqual({ kind: 'card', id: 'a1' });
+    expect(press(ask, 'Tab').state).toBe(ask);
+    expect(press(ask, 'Enter').command).toBeUndefined();
+    const no = press(ask, 'n');
+    expect(no.command).toEqual({ kind: 'notice', text: 'Cancelled' });
+    expect(no.state.mode).toEqual({ kind: 'card', id: 'a1' });
   });
 
   it('the selection follows its card; a replaced card makes the next decision key a no-op', () => {
@@ -76,6 +78,19 @@ describe('Inbox key model', () => {
     const open = press(start, 'Enter').state;
     expect(press(open, 'A').command).toBeUndefined();
     expect(press(open, 'E').state.mode.kind).toBe('edit');
+  });
+
+  it('a FINANCIAL card cannot be approved, always-allowed or edited from the keyboard', () => {
+    const money = [{ ...card('f1'), tier: 'FINANCIAL' } as Approval];
+    const open = reconcileInbox({ ...INITIAL_INBOX, mode: { kind: 'card', id: 'f1' } }, money);
+    for (const key of ['a', 'A', 'e']) {
+      const r = press(open, key, {}, money);
+      expect(r.command).toEqual({
+        kind: 'notice',
+        text: 'Financial actions are never executed by a Bot',
+      });
+      expect(r.state.mode).toEqual({ kind: 'card', id: 'f1' });
+    }
   });
 
   it('an open card that disappears closes', () => {

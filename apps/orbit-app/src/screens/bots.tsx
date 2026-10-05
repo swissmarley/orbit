@@ -74,9 +74,10 @@ interface Row {
   nextAt: string | null;
 }
 
-function usage(runs: RunState[]) {
+function usage(runs: RunState[]): string {
   const tokens = runs.reduce((n, r) => n + r.totals.tokens, 0);
   const cost = runs.reduce((n, r) => n + r.totals.costUsd, 0);
+  if (tokens === 0 && cost === 0) return '';
   return `${formatTokens(tokens)} tokens${cost > 0 ? ` · ~$${cost.toFixed(2)}` : ''}`;
 }
 
@@ -86,12 +87,21 @@ function BotStatus({ row }: { row: Row }) {
     <div className="flex flex-wrap items-center gap-1.5">
       {row.bot.pausedAt ? (
         <PausedBadge />
+      ) : latest?.status === 'waiting_approval' && row.pending > 0 ? (
+        // One badge, not two saying the same thing.
+        <Badge
+          tone="attention"
+          title={`${row.pending} approval${row.pending === 1 ? '' : 's'} waiting`}
+        >
+          <span aria-hidden>◆</span>
+          needs you · {row.pending}
+        </Badge>
       ) : latest ? (
         <StatusBadge status={latest.status} />
       ) : (
         <Badge>new</Badge>
       )}
-      {row.pending > 0 ? (
+      {row.pending > 0 && latest?.status !== 'waiting_approval' ? (
         <Badge
           tone="attention"
           title={`${row.pending} approval${row.pending === 1 ? '' : 's'} waiting`}
@@ -108,8 +118,8 @@ function BotCard({ row }: { row: Row }) {
   const { bot } = row;
   return (
     <Card className="flex flex-col gap-3 p-4" data-testid="bot-card">
-      <div className="flex items-start justify-between gap-2">
-        <h2 className="min-w-0 text-sm font-semibold">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <h2 className="min-w-[8rem] flex-1 text-sm font-semibold">
           <Link
             to="/bots/$botId"
             params={{ botId: bot.id }}
@@ -131,7 +141,7 @@ function BotCard({ row }: { row: Row }) {
                 next <Time iso={row.nextAt} />
               </>
             ) : (
-              'manual'
+              'trigger: manual'
             )}
           </p>
         </div>
@@ -248,7 +258,7 @@ export function BotsScreen() {
           ))}
         </div>
       ) : (
-        <Card className="overflow-x-auto">
+        <Card className="overflow-x-auto" tabIndex={0} role="region" aria-label="Bots table">
           <table className="w-full text-sm">
             <caption className="sr-only">Bots</caption>
             <thead className="border-b border-border text-left text-xs text-fg-muted">
@@ -291,7 +301,7 @@ export function BotsScreen() {
                   <td className="px-4 py-2">
                     <RunSparkline runs={row.runs} className="h-6" />
                   </td>
-                  <td className="px-4 py-2 text-xs text-fg-muted">{usage(row.runs)}</td>
+                  <td className="px-4 py-2 text-xs text-fg-muted">{usage(row.runs) || '—'}</td>
                   <td className="px-4 py-2 text-xs text-fg-muted">
                     {row.nextAt ? <Time iso={row.nextAt} /> : 'manual'}
                   </td>

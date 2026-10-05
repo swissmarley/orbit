@@ -2,7 +2,7 @@
 
 > Working name: **Orbit**. Self-hostable platform of always-on, goal-driven AI
 > agents ("Bots") powered by Claude Code and the Claude Agent SDK.
-> Status: **M4 complete; M5 next.**
+> Status: **M5 complete; M6 next.**
 > Owner of this document: lead engineer (Claude). Update it at every milestone.
 
 ## 0. Starting point
@@ -371,7 +371,7 @@ and narrow-width layouts. Snapshot tests (ink-testing-library).
   Also fixed a time-bombed API test (the usage-limit fixture resets at a
   fixed instant; the test clock is now pinned).
 
-### M5 — App
+### M5 — App ✅
 
 Design tokens (light/dark), Storybook, app shell with auth/driver header;
 Inbox/Needs You (A/E/D, J/K), Bots grid/list (status, sparkline, usage, next
@@ -383,6 +383,62 @@ Settings (auth & driver + doctor, models, integrations, policies, budgets,
 audit, theme), first-run onboarding. Optimistic UI, skeletons, toasts with
 undo, SSE auto-reconnect. Playwright e2e for the approval flow (MockDriver);
 axe accessibility checks; screenshots reviewed.
+
+- Shipped: `apps/orbit-app` (React 19, Vite 8, Tailwind v4 design tokens in
+  light and dark, shadcn-style components on Radix, TanStack Router and
+  Query) over `@orbit/sdk-client/browser` only (guarded). Screens: Inbox /
+  Needs you (j/k, Enter/a open the full card, approve only from the card,
+  e edit-then-approve with a live diff, d deny with a reason, A always-allow
+  behind an explicit y; selection follows the card id), Bots grid/list
+  (status in words, sparkline, usage, next run), Bot detail (goal, triggers,
+  tools, permissions, budgets, versioned config diff and edit with Undo), Run
+  view (virtualized live timeline, collapsed tool I/O, file diffs, subagent
+  tree, budget meters, stop / resume / pause Bot / run again, replay
+  scrubber), Runs, Create Bot wizard (least-privilege proposal from the goal,
+  every choice explained), Cmd+K palette, `?` keyboard help, Settings (auth &
+  engine/doctor, policies, budgets, secrets, audit verify/export, theme, kill
+  switch), first-run welcome with a mock demo. Optimistic updates, skeletons,
+  toasts with Undo for reversible actions, an SSE feed that reconnects and
+  refetches after a gap; Storybook with the design tokens.
+- ADR-011: orbitd serves the App on its own loopback origin with a strict
+  CSP; `orbit app` signs a browser in with a single-use, 2-minute ticket in
+  the URL fragment, traded for an HttpOnly `SameSite=Strict` per-port cookie
+  plus a per-session CSRF secret; origin allowlist (own origin plus loopback
+  / Tauri origins from `ORBIT_ALLOWED_ORIGINS`). Browser-safe entries
+  `@orbit/core/browser` and `@orbit/sdk-client/browser` (guarded against Node
+  built-ins).
+- M4 deferrals closed: one status/tier vocabulary and local + relative times
+  in `@orbit/core` (`vocabulary.ts`) used by the TUI, the CLI and the App; the
+  TUI selects Bots — and older Runs — by id.
+- Tests: pure models (Inbox keys, timeline, diffs, wizard, live feed),
+  component tests mounting the App over the real API service in-process,
+  every story rendered with axe, a token contrast test (text 4.5:1, control
+  borders and focus ring 3:1, both themes), Playwright e2e against a real
+  orbitd with the MockDriver (approval flow incl. edit and deny, live
+  reconnect and catch-up, sign-in and cookie-replay security, axe on every
+  screen in both themes and at 768/1024 px, no sideways scrolling); a CI job
+  builds the App and Storybook and runs the e2e. Also: `pnpm lint` had run
+  out of memory on the CI runner since M3 (CI's lint job was red); CI now
+  gives it a 6 GB heap. The `.tsx` pragma test CLAUDE.md promised now exists.
+- Safety review: one HIGH, fixed — the session cookie alone was a full API
+  credential that any other loopback port could harvest (cookies ignore
+  ports); a per-session CSRF secret held in the App's origin storage is now
+  required. Also fixed: M1 the sign-in link no longer appears on the browser
+  launcher's command line (0600 redirect file), M2 doctor warns while extra
+  origins are allowed, L1 FINANCIAL cards cannot be approved from the
+  keyboard either, L2 the always-allow prompt is scrubbed, L3 a test pins the
+  launcher's environment, L4 orbitd refuses an edited approval that still
+  holds a `[REDACTED:…]` placeholder, L5 requests without a Host header get 400. All hard constraints PASS.
+- UI review: fixed the Inbox key handler stealing keys from other controls
+  and dialogs (focus is the selection now, roving tabindex), the 768 px
+  overflow (Policies form, Runs table, side nav moved to `lg`), reduced
+  motion freezing skeletons, form-control borders below 3:1 (new
+  `--border-input`), a content-sized timeline with the result first,
+  held calls no longer counted as denials, labelled model/driver badges,
+  "Resume Bot" instead of a misleading Undo after a pause, wizard focus and
+  hint wiring, always-allow no longer cancelled by Tab, Ctrl/⌘+Enter to
+  approve an edit, short header auth label, platform-correct ⌘/Ctrl, tokens on
+  toasts, keyboard-reachable scrolling tables, consistent marks and times.
 
 ### M6 — Memory, feedback, teams
 
@@ -479,4 +535,5 @@ milestone that will pick them up. Shipped code paths contain no TODO stubs.
 | Run view “take-over terminal” (attach to the Bot's workspace shell)                                                                                                                       | M5   | M8                                                   | needs a pty over an authenticated WebSocket and its own safety review (it would bypass the policy engine by design)                                        |
 | Per-Run pause (today: stop, resume a parked/rate-limited Run, or pause the whole Bot)                                                                                                     | M5   | M8                                                   | the engine has no suspend; a pause would be a park without an approval, designed with automatic retries                                                    |
 | Settings → Integrations                                                                                                                                                                   | M5   | M7                                                   | there are no integrations until the plugin registry; the tab ships with it instead of as an empty page                                                     |
+| M5 UI review leftovers: audit rows show raw subject ids (not Bot names / links); the palette has no Settings entries                                                                      | M5   | M6                                                   | polish with no safety impact; the audit view is reworked with memory provenance                                                                            |
 | Desktop shell (Tauri) using the Tauri origin and a ticket from the CLI                                                                                                                    | M5   | M8                                                   | ADR-011 already allows `tauri://localhost`; packaging milestone                                                                                            |

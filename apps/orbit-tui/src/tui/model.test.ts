@@ -176,6 +176,20 @@ describe('TUI key model', () => {
     expect(gone.runIndex).toBe(0);
   });
 
+  it('an older Run picked with [ stays selected when a new Run arrives', () => {
+    const d = data();
+    let ui = reconcile(press(INITIAL_UI, '[', {}, d).ui, d);
+    const picked = selectedRun(d, ui)?.runId;
+    expect(picked).toBe('run_a1');
+    const botId = d.bots[0]?.id ?? '';
+    const grown = data({ runs: [run('run_new', botId, 'running'), ...d.runs] });
+    ui = reconcile(ui, grown);
+    expect(selectedRun(grown, ui)?.runId).toBe(picked);
+    // On the newest Run (index 0) the selection follows new Runs.
+    const top = reconcile(INITIAL_UI, grown);
+    expect(selectedRun(grown, top)?.runId).toBe('run_new');
+  });
+
   it('reconcile keeps selections valid when data shrinks', () => {
     const ui: Ui = { ...INITIAL_UI, botIndex: 2, runIndex: 4, approvalIndex: 3 };
     const d = data({ bots: [bot('bot_a', 'Alpha')], approvals: [approval('apr_1')] });

@@ -6,6 +6,7 @@ import {
   formatDuration,
   formatFull,
   formatLocalTime,
+  formatTimeOfDay,
   formatTokens,
   replayRun,
   scrubControls,
@@ -108,7 +109,9 @@ function Controls({ run }: { run: RunState }) {
   );
 }
 
-function Meters({ run }: { run: RunState }) {
+const n = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
+
+function Meters({ run, held }: { run: RunState; held: number }) {
   const bot = useBot(run.botId);
   const b = bot.data?.spec.budgets;
   const tokens =
@@ -146,8 +149,16 @@ function Meters({ run }: { run: RunState }) {
           format={formatDuration}
         />
         <p className="text-xs text-fg-muted">
-          {run.totals.turns} turns · {run.counts.messages} messages · {run.counts.denied} denied ·{' '}
-          {run.counts.subagents} subagents
+          {[
+            n(run.totals.turns, 'turn'),
+            n(run.counts.messages, 'message'),
+            // A call held for an approval is a pause, not a denial.
+            `${Math.max(0, run.counts.denied - held)} denied`,
+            held > 0 ? `${held} held for approval` : null,
+            n(run.counts.subagents, 'subagent'),
+          ]
+            .filter(Boolean)
+            .join(' · ')}
         </p>
         {run.budgetExceeded ? (
           <p className="text-xs text-danger">⛔ {run.budgetExceeded} budget exceeded</p>
@@ -267,7 +278,7 @@ function Scrubber({
       />
       <span className="text-xs text-fg-muted tabular-nums">
         {at}/{n}
-        {current ? ` · ${formatLocalTime(current.ts)}` : ''}
+        {current ? ` · ${formatTimeOfDay(current.ts)}` : ''}
       </span>
       <Button
         size="sm"
@@ -299,6 +310,11 @@ export function RunScreen() {
   const shown = pos === null ? all : all.slice(0, pos);
   const items = useMemo(() => buildTimeline(shown), [shown]);
   const tree = useMemo(() => subagentTree(shown), [shown]);
+  // Calls currently held for an approval (counted as denials by the projection).
+  const held = useMemo(
+    () => buildTimeline(all).filter((i) => i.kind === 'tool' && i.decision?.held).length,
+    [all],
+  );
   const replayed = useMemo(() => (pos === null ? null : (replayRun(shown) ?? null)), [pos, shown]);
 
   if (run.isPending) return <ListSkeleton rows={6} />;
@@ -312,7 +328,7 @@ export function RunScreen() {
       <PageHeader
         title={<span className="line-clamp-2">{scrubControls(r.prompt) || r.runId}</span>}
         description={
-          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1 [&>*+*]:before:mr-1.5 [&>*+*]:before:content-['·']">
             <Link
               to="/bots/$botId"
               params={{ botId: r.botId }}
@@ -320,13 +336,13 @@ export function RunScreen() {
             >
               {bot.data ? scrubControls(bot.data.spec.name) : r.botId}
             </Link>
-            <span>· {r.trigger?.kind ?? 'manual'}</span>
+            <span>trigger: {r.trigger?.kind ?? 'manual'}</span>
             <span>
-              · queued <Time iso={r.createdAt} />
+              queued <Time iso={r.createdAt} />
             </span>
             {r.endedAt ? (
               <span>
-                · ended <Time iso={r.endedAt} />
+                ended <Time iso={r.endedAt} />
               </span>
             ) : null}
             <span className="font-mono text-xs">{r.runId}</span>
@@ -337,13 +353,13 @@ export function RunScreen() {
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <StatusBadge status={state.status} />
           {replayed ? <Badge tone="info">replaying — not live</Badge> : null}
-          {r.model ? <Badge>{r.model}</Badge> : null}
+          {r.model ? <Badge title="The model the engine reported">model {r.model}</Badge> : null}
           {r.driver ? (
-            <Badge>
-              {r.driver} · {r.authMethod}
+            <Badge title="Driver and authentication of this Run">
+              {r.driver === 'mock' ? 'Demo · mock driver' : `${r.driver} · ${r.authMethod ?? ''}`}
             </Badge>
           ) : null}
-          {r.resumeAt ? <Badge tone="info">⏰ resumes {formatLocalTime(r.resumeAt)}</Badge> : null}
+          {r.resumeAt ? <Badge tone="info">↻ resumes {formatLocalTime(r.resumeAt)}</Badge> : null}
           {r.taintSources.length > 0 ? (
             <Badge tone="warning" title={`Untrusted content from: ${r.taintSources.join(', ')}`}>
               ⚠ untrusted input — external actions always ask
@@ -387,6 +403,17 @@ export function RunScreen() {
         </div>
       ) : null}
 
+      {/* The answer the user came for comes first once the Run is done. */}
+      {r.resultText ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Result</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm whitespace-pre-wrap text-fg">{scrubControls(r.resultText)}</p>
+          </CardContent>
+        </Card>
+      ) : null}
       <div className="grid gap-4 xl:grid-cols-[1fr_18rem]">
         <div className="flex min-w-0 flex-col gap-2">
           <Scrubber events={all} pos={pos} setPos={setPos} />
@@ -395,11 +422,11 @@ export function RunScreen() {
           ) : events.isError ? (
             <ErrorState error={events.error} retry={() => void events.refetch()} />
           ) : (
-            <Timeline items={items} className="h-[62vh] min-h-80" />
+            <Timeline items={items} className="max-h-[62vh] min-h-40" />
           )}
         </div>
         <aside className="flex flex-col gap-4" aria-label="Run details">
-          <Meters run={r} />
+          <Meters run={r} held={held} />
           {tree.length > 0 ? (
             <Card>
               <CardHeader>
@@ -407,16 +434,6 @@ export function RunScreen() {
               </CardHeader>
               <CardContent>
                 <Tree nodes={tree} />
-              </CardContent>
-            </Card>
-          ) : null}
-          {r.resultText ? (
-            <Card>
-              <CardHeader>
-                <CardTitle>Result</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm whitespace-pre-wrap text-fg">{scrubControls(r.resultText)}</p>
               </CardContent>
             </Card>
           ) : null}

@@ -55,6 +55,32 @@ test.describe('accessibility (axe, WCAG 2.1 AA, both themes)', () => {
     });
   }
 
+  test('no screen scrolls sideways at 768 or 1024 px', async ({ signedIn: page, orbitd }) => {
+    test.setTimeout(120_000);
+    const bot = await mailer(orbitd);
+    const run = await orbitd.api<Run>('POST', `/v1/bots/${bot.id}/runs`, {});
+    const pages = [
+      ...SCREENS,
+      `/bots/${bot.id}`,
+      `/bots/${bot.id}?tab=config`,
+      `/runs/${run.runId}`,
+    ];
+    for (const width of [768, 1024]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const path of pages) {
+        await page.goto(orbitd.url + path);
+        await expect(page.locator('main h1').first()).toBeVisible();
+        await page.waitForTimeout(200);
+        const overflow = await page.evaluate(
+          () => document.documentElement.scrollWidth - window.innerWidth,
+        );
+        expect(overflow, `${path} at ${width}px`).toBeLessThanOrEqual(0);
+        const axe = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+        expect(axe.violations.map((v) => `${path}@${width}: ${v.id}`)).toEqual([]);
+      }
+    }
+  });
+
   test('keyboard only: the palette reaches a Bot and runs it', async ({
     signedIn: page,
     orbitd,

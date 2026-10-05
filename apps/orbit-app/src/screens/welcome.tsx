@@ -56,7 +56,7 @@ export function WelcomeScreen() {
   };
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-4">
+    <div className="flex max-w-3xl flex-col gap-4">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Welcome to Orbit</h1>
         <p className="mt-1 text-fg-muted">

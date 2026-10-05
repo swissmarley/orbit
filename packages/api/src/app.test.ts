@@ -87,7 +87,13 @@ describe('orbitd API — access control', () => {
     });
     const rebound = await strict.request('http://attacker.example:7420/v1/health');
     expect(rebound.status).toBe(403);
-    expect((await strict.request('http://127.0.0.1:7420/v1/health')).status).toBe(200);
+    expect(
+      (
+        await strict.request('http://127.0.0.1:7420/v1/health', {
+          headers: { host: '127.0.0.1:7420' },
+        })
+      ).status,
+    ).toBe(200);
   });
 
   it('maps errors to statuses with a JSON error body', async () => {
@@ -456,6 +462,41 @@ describe('orbitd API — approvals, controls and housekeeping', () => {
       authMethod: 'mock',
       daemon: { pid: process.pid, concurrency: 8 },
     });
+  });
+
+  it('refuses an edited approval that still carries a redaction placeholder (review LOW-4)', async () => {
+    h = current = harness();
+    await createBot({
+      name: 'Mailer',
+      mock: { fixture: 'send-email' },
+      approvals: { parkWindowSeconds: 0 },
+    });
+    await h.json('POST', '/v1/bots/mailer/runs', {});
+    await h.service.queue.idle();
+    const [approval] = (await h.json<Approval[]>('GET', '/v1/approvals')).body;
+    const res = await h.json<{ error: { code: string; hint: string } }>(
+      'POST',
+      `/v1/approvals/${approval?.id ?? ''}/approve`,
+      { editedInput: { to: 'ada@example.com', body: 'key [REDACTED:secret] here' } },
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.error.hint).toMatch(/real value/);
+    expect(h.service.approvals.require(approval?.id ?? '').status).toBe('pending');
+  });
+
+  it('doctor warns while extra browser origins are allowed (dev only)', async () => {
+    h = current = harness();
+    const quiet = await h.json<{ warnings: { code: string }[] }>('GET', '/v1/doctor');
+    expect(quiet.body.warnings.map((w) => w.code)).not.toContain('app_extra_origins');
+    await current.close();
+    h = current = harness({ config: { api: { allowedOrigins: ['http://localhost:5173'] } } });
+    const loud = await h.json<{ warnings: { code: string; message: string }[] }>(
+      'GET',
+      '/v1/doctor',
+    );
+    expect(loud.body.warnings.find((w) => w.code === 'app_extra_origins')?.message).toMatch(
+      /localhost:5173/,
+    );
   });
 });
 

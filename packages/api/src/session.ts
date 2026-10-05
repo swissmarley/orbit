@@ -23,6 +23,8 @@ export interface SessionOptions {
 
 interface Entry {
   value: Buffer;
+  /** Sessions only: the CSRF secret the App must echo (the cookie alone is not enough). */
+  csrf?: Buffer;
   createdAt: number;
   lastSeenAt: number;
 }
@@ -73,7 +75,13 @@ export class SessionStore {
     }
   }
 
-  private static add(map: Map<string, Entry>, max: number, value: string, t: number): void {
+  private static add(
+    map: Map<string, Entry>,
+    max: number,
+    value: string,
+    t: number,
+    csrf?: string,
+  ): void {
     while (map.size >= max) {
       const oldest = map.keys().next().value;
       if (oldest === undefined) break;
@@ -81,6 +89,7 @@ export class SessionStore {
     }
     map.set(randomBytes(8).toString('hex'), {
       value: Buffer.from(value),
+      ...(csrf === undefined ? {} : { csrf: Buffer.from(csrf) }),
       createdAt: t,
       lastSeenAt: t,
     });
@@ -95,25 +104,40 @@ export class SessionStore {
     return { ticket, expiresAt: new Date(t + this.ticketTtlMs).toISOString() };
   }
 
-  /** Trade a ticket (once) for a session id; null when unknown, used or expired. */
-  redeem(ticket: string): { session: string; maxAgeSeconds: number } | null {
+  /**
+   * Trade a ticket (once) for a session: the id goes into the HttpOnly
+   * cookie, the CSRF secret to the page (which keeps it in its own origin's
+   * storage). Cookies ignore ports, so any listener on 127.0.0.1 may see the
+   * cookie; without the secret it is useless (M5 review HIGH-1).
+   */
+  redeem(ticket: string): { session: string; csrf: string; maxAgeSeconds: number } | null {
     this.sweep();
     const key = find(this.tickets, ticket);
     if (key === null) return null;
     this.tickets.delete(key);
     const session = secret();
-    SessionStore.add(this.sessions, this.maxSessions, session, this.now().getTime());
-    return { session, maxAgeSeconds: Math.floor(this.maxTtlMs / 1000) };
+    const csrf = secret();
+    SessionStore.add(this.sessions, this.maxSessions, session, this.now().getTime(), csrf);
+    return { session, csrf, maxAgeSeconds: Math.floor(this.maxTtlMs / 1000) };
   }
 
-  /** Is this a live session? Touches it (sliding idle expiry). */
-  check(session: string): boolean {
+  /**
+   * 'ok' for a live session presented with its own CSRF secret (touches it:
+   * sliding idle expiry); 'bad_csrf' for a live session without it; 'none'
+   * otherwise.
+   */
+  check(session: string, csrf: string | undefined): 'ok' | 'bad_csrf' | 'none' {
     this.sweep();
     const key = find(this.sessions, session);
-    if (key === null) return false;
+    if (key === null) return 'none';
     const e = this.sessions.get(key);
-    if (e) e.lastSeenAt = this.now().getTime();
-    return true;
+    if (!e?.csrf) return 'none';
+    const presented = Buffer.from(csrf ?? '');
+    if (presented.length !== e.csrf.length || !timingSafeEqual(presented, e.csrf)) {
+      return 'bad_csrf';
+    }
+    e.lastSeenAt = this.now().getTime();
+    return 'ok';
   }
 
   revoke(session: string): void {

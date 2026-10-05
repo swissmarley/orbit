@@ -54,6 +54,11 @@ export interface Ui {
   botId: string | null;
   /** 0 = the selected Bot's newest Run. */
   runIndex: number;
+  /**
+   * An older Run the user picked with [ ], tracked by id (a new Run arriving
+   * at the top must not move the cursor); null = follow the newest Run.
+   */
+  runId: string | null;
   approvalIndex: number;
   /** The approval the user selected, tracked by id (indexes shift when cards come and go). */
   approvalId: string | null;
@@ -70,6 +75,7 @@ export const INITIAL_UI: Ui = {
   botIndex: 0,
   botId: null,
   runIndex: 0,
+  runId: null,
   approvalIndex: 0,
   approvalId: null,
   approvalMoved: false,
@@ -119,6 +125,10 @@ export function runsOf(data: Data, botId: string | undefined): RunState[] {
 
 export function selectedRun(data: Data, ui: Ui): RunState | undefined {
   const runs = runsOf(data, selectedBot(data, ui)?.id);
+  if (ui.runId !== null) {
+    const byId = runs.find((r) => r.runId === ui.runId);
+    if (byId) return byId;
+  }
   return runs[Math.min(ui.runIndex, runs.length - 1)];
 }
 
@@ -244,7 +254,14 @@ export function onKey(ui: Ui, data: Data, input: string, key: KeyInfo): KeyResul
   // Run navigation works from the Bots and Timeline panes.
   if ((input === '[' || input === ']') && ui.focus !== 'approvals') {
     const delta = input === '[' ? 1 : -1; // [ = older
-    return next({ runIndex: clamp(ui.runIndex + delta, runCount - 1), scroll: 0 });
+    const runs = runsOf(data, bot?.id);
+    const at = run ? runs.indexOf(run) : ui.runIndex;
+    const runIndex = clamp(at + delta, runCount - 1);
+    return next({
+      runIndex,
+      runId: runIndex === 0 ? null : (runs[runIndex]?.runId ?? null),
+      scroll: 0,
+    });
   }
 
   switch (ui.focus) {
@@ -252,11 +269,19 @@ export function onKey(ui: Ui, data: Data, input: string, key: KeyInfo): KeyResul
       if (down || up) {
         const current = bot ? data.bots.indexOf(bot) : ui.botIndex;
         const botIndex = clamp(current + (down ? 1 : -1), data.bots.length - 1);
-        return next({ botIndex, botId: data.bots[botIndex]?.id ?? null, runIndex: 0, scroll: 0 });
+        return next({
+          botIndex,
+          botId: data.bots[botIndex]?.id ?? null,
+          runIndex: 0,
+          runId: null,
+          scroll: 0,
+        });
       }
       if (key.return) return next({ focus: 'timeline' });
       if (!bot) return { ui };
-      if (input === 'r') return next({ runIndex: 0, scroll: 0 }, { kind: 'runBot', botId: bot.id });
+      if (input === 'r') {
+        return next({ runIndex: 0, runId: null, scroll: 0 }, { kind: 'runBot', botId: bot.id });
+      }
       if (input === 'p') {
         const paused = bot.pausedAt === null;
         return next({
@@ -344,7 +369,12 @@ export function reconcile(ui: Ui, data: Data): Ui {
   const botIndex = botAt >= 0 ? botAt : clamp(ui.botIndex, data.bots.length - 1);
   const botId = data.bots[botIndex]?.id ?? null;
   const sameBot = botId === ui.botId || ui.botId === null;
-  const runIndex = sameBot ? clamp(ui.runIndex, runsOf(data, botId ?? undefined).length - 1) : 0;
+  const runs = runsOf(data, botId ?? undefined);
+  // A picked older Run follows its id; when it is gone, fall back to the newest.
+  const runAt = sameBot && ui.runId !== null ? runs.findIndex((r) => r.runId === ui.runId) : -1;
+  const runId = runAt >= 0 ? ui.runId : null;
+  const runIndex =
+    runAt >= 0 ? runAt : sameBot && ui.runId === null ? clamp(ui.runIndex, runs.length - 1) : 0;
   let { approvalIndex, approvalId, approvalMoved, overlay } = ui;
   const at = approvalId === null ? -1 : data.approvals.findIndex((a) => a.id === approvalId);
   if (at >= 0) {
@@ -362,6 +392,7 @@ export function reconcile(ui: Ui, data: Data): Ui {
     botIndex === ui.botIndex &&
     botId === ui.botId &&
     runIndex === ui.runIndex &&
+    runId === ui.runId &&
     approvalIndex === ui.approvalIndex &&
     approvalId === ui.approvalId &&
     approvalMoved === ui.approvalMoved &&
@@ -369,7 +400,17 @@ export function reconcile(ui: Ui, data: Data): Ui {
   ) {
     return ui;
   }
-  return { ...ui, botIndex, botId, runIndex, approvalIndex, approvalId, approvalMoved, overlay };
+  return {
+    ...ui,
+    botIndex,
+    botId,
+    runIndex,
+    runId,
+    approvalIndex,
+    approvalId,
+    approvalMoved,
+    overlay,
+  };
 }
 
 /** Keys shown by the help overlay (single source for docs and the overlay). */

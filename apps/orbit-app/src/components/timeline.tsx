@@ -1,5 +1,5 @@
 /** @jsxRuntime automatic @jsxImportSource react */
-import { TIER_WORD, formatFull, formatTimeOfDay } from '@orbit/core/browser';
+import { RUN_STATUS, TIER_WORD, formatFull, formatTimeOfDay } from '@orbit/core/browser';
 import { Link } from '@tanstack/react-router';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { ChevronRight } from 'lucide-react';
@@ -12,11 +12,17 @@ import { DiffView } from './diff-view';
 
 function Decision({ d }: { d: NonNullable<Extract<TimelineItem, { kind: 'tool' }>['decision']> }) {
   const tier = d.tier ? <span className="text-fg-subtle"> · {TIER_WORD[d.tier].label}</span> : null;
-  if (d.behavior === 'allow') return <span className="text-xs text-success">✓ allowed{tier}</span>;
-  if (d.held) return <span className="text-xs text-attention">⏸ held for your approval{tier}</span>;
+  if (d.behavior === 'allow') return <span className="text-xs text-success">✔ allowed{tier}</span>;
+  if (d.held) {
+    return (
+      <span className="text-xs text-attention">
+        {RUN_STATUS.waiting_approval.mark} held for your approval{tier}
+      </span>
+    );
+  }
   return (
     <span className="text-xs text-danger" title={d.reason}>
-      ✗ denied{tier}
+      ✘ denied{tier}
     </span>
   );
 }
@@ -43,7 +49,7 @@ function ToolRow({ item }: { item: Extract<TimelineItem, { kind: 'tool' }> }) {
             )}
             aria-hidden
           />
-          <span aria-hidden className="text-warning">
+          <span aria-hidden className="text-fg-subtle">
             ⚙
           </span>
           <span className="font-medium text-fg">{item.name}</span>
@@ -194,10 +200,10 @@ export function Timeline({ items, className }: { items: TimelineItem[]; classNam
     return () => el.removeEventListener('scroll', onScroll);
   }, []);
   return (
-    <div className={cn('relative', className)}>
+    <div className="relative">
       <div
         ref={parent}
-        className="h-full overflow-y-auto rounded-lg border border-border bg-bg px-3"
+        className={cn('overflow-y-auto rounded-lg border border-border bg-bg px-3', className)}
         role="log"
         aria-label="Run timeline"
         aria-live="off"

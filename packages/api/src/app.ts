@@ -201,6 +201,10 @@ export function createApp(opts: AppOptions): Hono {
         return c.json(errorBody('forbidden', `Host ${h} is not served here`), 403);
       }
     }
+    // Browsers always send Host; without one the origin checks have nothing to compare (review L5).
+    if (allowed.size > 0 && !c.req.header('host')) {
+      return c.json(errorBody('invalid_input', 'Missing Host header'), 400);
+    }
     const origin = c.req.header('origin');
     const okOrigin = origin !== undefined && originAllowed(c.req.header('host'), origin);
     if (origin !== undefined && !okOrigin) {
@@ -242,12 +246,18 @@ export function createApp(opts: AppOptions): Hono {
       return next();
     }
     const cookie = cookieValue(c.req.header('cookie'), sessionCookieName(c.req.url));
-    if (cookie !== undefined && sessions.check(cookie)) {
-      // The cookie rides along on any same-site request; the header proves
-      // the App (same origin or CORS-approved) sent it.
-      if (c.req.header(CSRF_HEADER) !== '1') {
-        return c.json(errorBody('forbidden', `Missing the ${CSRF_HEADER} header`), 403);
-      }
+    const session =
+      cookie === undefined ? 'none' : sessions.check(cookie, c.req.header(CSRF_HEADER));
+    if (session === 'bad_csrf') {
+      // A valid cookie without this session's CSRF secret: another listener
+      // on a loopback port may have harvested the cookie (cookies ignore ports).
+      return c.json(
+        errorBody('unauthorized', 'This App session needs signing in again', 'Run `orbit app`.'),
+        401,
+      );
+    }
+    if (session === 'ok') {
+      // Cookie + this session's secret (held only by the App's origin).
       via.set(c.req.raw, 'session');
       return next();
     }
@@ -299,7 +309,9 @@ export function createApp(opts: AppOptions): Hono {
       return sessions.mintTicket();
     },
     createSession: ({ body }, c) => {
-      if (c.req.header(CSRF_HEADER) !== '1') {
+      // Before sign-in the App has no secret yet; any value proves a script
+      // (not a form or an image) sent it, and the Origin check already ran.
+      if (!c.req.header(CSRF_HEADER)) {
         throw new OrbitError('forbidden', `Missing the ${CSRF_HEADER} header`);
       }
       const redeemed = sessions.redeem((body as z.output<typeof routes.createSession.body>).ticket);
@@ -314,7 +326,7 @@ export function createApp(opts: AppOptions): Hono {
         sameSite: 'Strict',
         maxAge: redeemed.maxAgeSeconds,
       });
-      return { ok: true };
+      return { ok: true, csrf: redeemed.csrf };
     },
     deleteSession: (_i, c) => {
       const name = sessionCookieName(c.req.url);

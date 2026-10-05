@@ -157,5 +157,16 @@ describe('OrbitClient', () => {
     expect(seen[0]?.headers.get('authorization')).toBeNull();
     expect(seen[0]?.headers.get('x-orbit-csrf')).toBe('1');
     expect(seen[0]?.credentials).toBe('same-origin');
+    // Headers may be read per request (the App's CSRF secret appears at sign-in).
+    let secret = 'before';
+    const live = new OrbitClient({
+      baseUrl: '',
+      headers: () => ({ 'x-orbit-csrf': secret }),
+      fetch: fake,
+    });
+    await live.call('getSession');
+    secret = 'after';
+    await live.call('getSession');
+    expect(seen.slice(-2).map((x) => x.headers.get('x-orbit-csrf'))).toEqual(['before', 'after']);
   });
 });

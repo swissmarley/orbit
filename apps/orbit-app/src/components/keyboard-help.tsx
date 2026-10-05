@@ -1,6 +1,7 @@
 /** @jsxRuntime automatic @jsxImportSource react */
 import { useEffect } from 'react';
 import { INBOX_KEYS } from '../lib/inbox';
+import { MOD } from '../lib/platform';
 import { createStore, useStore } from '../lib/store';
 import { Dialog, DialogContent } from './ui/dialog';
 import { Kbd } from './ui/misc';
@@ -9,7 +10,8 @@ export const helpStore = createStore(false);
 
 /** Every binding in one place (the Inbox's come from its key model). */
 export const GLOBAL_KEYS: readonly { keys: string; does: string }[] = [
-  { keys: '⌘K / Ctrl+K', does: 'search Bots, runs and approvals; run any command' },
+  { keys: `${MOD}K`, does: 'search Bots, runs and approvals; run any command' },
+  { keys: 'Alt+T', does: 'jump to the latest notification (its Undo button)' },
   { keys: '?', does: 'this help' },
   { keys: 'y', does: 'confirm a question (any other key cancels)' },
   { keys: 'Esc', does: 'close a dialog or step back' },
@@ -23,6 +25,25 @@ function isField(t: EventTarget | null): boolean {
   return (
     t instanceof HTMLElement &&
     (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))
+  );
+}
+
+/** "j k / ↓ ↑" → separate keycaps; "a (in the card)" → keycap plus plain words. */
+function KeyCaps({ keys }: { keys: string }) {
+  const qualifier = /\s*\(([^)]*)\)$/.exec(keys);
+  const main = qualifier ? keys.slice(0, qualifier.index) : keys;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      {main.split(' / ').map((group, i) => (
+        <span key={group} className="inline-flex items-center gap-1">
+          {i > 0 ? <span className="text-fg-subtle">or</span> : null}
+          {group.split(' ').map((k) => (
+            <Kbd key={k}>{k}</Kbd>
+          ))}
+        </span>
+      ))}
+      {qualifier ? <span className="text-xs text-fg-subtle">{qualifier[1]}</span> : null}
+    </span>
   );
 }
 
@@ -42,7 +63,7 @@ function Section({
         {keys.map((k) => (
           <div key={k.keys} className="contents">
             <dt>
-              <Kbd>{k.keys}</Kbd>
+              <KeyCaps keys={k.keys} />
             </dt>
             <dd className="text-fg">{k.does}</dd>
           </div>

@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { KeyRound, Terminal } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { authStore, errorText, takeTicketFromLocation, useClient } from '../lib/api';
+import { authStore, csrfSecret, errorText, takeTicketFromLocation, useClient } from '../lib/api';
 import { keys } from '../lib/queries';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
@@ -58,8 +58,10 @@ export function LoginScreen() {
     const ticket = takeTicketFromLocation(window.location, window.history);
     void (async () => {
       try {
-        if (ticket) await client.call('createSession', { body: { ticket } });
-        else await client.call('getSession');
+        if (ticket) {
+          const { csrf } = await client.call('createSession', { body: { ticket } });
+          csrfSecret.set(csrf);
+        } else await client.call('getSession');
         authStore.set('signed-in');
         await qc.invalidateQueries({ queryKey: keys.all });
         await navigate({ to: '/', replace: true });

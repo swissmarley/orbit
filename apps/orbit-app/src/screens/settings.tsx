@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Field, Input, Select } from '../components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { useActions } from '../lib/actions';
+import { MOD } from '../lib/platform';
 import { errorText, useClient } from '../lib/api';
 import { helpStore } from '../components/keyboard-help';
 import { useAudit, useBots, useDoctor, useKill, useRules, useSecrets } from '../lib/queries';
@@ -95,7 +96,7 @@ function General() {
           <CardTitle>Keyboard</CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-fg-muted">
-          Press <Kbd>?</Kbd> anywhere for every shortcut, or <Kbd>⌘K</Kbd> to search and run
+          Press <Kbd>?</Kbd> anywhere for every shortcut, or <Kbd>{MOD}K</Kbd> to search and run
           commands.
           <div className="mt-3">
             <Button onClick={() => helpStore.set(true)}>Show shortcuts</Button>
@@ -248,7 +249,7 @@ function Policies() {
         </CardHeader>
         <CardContent>
           <form
-            className="grid items-end gap-3 sm:grid-cols-[1fr_8rem_10rem_8rem_auto]"
+            className="grid items-end gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(12rem,1fr)_8rem_10rem_8rem_auto]"
             onSubmit={(e) => {
               e.preventDefault();
               void actions
@@ -323,7 +324,12 @@ function Policies() {
           actions ask you, financial ones are handed back.
         </EmptyState>
       ) : (
-        <Card className="overflow-x-auto">
+        <Card
+          className="overflow-x-auto"
+          tabIndex={0}
+          role="region"
+          aria-label="Standing rules table"
+        >
           <table className="w-full text-sm">
             <caption className="sr-only">Standing rules</caption>
             <thead className="border-b border-border text-left text-xs text-fg-muted">
@@ -385,7 +391,7 @@ function Budgets() {
   if (bots.data.length === 0)
     return <EmptyState title="No Bots yet">Budgets are set per Bot.</EmptyState>;
   return (
-    <Card className="overflow-x-auto">
+    <Card className="overflow-x-auto" tabIndex={0} role="region" aria-label="Budgets table">
       <table className="w-full text-sm">
         <caption className="sr-only">Budgets per Bot</caption>
         <thead className="border-b border-border text-left text-xs text-fg-muted">
@@ -586,7 +592,7 @@ function Audit() {
       ) : audit.isError ? (
         <ErrorState error={audit.error} />
       ) : (
-        <Card className="overflow-x-auto">
+        <Card className="overflow-x-auto" tabIndex={0} role="region" aria-label="Audit log table">
           <table className="w-full text-sm">
             <caption className="sr-only">Audit log, newest first</caption>
             <thead className="border-b border-border text-left text-xs text-fg-muted">
@@ -675,7 +681,7 @@ export function SettingsScreen() {
         </TabsContent>
       </Tabs>
       <p className="mt-6 text-xs text-fg-subtle">
-        Tip: <Kbd>⌘K</Kbd> finds any Bot, run or setting.
+        Tip: <Kbd>{MOD}K</Kbd> finds any Bot, run or approval and runs commands.
       </p>
     </div>
   );

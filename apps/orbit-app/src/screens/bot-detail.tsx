@@ -1,5 +1,5 @@
 /** @jsxRuntime automatic @jsxImportSource react */
-import { BotSpec, type Bot, formatLocalTime, scrubControls } from '@orbit/core/browser';
+import { BotSpec, type Bot, formatWhen, scrubControls } from '@orbit/core/browser';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { History, Pencil, Save } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -69,32 +69,36 @@ function Overview({ bot }: { bot: Bot }) {
             <p className="text-fg-muted">Manual only — runs when you start it.</p>
           ) : (
             <ul className="flex flex-col gap-2">
-              {s.triggers.map((t, i) => (
-                <li key={i} className="flex flex-wrap items-center gap-2">
-                  <Badge tone={t.enabled ? 'info' : 'neutral'}>
-                    {t.enabled ? '⏰ on' : '○ off'}
-                  </Badge>
-                  <span className="font-mono text-xs">
-                    {t.kind === 'cron'
-                      ? `${t.cron}${t.timezone ? ` (${t.timezone})` : ''}`
-                      : `every ${t.everyMinutes} min`}
-                  </span>
-                  {t.name ? <span className="text-fg-muted">· {scrubControls(t.name)}</span> : null}
-                </li>
-              ))}
-              {mine
-                .filter((m) => m.nextAt)
-                .map((m) => (
-                  <li key={m.key} className="text-xs text-fg-muted">
-                    {scrubControls(m.description)}: next <Time iso={m.nextAt ?? ''} />
-                    {m.lastFiredAt ? (
-                      <>
-                        {' '}
-                        · last <Time iso={m.lastFiredAt} mode="relative" />
-                      </>
+              {s.triggers.map((t, i) => {
+                const what =
+                  t.kind === 'cron'
+                    ? `cron ${t.cron}${t.timezone ? ` (${t.timezone})` : ''}`
+                    : `every ${t.everyMinutes}m`;
+                // The scheduler describes a trigger by its name, else by its definition.
+                const sched = mine.find((m) => m.description === (t.name ?? what));
+                return (
+                  <li key={i} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <Badge tone={t.enabled ? 'info' : 'neutral'}>
+                      <span aria-hidden>{t.enabled ? '●' : '○'}</span>
+                      {t.enabled ? 'on' : 'off'}
+                    </Badge>
+                    {t.name ? <span className="text-fg">{scrubControls(t.name)}</span> : null}
+                    <span className="font-mono text-xs text-fg-muted">
+                      {t.kind === 'cron' ? what : `every ${t.everyMinutes} min`}
+                    </span>
+                    {sched?.nextAt ? (
+                      <span className="text-xs text-fg-muted">
+                        · next <Time iso={sched.nextAt} />
+                      </span>
+                    ) : null}
+                    {sched?.lastFiredAt ? (
+                      <span className="text-xs text-fg-subtle">
+                        · last <Time iso={sched.lastFiredAt} mode="relative" />
+                      </span>
                     ) : null}
                   </li>
-                ))}
+                );
+              })}
             </ul>
           )}
         </CardContent>
@@ -323,7 +327,7 @@ function Config({ bot }: { bot: Bot }) {
             >
               {list.map((v) => (
                 <option key={v.version} value={v.version}>
-                  version {v.version} · {formatLocalTime(v.createdAt)}
+                  version {v.version} · {formatWhen(v.createdAt)}
                 </option>
               ))}
             </Select>
@@ -337,7 +341,7 @@ function Config({ bot }: { bot: Bot }) {
             >
               {list.map((v) => (
                 <option key={v.version} value={v.version}>
-                  version {v.version} · {formatLocalTime(v.createdAt)}
+                  version {v.version} · {formatWhen(v.createdAt)}
                 </option>
               ))}
             </Select>

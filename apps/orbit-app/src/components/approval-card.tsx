@@ -6,6 +6,7 @@ import { AlertTriangle, Check, Pencil, ShieldAlert, X } from 'lucide-react';
 import { useId, useMemo, useState } from 'react';
 import { lineDiff, parseUnified, prettyJson } from '../lib/diff';
 import { alwaysAllowText } from '../lib/inbox';
+import { MOD } from '../lib/platform';
 import { DiffView } from './diff-view';
 import { TierBadge, Time } from './status';
 import { Button } from './ui/button';
@@ -45,6 +46,7 @@ export function ApprovalCard({
   onApprove,
   onDeny,
   busy = false,
+  titled = false,
 }: {
   approval: Approval;
   mode: CardMode;
@@ -52,6 +54,8 @@ export function ApprovalCard({
   onApprove: (opts: { editedInput?: Record<string, unknown>; always?: boolean }) => void;
   onDeny: (reason: string | null) => void;
   busy?: boolean;
+  /** The surrounding dialog's title already says what the Bot wants: don't repeat it. */
+  titled?: boolean;
 }) {
   const c = approval.card;
   const ids = useId();
@@ -61,6 +65,7 @@ export function ApprovalCard({
   const parsed = parseEdited(edited);
   const editDiff = useMemo(() => lineDiff(original, edited), [original, edited]);
   const financial = approval.tier === 'FINANCIAL';
+  const redacted = original.includes('[REDACTED:');
 
   return (
     <div className="flex flex-col gap-4" data-testid="approval-card">
@@ -80,7 +85,7 @@ export function ApprovalCard({
             ) : null}
           </span>
         </div>
-        <p className="text-base font-medium text-fg">{scrubControls(c.what)}</p>
+        {titled ? null : <p className="text-base font-medium text-fg">{scrubControls(c.what)}</p>}
         <dl className="grid grid-cols-[6rem_1fr] gap-x-3 gap-y-1 text-sm">
           <dt className="text-fg-muted">Why</dt>
           <dd className="whitespace-pre-wrap text-fg">{scrubControls(c.why)}</dd>
@@ -138,14 +143,36 @@ export function ApprovalCard({
           <label htmlFor={`${ids}-edit`} className="text-xs font-medium text-fg-muted">
             Arguments (JSON) — the tool runs with exactly these
           </label>
+          {redacted ? (
+            <p id={`${ids}-edit-redacted`} className="text-xs text-warning">
+              ⚠ Values shown as [REDACTED:…] are hidden from you: replace them with the real value,
+              or approve without editing.
+            </p>
+          ) : null}
           <Textarea
             id={`${ids}-edit`}
             className="min-h-48 font-mono text-xs"
             value={edited}
             spellCheck={false}
             aria-invalid={!parsed.ok}
-            aria-describedby={parsed.ok ? undefined : `${ids}-edit-error`}
+            aria-describedby={
+              [parsed.ok ? null : `${ids}-edit-error`, redacted ? `${ids}-edit-redacted` : null]
+                .filter(Boolean)
+                .join(' ') || undefined
+            }
             onChange={(e) => setEdited(e.target.value)}
+            onKeyDown={(e) => {
+              if (
+                e.key === 'Enter' &&
+                (e.metaKey || e.ctrlKey) &&
+                parsed.ok &&
+                !busy &&
+                !financial
+              ) {
+                e.preventDefault();
+                onApprove({ editedInput: parsed.value });
+              }
+            }}
             autoFocus
           />
           {parsed.ok ? null : (
@@ -199,7 +226,7 @@ export function ApprovalCard({
             {alwaysAllowText(approval)}
           </p>
           <p className="mt-1 text-xs">
-            Press <Kbd>y</Kbd> to confirm; any other key cancels.
+            Press <Kbd>y</Kbd> to confirm, <Kbd>n</Kbd> or <Kbd>Esc</Kbd> to cancel.
           </p>
         </div>
       ) : null}
@@ -234,7 +261,8 @@ export function ApprovalCard({
                 if (parsed.ok) onApprove({ editedInput: parsed.value });
               }}
             >
-              <Check aria-hidden /> Approve edited
+              <Check aria-hidden /> Approve edited{' '}
+              <Kbd className="border-transparent bg-black/15 text-inherit">{MOD}↵</Kbd>
             </Button>
           </>
         ) : null}
@@ -253,7 +281,11 @@ export function ApprovalCard({
             <Button variant="ghost" onClick={() => onMode('card')}>
               Cancel
             </Button>
-            <Button variant="success" disabled={busy} onClick={() => onApprove({ always: true })}>
+            <Button
+              variant="success"
+              disabled={busy || financial}
+              onClick={() => onApprove({ always: true })}
+            >
               Yes, always allow <Kbd className="border-transparent bg-black/15 text-inherit">y</Kbd>
             </Button>
           </>

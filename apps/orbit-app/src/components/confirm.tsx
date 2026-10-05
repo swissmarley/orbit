@@ -15,6 +15,11 @@ interface Ask {
 
 const askStore = createStore<Ask | null>(null);
 
+/** A confirmation is on screen (page-level key handlers stand down). */
+export function confirmOpen(): boolean {
+  return askStore.get() !== null;
+}
+
 /**
  * Ask before something hard to undo. Resolves true only on the confirm
  * button or y (like the TUI: Enter does not confirm).

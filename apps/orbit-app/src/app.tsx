@@ -41,7 +41,15 @@ export function App({ client, queryClient }: { client: OrbitClient; queryClient?
             position="bottom-right"
             closeButton
             richColors={false}
-            toastOptions={{ className: 'orbit-toast' }}
+            hotkey={['altKey', 'KeyT']}
+            // Toasts use the design tokens like everything else.
+            style={
+              {
+                '--normal-bg': 'var(--surface)',
+                '--normal-text': 'var(--fg)',
+                '--normal-border': 'var(--border-strong)',
+              } as React.CSSProperties
+            }
           />
         </TooltipProvider>
       </QueryClientProvider>

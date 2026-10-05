@@ -719,10 +719,14 @@
                     "ok": {
                       "type": "boolean",
                       "const": true
+                    },
+                    "csrf": {
+                      "type": "string"
                     }
                   },
                   "required": [
-                    "ok"
+                    "ok",
+                    "csrf"
                   ],
                   "additionalProperties": false
                 }

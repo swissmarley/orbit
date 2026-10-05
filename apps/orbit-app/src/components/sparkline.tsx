@@ -19,6 +19,19 @@ export function RunSparkline({
   const recent = runs.slice(0, max).reverse();
   if (recent.length === 0)
     return <p className={cn('text-xs text-fg-subtle', className)}>No runs yet</p>;
+  // One bar reads as a stray mark: say it in words until there is a trend.
+  if (recent.length === 1 && recent[0]) {
+    const w = RUN_STATUS[recent[0].status];
+    return (
+      <p className={cn('flex items-end text-xs text-fg-subtle', className)}>
+        1 run ·{' '}
+        <span aria-hidden className="mx-0.5">
+          {w.mark}
+        </span>
+        {w.label}
+      </p>
+    );
+  }
   const peak = Math.max(1, ...recent.map((r) => r.totals.tokens));
   const counts = new Map<string, number>();
   for (const r of recent)
