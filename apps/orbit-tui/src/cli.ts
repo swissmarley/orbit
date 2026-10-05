@@ -5,7 +5,7 @@ import { botCreate, botList } from './commands/bot';
 import { doctor } from './commands/doctor';
 import { loginHelp } from './commands/login-help';
 import { approvalShow, approvalsList, approve, deny } from './commands/approvals';
-import { auditExport, auditList, auditVerify } from './commands/audit';
+import { auditCheckpoint, auditExport, auditList, auditVerify } from './commands/audit';
 import { killSwitch, pauseBot, stopRun } from './commands/controls';
 import { daemonStart, daemonStatus, daemonStop } from './commands/daemon';
 import {
@@ -301,9 +301,16 @@ export async function main(argv: string[], io: Io): Promise<number> {
     );
   audit
     .command('verify')
-    .description('Check the hash chain')
+    .description('Check the hash chain and its MACs (and a checkpoint you kept)')
+    .option('--checkpoint <file>', 'also confirm the log still contains this checkpoint')
     .option('--json', 'machine-readable output')
-    .action((o: { json?: boolean }) => set(auditVerify(context(), o)));
+    .action((o: { json?: boolean; checkpoint?: string }) => set(auditVerify(context(), o)));
+  audit
+    .command('checkpoint')
+    .description('Record a signed checkpoint of the chain to keep outside ORBIT_HOME')
+    .option('-o, --out <file>', 'write the checkpoint to a file (mode 0600)')
+    .option('--json', 'machine-readable output')
+    .action((o: { out?: string; json?: boolean }) => set(auditCheckpoint(context(), o)));
   audit
     .command('export')
     .description('Export as JSONL')

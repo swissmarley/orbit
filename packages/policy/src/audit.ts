@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { OrbitError, type Redactor, newId } from '@orbit/core';
 import type { OrbitDb } from '@orbit/store';
 
@@ -14,6 +14,16 @@ import type { OrbitDb } from '@orbit/store';
  *
  * `data` (and `subject`) are deep-redacted before hashing and storing, so
  * secrets never enter the audit log.
+ *
+ * Keyed chain (M8): with the audit key loaded (32 random bytes in the OS
+ * keychain or `<ORBIT_HOME>/audit.key`, never in the database) every record
+ * also carries `mac = HMAC-SHA256(key, hash)`. Someone who can write the
+ * database but does not hold the key can recompute every hash, but not the
+ * MACs, so a whole-chain rewrite is detected too. Records written before the
+ * key existed have no MAC and are reported as unkeyed, never as tampering;
+ * after the first keyed record every record must be keyed. Signed
+ * checkpoints (`checkpoint()`), kept elsewhere by the owner, additionally
+ * catch a truncated tail and a rewrite that strips every MAC.
  */
 
 export interface AuditRecord {
@@ -27,6 +37,8 @@ export interface AuditRecord {
   data: Record<string, unknown>;
   prevHash: string;
   hash: string;
+  /** HMAC-SHA256(audit key, hash); null for records written before the key existed. */
+  mac: string | null;
 }
 
 export interface AuditInput {
@@ -45,8 +57,53 @@ export interface AuditListOptions {
   subject?: string;
 }
 
-export type AuditVerifyResult =
-  { ok: true; count: number } | { ok: false; count: number; firstBadSeq: number; reason: string };
+/** Which part of the chain is keyed (MACs), as verify() saw it. */
+export interface AuditKeying {
+  /** Records without a MAC: written before the audit key existed. */
+  unkeyed: number;
+  lastUnkeyedSeq: number | null;
+  /** The first keyed record. */
+  keyedSince: { seq: number; ts: string } | null;
+}
+
+export type AuditVerifyResult = (
+  { ok: true; count: number } | { ok: false; count: number; firstBadSeq: number; reason: string }
+) &
+  AuditKeying;
+
+/** The cheap view of the chain (no hashing): what Settings → Audit shows. */
+export interface AuditStatus extends AuditKeying {
+  /** An audit key is loaded, so new records are keyed. */
+  keyed: boolean;
+  count: number;
+  head: { seq: number; hash: string; ts: string } | null;
+}
+
+/**
+ * A signed head of the chain for the owner to keep outside ORBIT_HOME. The
+ * MAC covers every other field, so it cannot be edited or forged without the
+ * audit key.
+ */
+export interface AuditCheckpoint {
+  kind: 'orbit-audit-checkpoint';
+  v: 1;
+  seq: number;
+  hash: string;
+  ts: string;
+  /** Records in the log when the checkpoint was taken. */
+  count: number;
+  mac: string;
+}
+
+export interface AuditCheckpointResult {
+  /** The chain verifies and still contains the checkpoint, signed by this key. */
+  ok: boolean;
+  /** Why not; null when ok. */
+  reason: string | null;
+  chain: AuditVerifyResult;
+  /** Records appended after the checkpoint. */
+  since: number;
+}
 
 interface AuditRow {
   seq: number;
@@ -58,6 +115,7 @@ interface AuditRow {
   data: string;
   prev_hash: string;
   hash: string;
+  mac: string | null;
 }
 
 const DEFAULT_LIST_LIMIT = 100;
@@ -150,6 +208,29 @@ function recordHash(r: {
   );
 }
 
+function hmacHex(key: Buffer, text: string): string {
+  return createHmac('sha256', key).update(text, 'utf8').digest('hex');
+}
+
+/** Constant-time comparison of two hex MACs (false for malformed input). */
+function macEqual(expected: string, actual: string): boolean {
+  const a = Buffer.from(expected, 'hex');
+  const b = Buffer.from(actual, 'hex');
+  return a.length === 32 && b.length === a.length && timingSafeEqual(a, b);
+}
+
+/** What a checkpoint's MAC covers: every field but the MAC, canonically. */
+function checkpointPayload(c: Omit<AuditCheckpoint, 'mac'>): string {
+  return canonicalJson({
+    kind: c.kind,
+    v: c.v,
+    seq: c.seq,
+    hash: c.hash,
+    ts: c.ts,
+    count: c.count,
+  });
+}
+
 function parseData(text: string): Record<string, unknown> | undefined {
   let parsed: unknown;
   try {
@@ -178,12 +259,16 @@ function toRecord(row: AuditRow): AuditRecord {
     data,
     prevHash: row.prev_hash,
     hash: row.hash,
+    mac: row.mac,
   };
 }
 
 export class AuditLog {
   /** prevHash of the first record. */
   static readonly GENESIS: string = '0'.repeat(64);
+
+  /** The first action of the keyed part of an upgraded log (see ensureKeyed()). */
+  static readonly KEYED_ACTION: string = 'audit.keyed';
 
   private readonly lastHash: () => string | undefined;
   private readonly insertRow: (row: Omit<AuditRow, 'seq'>) => number;
@@ -194,14 +279,19 @@ export class AuditLog {
     private readonly db: OrbitDb,
     private readonly redactor: Redactor,
     private readonly now: () => Date = () => new Date(),
+    /** The audit key; without it records are written unkeyed (tests). */
+    private readonly key?: Buffer,
   ) {
+    if (key !== undefined && key.length !== 32) {
+      throw new OrbitError('invalid_config', 'The audit key must be 32 bytes');
+    }
     const sqlite = db.sqlite;
     const lastHashStmt = sqlite.prepare<[], { hash: string }>(
       'SELECT hash FROM audit ORDER BY seq DESC LIMIT 1',
     );
     const insertStmt = sqlite.prepare<[Omit<AuditRow, 'seq'>]>(
-      `INSERT INTO audit (id, ts, actor, action, subject, data, prev_hash, hash)
-       VALUES (@id, @ts, @actor, @action, @subject, @data, @prev_hash, @hash)`,
+      `INSERT INTO audit (id, ts, actor, action, subject, data, prev_hash, hash, mac)
+       VALUES (@id, @ts, @actor, @action, @subject, @data, @prev_hash, @hash, @mac)`,
     );
     const pageStmt = sqlite.prepare<[number, number], AuditRow>(
       'SELECT * FROM audit WHERE seq > ? ORDER BY seq ASC LIMIT ?',
@@ -239,6 +329,7 @@ export class AuditLog {
       subject,
       data,
     });
+    const mac = this.key ? hmacHex(this.key, hash) : null;
     const seq = this.insertRow({
       id,
       ts,
@@ -248,6 +339,7 @@ export class AuditLog {
       data: canonicalJson(data),
       prev_hash: prevHash,
       hash,
+      mac,
     });
     return {
       seq,
@@ -259,7 +351,154 @@ export class AuditLog {
       data,
       prevHash,
       hash,
+      mac,
     };
+  }
+
+  /** True when an audit key is loaded (new records are keyed). */
+  get keyed(): boolean {
+    return this.key !== undefined;
+  }
+
+  /**
+   * Mark where an upgraded log becomes keyed: when a key is loaded and the
+   * newest record has no MAC, append an `audit.keyed` record (itself keyed).
+   * verify() refuses an `audit.keyed` record without a MAC and any unkeyed
+   * record after a keyed one, so stripping MACs later is tampering. A no-op on
+   * an empty or already keyed log. Returns the marker when one was written.
+   */
+  ensureKeyed(data: Record<string, unknown> = {}): AuditRecord | undefined {
+    if (!this.key) return undefined;
+    const tx = this.db.sqlite.transaction(() => {
+      const last = this.db.sqlite
+        .prepare<[], { mac: string | null }>('SELECT mac FROM audit ORDER BY seq DESC LIMIT 1')
+        .get();
+      // Empty, or the head is keyed already.
+      if (last?.mac !== null) return undefined;
+      const unkeyed = this.unkeyedStats();
+      return this.appendUnsafe({
+        actor: 'system',
+        action: AuditLog.KEYED_ACTION,
+        data: { ...data, unkeyedRecords: unkeyed.unkeyed, lastUnkeyedSeq: unkeyed.lastUnkeyedSeq },
+      });
+    });
+    return tx.immediate();
+  }
+
+  private unkeyedStats(): { unkeyed: number; lastUnkeyedSeq: number | null } {
+    const row = this.db.sqlite
+      .prepare<[], { n: number; last: number | null }>(
+        'SELECT count(*) AS n, max(seq) AS last FROM audit WHERE mac IS NULL',
+      )
+      .get();
+    return { unkeyed: row?.n ?? 0, lastUnkeyedSeq: row?.last ?? null };
+  }
+
+  private recordCount(): number {
+    return (
+      this.db.sqlite.prepare<[], { n: number }>('SELECT count(*) AS n FROM audit').get()?.n ?? 0
+    );
+  }
+
+  /** Counts and the head, without hashing anything (verify() is the check). */
+  status(): AuditStatus {
+    const sqlite = this.db.sqlite;
+    const head = sqlite
+      .prepare<[], { seq: number; hash: string; ts: string }>(
+        'SELECT seq, hash, ts FROM audit ORDER BY seq DESC LIMIT 1',
+      )
+      .get();
+    const first = sqlite
+      .prepare<[], { seq: number; ts: string }>(
+        'SELECT seq, ts FROM audit WHERE mac IS NOT NULL ORDER BY seq ASC LIMIT 1',
+      )
+      .get();
+    return {
+      keyed: this.keyed,
+      count: this.recordCount(),
+      head: head ?? null,
+      keyedSince: first ?? null,
+      ...this.unkeyedStats(),
+    };
+  }
+
+  /**
+   * Append an `audit.checkpoint` record for `actor` and return a checkpoint
+   * of it, signed with the audit key. The owner keeps the JSON elsewhere;
+   * verifyCheckpoint() later proves the log still contains it.
+   */
+  checkpoint(actor: string): AuditCheckpoint {
+    const key = this.requireKey('take a checkpoint');
+    const tx = this.db.sqlite.transaction(() => {
+      const count = this.recordCount() + 1;
+      const rec = this.appendUnsafe({ actor, action: 'audit.checkpoint', data: { count } });
+      const body: Omit<AuditCheckpoint, 'mac'> = {
+        kind: 'orbit-audit-checkpoint',
+        v: 1,
+        seq: rec.seq,
+        hash: rec.hash,
+        ts: rec.ts,
+        count,
+      };
+      return { ...body, mac: hmacHex(key, checkpointPayload(body)) };
+    });
+    return tx.immediate();
+  }
+
+  /**
+   * Check a checkpoint against the log: its MAC must match this key (so it
+   * was not edited or forged; the MAC covers `kind` and `v` too), the record at its seq must still exist with
+   * the same hash and a valid MAC (catching a truncated tail and a rewritten
+   * chain), and the whole chain must verify.
+   */
+  verifyCheckpoint(cp: AuditCheckpoint): AuditCheckpointResult {
+    const key = this.requireKey('verify a checkpoint');
+    const chain = this.verify();
+    const count = this.recordCount();
+    const fail = (reason: string): AuditCheckpointResult => ({
+      ok: false,
+      reason,
+      chain,
+      since: Math.max(0, count - cp.count),
+    });
+    if (!macEqual(hmacHex(key, checkpointPayload(cp)), cp.mac)) {
+      return fail(
+        'the checkpoint is not signed by this audit key (it was edited, or the key changed)',
+      );
+    }
+    const row = this.db.sqlite
+      .prepare<[number], AuditRow>('SELECT * FROM audit WHERE seq = ?')
+      .get(cp.seq);
+    if (!row) {
+      const headSeq = this.status().head?.seq ?? 0;
+      return fail(
+        headSeq < cp.seq
+          ? `the log ends at #${headSeq}, before the checkpoint's #${cp.seq} (records were removed)`
+          : `record #${cp.seq} is missing (records were removed)`,
+      );
+    }
+    if (row.hash !== cp.hash || row.ts !== cp.ts) {
+      return fail(`record #${cp.seq} differs from the checkpoint (the log was rewritten)`);
+    }
+    if (row.mac === null || !macEqual(hmacHex(key, row.hash), row.mac)) {
+      return fail(`record #${cp.seq} no longer carries a valid MAC (the log was rewritten)`);
+    }
+    if (count < cp.count) {
+      return fail(`the log holds ${count} records, fewer than the checkpoint's ${cp.count}`);
+    }
+    if (!chain.ok) {
+      return fail(`the chain is broken at #${chain.firstBadSeq}: ${chain.reason}`);
+    }
+    return { ok: true, reason: null, chain, since: count - cp.count };
+  }
+
+  private requireKey(what: string): Buffer {
+    if (!this.key) {
+      throw new OrbitError('invalid_config', `No audit key is loaded, so Orbit cannot ${what}`, {
+        hint: 'orbitd loads the key from the OS keychain or <ORBIT_HOME>/audit.key.',
+      });
+    }
+    return this.key;
   }
 
   /**
@@ -308,14 +547,17 @@ export class AuditLog {
   /**
    * Recompute the chain from GENESIS. Detects modified records (any hashed
    * field), records deleted from the start or middle (prev_hash mismatch and
-   * seq gap) and reordered records.
+   * seq gap) and reordered records. With the audit key it also checks every
+   * MAC, which catches a whole-chain rewrite with recomputed hashes, and
+   * refuses an unkeyed record after the first keyed one (a stripped MAC).
+   * Unkeyed records before that point were written before the upgrade and
+   * are counted, not reported as tampering.
    *
    * Limitation: truncating the TAIL (deleting the most recent records) leaves
-   * a valid, shorter chain and cannot be detected by the chain alone. `count`
-   * is returned so callers can compare it (and the last hash) against an
-   * externally stored head, e.g. a periodically exported checkpoint. A later
-   * append after a tail deletion IS detected, via the seq gap AUTOINCREMENT
-   * leaves behind.
+   * a valid, shorter chain and cannot be detected by the chain alone; a
+   * checkpoint the owner kept (verifyCheckpoint()) catches it. A later append
+   * after a tail deletion IS detected, via the seq gap AUTOINCREMENT leaves
+   * behind.
    *
    * On failure `count` is the number of records that verified before the
    * first bad one.
@@ -325,6 +567,7 @@ export class AuditLog {
     let expectedSeq = 1;
     let count = 0;
     let after = 0;
+    const keying: AuditKeying = { unkeyed: 0, lastUnkeyedSeq: null, keyedSince: null };
     for (;;) {
       const page = this.page(after, PAGE_SIZE);
       for (const row of page) {
@@ -333,6 +576,7 @@ export class AuditLog {
           count,
           firstBadSeq: row.seq,
           reason,
+          ...keying,
         });
         if (row.seq !== expectedSeq) {
           return bad(`sequence gap: expected seq ${expectedSeq}, found ${row.seq}`);
@@ -352,6 +596,24 @@ export class AuditLog {
           data,
         });
         if (expected !== row.hash) return bad('hash mismatch (record modified)');
+        if (row.mac === null) {
+          if (keying.keyedSince) {
+            return bad('MAC missing after the log became keyed (record rewritten without the key)');
+          }
+          if (row.action === AuditLog.KEYED_ACTION) {
+            return bad('the keyed marker has no MAC (record rewritten without the key)');
+          }
+          keying.unkeyed++;
+          keying.lastUnkeyedSeq = row.seq;
+        } else {
+          if (!this.key) return bad('record carries a MAC but no audit key is loaded');
+          if (!macEqual(hmacHex(this.key, row.hash), row.mac)) {
+            return bad(
+              'MAC mismatch (record rewritten without the audit key, or the audit key changed)',
+            );
+          }
+          keying.keyedSince ??= { seq: row.seq, ts: row.ts };
+        }
         prevHash = row.hash;
         expectedSeq = row.seq + 1;
         count++;
@@ -360,7 +622,7 @@ export class AuditLog {
       if (!last || page.length < PAGE_SIZE) break;
       after = last.seq;
     }
-    return { ok: true, count };
+    return { ok: true, count, ...keying };
   }
 
   /**

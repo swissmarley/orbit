@@ -496,6 +496,10 @@ export function createApp(opts: AppOptions): Hono {
       return service.auditTail(q.action, q.limit ?? 50);
     },
     verifyAudit: () => service.audit.verify(),
+    auditStatus: () => service.audit.status(),
+    auditCheckpoint: () => service.audit.checkpoint('owner'),
+    verifyAuditCheckpoint: ({ body }) =>
+      service.audit.verifyCheckpoint(body as z.output<typeof routes.verifyAuditCheckpoint.body>),
     exportAudit: (_i, c) => {
       const lines: string[] = [];
       service.audit.exportJsonl((line) => lines.push(line));

@@ -127,6 +127,8 @@ export const audit = sqliteTable('audit', {
   data: text('data').notNull(),
   prevHash: text('prev_hash').notNull(),
   hash: text('hash').notNull(),
+  /** HMAC-SHA256(audit key, hash); null for records written before the key existed. */
+  mac: text('mac'),
 });
 
 export const controls = sqliteTable('controls', {

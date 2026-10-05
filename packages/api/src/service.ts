@@ -48,6 +48,7 @@ import {
   RuleStore,
   SecretVault,
   classifyTool,
+  loadAuditKey,
 } from '@orbit/policy';
 import {
   API_CREDENTIALS,
@@ -142,7 +143,10 @@ export interface ServiceOptions {
   /** Housekeeping interval: scheduler, approval expiry, usage-limit resumes. Default 1000 ms. */
   tickMs?: number;
   killPollMs?: number;
-  /** Where the vault key lives; default 'auto' (keychain, else a 0600 file). Tests use 'file'. */
+  /**
+   * Where the vault and audit keys live; default 'auto' (keychain, else a
+   * 0600 file under ORBIT_HOME). Tests use 'file'.
+   */
   vaultKeySource?: 'auto' | 'keychain' | 'file';
   /** Markdown mirror of memories; default $ORBIT_HOME/memory, null = none (tests). */
   memoryDir?: string | null;
@@ -217,7 +221,19 @@ export class OrbitService {
     this.store = new EventStore(db, this.redactor);
     this.bots = new BotRepo(db, this.now, this.redactor);
     this.controls = new Controls(db, this.now);
-    this.audit = new AuditLog(db, this.redactor);
+    // The audit key (ADR-007, M8) lives where the vault key does, never in the database.
+    const auditKey = loadAuditKey({
+      home: config.home,
+      ...(opts.vaultKeySource ? { keySource: opts.vaultKeySource } : {}),
+    });
+    this.audit = new AuditLog(db, this.redactor, this.now, auditKey.key);
+    if (auditKey.created && this.audit.status().keyedSince) {
+      this.log(
+        'error',
+        'a new audit key was created but the audit log has keyed records: `orbit audit verify` will report them; restore the original audit key',
+      );
+    }
+    this.audit.ensureKeyed({ keySource: auditKey.source });
     this.rules = new RuleStore(db, this.now);
     this.approvals = new ApprovalQueue(
       db,

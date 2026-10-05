@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ExitCode, type RunEvent } from '@orbit/core';
@@ -651,6 +651,40 @@ describe('orbit CLI', () => {
       h.reset();
       expect(await h.run('audit', 'verify', '--json')).toBe(0);
       expect(h.json<{ ok: boolean; count: number }>()).toMatchObject({ ok: true });
+    });
+
+    it('audit checkpoint --out and verify --checkpoint (keyed chain, M8)', async () => {
+      const h = harness(mockEnv());
+      await h.run('bot', 'create', '--name', 'Notes', '--goal', 'x');
+      h.reset();
+      expect(await h.run('audit', 'verify')).toBe(0);
+      expect(h.text()).toMatch(/✔ Audit chain intact \(\d+ records; keyed since #1 /);
+      h.reset();
+      const file = join(home, 'checkpoint.json');
+      expect(await h.run('audit', 'checkpoint', '--out', file)).toBe(0);
+      expect(h.err.join('\n')).toMatch(/Checkpoint at #\d+ .* written to .*checkpoint\.json/);
+      if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o600);
+      const cp = JSON.parse(readFileSync(file, 'utf8')) as { seq: number; count: number };
+      expect(cp).toMatchObject({ kind: 'orbit-audit-checkpoint', v: 1 });
+      h.reset();
+      await h.run('bot', 'create', '--name', 'Other', '--goal', 'y');
+      h.reset();
+      expect(await h.run('audit', 'verify', '--checkpoint', file, '--json')).toBe(0);
+      expect(h.json<{ ok: boolean; since: number }>()).toMatchObject({ ok: true, since: 1 });
+      h.reset();
+      expect(await h.run('audit', 'verify', '--checkpoint', file)).toBe(0);
+      expect(h.text()).toMatch(/still contains checkpoint #\d+ \(1 records since/);
+
+      writeFileSync(file, JSON.stringify({ ...cp, count: cp.count + 1 }));
+      h.reset();
+      expect(await h.run('audit', 'verify', '--checkpoint', file)).toBe(ExitCode.error);
+      expect(h.text()).toMatch(/✘ Checkpoint check failed: the checkpoint is not signed/);
+      writeFileSync(file, 'not json');
+      h.reset();
+      expect(await h.run('audit', 'verify', '--checkpoint', file)).toBe(ExitCode.usage);
+      h.reset();
+      expect(await h.run('audit', 'checkpoint', '--json')).toBe(0);
+      expect(h.json<{ kind: string }>().kind).toBe('orbit-audit-checkpoint');
     });
 
     it('deny with a reason and --no-resume leaves the run parked-but-decided', async () => {

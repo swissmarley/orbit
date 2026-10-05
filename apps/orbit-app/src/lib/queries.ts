@@ -147,6 +147,12 @@ export function useAudit(limit = 200) {
   return useQuery({ queryKey: [...keys.audit, limit], queryFn: () => c.audit.list({ limit }) });
 }
 
+/** Whether the audit chain is keyed and since when (no hashing; verify is the check). */
+export function useAuditStatus() {
+  const c = useClient();
+  return useQuery({ queryKey: [...keys.audit, 'status'], queryFn: () => c.audit.status() });
+}
+
 export function useSecrets() {
   const c = useClient();
   return useQuery({ queryKey: keys.secrets, queryFn: () => c.secrets.list() });

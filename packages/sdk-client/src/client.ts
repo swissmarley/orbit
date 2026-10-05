@@ -311,6 +311,12 @@ export class OrbitClient {
   readonly audit = {
     list: (q: RouteQuery<'listAudit'> = {}) => this.call('listAudit', { query: q }),
     verify: () => this.call('verifyAudit'),
+    /** Keyed since when, unkeyed records from before the upgrade, the head (cheap). */
+    status: () => this.call('auditStatus'),
+    /** Append a checkpoint record; keep the signed JSON outside ORBIT_HOME. */
+    checkpoint: () => this.call('auditCheckpoint'),
+    verifyCheckpoint: (checkpoint: RouteBody<'verifyAuditCheckpoint'>) =>
+      this.call('verifyAuditCheckpoint', { body: checkpoint }),
     /** The whole log as JSON Lines. */
     export: async (): Promise<string> => (await this.send(routes.exportAudit, {}, false)).text(),
   };
