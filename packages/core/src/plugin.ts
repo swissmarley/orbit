@@ -272,11 +272,17 @@ export function describeSandboxNeeds(n: PluginSandboxNeeds): string {
     n.workspace === 'none'
       ? 'no workspace'
       : `the workspace ${n.workspace === 'read' ? 'read-only' : 'read-write'}`,
-    n.network ? 'the network' : 'no network',
+    n.network ? 'network access' : 'no network access',
     ...n.paths.map((f) => `${f.name} folders ${f.access === 'write' ? 'read-write' : 'read-only'}`),
   ];
   if (n.nestedSandbox) parts.push('a browser with its own sandbox');
-  return parts.join(' · ');
+  return joinWords(parts);
+}
+
+/** "a", "a and b", "a, b and c". */
+function joinWords(parts: readonly string[]): string {
+  if (parts.length <= 1) return parts.join('');
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
 }
 
 // ── the plugin catalog (ADR-019) ───────────────────────────────────────────

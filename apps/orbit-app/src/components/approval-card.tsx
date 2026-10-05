@@ -9,6 +9,8 @@ import { alwaysAllowText } from '../lib/inbox';
 import { MOD } from '../lib/platform';
 import { DiffView } from './diff-view';
 import { TierBadge, Time } from './status';
+import { ALWAYS_ALLOW_ROLE } from '../lib/role';
+import { RoleGate } from './role-gate';
 import { Button } from './ui/button';
 import { Textarea } from './ui/input';
 import { Kbd } from './ui/misc';
@@ -260,28 +262,36 @@ export function ApprovalCard({
       <div className="sticky bottom-0 -mx-5 -mb-4 flex flex-wrap items-center justify-end gap-2 border-t border-border bg-surface px-5 py-3">
         {mode === 'card' ? (
           <>
-            <Button
-              id={`${ids}-deny-button`}
-              variant="ghost"
-              onClick={() => onMode('deny')}
-              disabled={busy}
-            >
-              <X aria-hidden /> Deny <Kbd>d</Kbd>
-            </Button>
-            <Button
-              id={`${ids}-edit-button`}
-              onClick={() => onMode('edit')}
-              disabled={busy || financial}
-            >
-              <Pencil aria-hidden /> Edit <Kbd>e</Kbd>
-            </Button>
-            <Button onClick={() => onMode('always')} disabled={busy || financial}>
-              Always allow <Kbd>⇧A</Kbd>
-            </Button>
-            <Button variant="success" onClick={() => onApprove({})} disabled={busy || financial}>
-              <Check aria-hidden /> Approve{' '}
-              <Kbd className="border-transparent bg-black/15 text-inherit">a</Kbd>
-            </Button>
+            <RoleGate route="deny">
+              <Button
+                id={`${ids}-deny-button`}
+                variant="ghost"
+                onClick={() => onMode('deny')}
+                disabled={busy}
+              >
+                <X aria-hidden /> Deny <Kbd>d</Kbd>
+              </Button>
+            </RoleGate>
+            <RoleGate route="approve">
+              <Button
+                id={`${ids}-edit-button`}
+                onClick={() => onMode('edit')}
+                disabled={busy || financial}
+              >
+                <Pencil aria-hidden /> Edit <Kbd>e</Kbd>
+              </Button>
+            </RoleGate>
+            <RoleGate role={ALWAYS_ALLOW_ROLE}>
+              <Button onClick={() => onMode('always')} disabled={busy || financial}>
+                Always allow <Kbd>⇧A</Kbd>
+              </Button>
+            </RoleGate>
+            <RoleGate route="approve">
+              <Button variant="success" onClick={() => onApprove({})} disabled={busy || financial}>
+                <Check aria-hidden /> Approve{' '}
+                <Kbd className="border-transparent bg-black/15 text-inherit">a</Kbd>
+              </Button>
+            </RoleGate>
           </>
         ) : null}
         {mode === 'edit' ? (

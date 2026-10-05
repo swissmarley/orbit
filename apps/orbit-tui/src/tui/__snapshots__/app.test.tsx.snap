@@ -85,7 +85,7 @@ exports[`TUI actions > d asks for a reason, then denies with it 1`] = `
 │                             ││   ✦ I drafted the reply to Ada.               │┃ Why  I drafted the reply to Ada and… ┃
 │ Runs [ older ] newer        ││   ⚙ mcp__gmail__send_email → ada@example.com  │┃ Bot  Mailer EXTERNAL                 ┃
 │ › ◆ needs you  9:15 AM      ││   ⚑ approval needed send email (gmail) → ada… │┃ {                                    ┃
-│   ✔ done       9:15 AM      ││ ⏸ waiting for your approval (apr_1)           │┃   "to": "ada@example.com",           ┃
+│   ✔ done       9:15 AM      ││ ◆ waiting for your approval (apr_1)           │┃   "to": "ada@example.com",           ┃
 │                             ││                                               │┃   "subject": "Tuesday"               ┃
 │                             ││                                               │┃ }                                    ┃
 │                             ││                                               │┃ Enter/a open card to approve · d de… ┃
@@ -115,12 +115,12 @@ exports[`TUI rendering > help overlay lists every binding 1`] = `
 ║  t                            delegation tree of the Run (Timeline)                    ║
 ║  + / -                        rate a finished Run (Timeline)                           ║
 ║  m                            the selected Bot's memory (Bots pane)                    ║
-║  orbit shell <bot>            in a terminal: take over the Bot's workspace             ║
 ║  Enter / (memory)             open a memory / search memories                          ║
 ║  e  x (memory)                edit / delete (asks first)                               ║
 ║  T  P (memory)                mark reviewed and trusted / pin                          ║
 ║  Ctrl-S (editing)             save; Tab: title or text; Esc: back                      ║
 ║  g G                          Timeline top / follow live                               ║
+║  Enter / a                    open the whole card; a there approves                    ║
 ╚════════════════════════════════════════════════════════════════════════════════════════╝
 "
 `;
@@ -156,7 +156,7 @@ exports[`TUI rendering > wide: three panes, status bar, the parked Run and its a
 ┃                             ┃│   ✦ I drafted the reply to Ada.               ││ Why  I drafted the reply to Ada and… │
 ┃ Runs [ older ] newer        ┃│   ⚙ mcp__gmail__send_email → ada@example.com  ││ Bot  Mailer EXTERNAL                 │
 ┃ › ◆ needs you  9:15 AM      ┃│   ⚑ approval needed send email (gmail) → ada… ││ {                                    │
-┃   ✔ done       9:15 AM      ┃│ ⏸ waiting for your approval (apr_1)           ││   "to": "ada@example.com",           │
+┃   ✔ done       9:15 AM      ┃│ ◆ waiting for your approval (apr_1)           ││   "to": "ada@example.com",           │
 ┃                             ┃│                                               ││   "subject": "Tuesday"               │
 ┃                             ┃│                                               ││ }                                    │
 ┃                             ┃│                                               ││                                      │

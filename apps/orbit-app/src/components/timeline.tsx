@@ -7,7 +7,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { cn } from '../lib/cn';
 import { prettyJson } from '../lib/diff';
 import type { TimelineItem } from '../lib/timeline';
-import { TONE_TEXT } from '../lib/tone';
+import { TONE_TEXT, textMark } from '../lib/tone';
 import { DiffView } from './diff-view';
 
 function Decision({ d }: { d: NonNullable<Extract<TimelineItem, { kind: 'tool' }>['decision']> }) {
@@ -154,7 +154,7 @@ function Row({ item }: { item: TimelineItem }) {
       return (
         <div className={cn('text-sm', TONE_TEXT[item.tone])}>
           <span aria-hidden className="mr-1.5">
-            {item.mark}
+            {textMark(item.mark)}
           </span>
           {item.text}
           {item.approvalId ? (

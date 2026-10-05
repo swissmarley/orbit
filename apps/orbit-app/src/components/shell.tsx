@@ -35,6 +35,8 @@ import { type ThemeChoice, setTheme, themeStore } from '../lib/theme';
 import { ConfirmHost, confirmAction } from './confirm';
 import { KeyboardHelp, helpStore } from './keyboard-help';
 import { CommandPalette, paletteStore } from './palette';
+import { RoleGate } from './role-gate';
+import { TakeOverHost } from './takeover';
 import { ListSkeleton } from './states';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -157,7 +159,11 @@ function SignedInAs() {
   if (health.data?.signIn !== 'oidc' || !p) return null;
   return (
     <div className="flex items-center gap-1">
-      <span className="hidden text-sm text-fg-muted md:inline" data-testid="signed-in-as">
+      <span
+        className="hidden max-w-[16ch] truncate text-sm text-fg-muted lg:inline"
+        data-testid="signed-in-as"
+        title={`${p.name} · ${p.role}`}
+      >
         {p.name} <span className="text-fg-subtle">· {p.role}</span>
       </span>
       <Tooltip content={`Signed in as ${p.name} (${p.role}). Sign out`}>
@@ -238,19 +244,21 @@ function KillBanner() {
     >
       <Octagon className="size-4" aria-hidden /> Global kill switch engaged
       {kill.data.by ? ` by ${kill.data.by}` : ''} — no Bot runs until you release it.
-      <Button
-        size="sm"
-        className="border-on-solid/40 bg-transparent text-on-solid hover:bg-black/10"
-        onClick={() =>
-          void confirmAction({
-            title: 'Release the kill switch?',
-            body: 'Bots may run again.',
-            confirm: 'Release',
-          }).then((ok) => (ok ? actions.setKill(false) : undefined))
-        }
-      >
-        Release
-      </Button>
+      <RoleGate route="setKill">
+        <Button
+          size="sm"
+          className="border-on-solid/40 bg-transparent text-on-solid hover:bg-black/10"
+          onClick={() =>
+            void confirmAction({
+              title: 'Release the kill switch?',
+              body: 'Bots may run again.',
+              confirm: 'Release',
+            }).then((ok) => (ok ? actions.setKill(false) : undefined))
+          }
+        >
+          Release
+        </Button>
+      </RoleGate>
     </div>
   );
 }
@@ -375,6 +383,7 @@ export function AppShell() {
       </div>
       <CommandPalette />
       <KeyboardHelp />
+      <TakeOverHost />
       <ConfirmHost />
     </div>
   );

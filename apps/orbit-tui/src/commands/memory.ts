@@ -217,8 +217,9 @@ export async function memoryImport(
       ctx.io.err('Nothing was imported: fix the lines above.');
       return ExitCode.usage;
     }
+    // A clean preview is a success: only an invalid file is a usage error.
     ctx.io.err(`Nothing imported yet. Re-run with --yes to import into ${botRef}.`);
-    return ExitCode.usage;
+    return 0;
   }
   const done = await client.memory.import(botRef, { jsonl, untrusted, dryRun: false });
   if (o.json) ctx.io.out(JSON.stringify(done));

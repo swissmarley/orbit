@@ -11,6 +11,7 @@ import {
 } from '@orbit/core/browser';
 import { useEffect, useState } from 'react';
 import { cn } from '../lib/cn';
+import { textMark } from '../lib/tone';
 import { Badge } from './ui/badge';
 
 /** A Run status: symbol + word + tone (never colour alone), meaning in the tooltip. */
@@ -18,7 +19,7 @@ export function StatusBadge({ status, className }: { status: RunStatus; classNam
   const w = RUN_STATUS[status];
   return (
     <Badge tone={w.tone} title={w.meaning} className={className}>
-      <span aria-hidden>{w.mark}</span>
+      <span aria-hidden>{textMark(w.mark)}</span>
       {w.label}
     </Badge>
   );
@@ -27,7 +28,7 @@ export function StatusBadge({ status, className }: { status: RunStatus; classNam
 export function PausedBadge() {
   return (
     <Badge tone={BOT_PAUSED.tone} title={BOT_PAUSED.meaning}>
-      <span aria-hidden>{BOT_PAUSED.mark}</span>
+      <span aria-hidden>{textMark(BOT_PAUSED.mark)}</span>
       {BOT_PAUSED.label}
     </Badge>
   );

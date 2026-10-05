@@ -24,6 +24,7 @@ export const MEMORY_KEYS: readonly { keys: string; does: string }[] = [
 export const RUN_KEYS: readonly { keys: string; does: string }[] = [
   { keys: '[ ]', does: 'step the replay one event back / forward' },
   { keys: 'L', does: 'back to live' },
+  { keys: 'P', does: 'pause a running Run at its next tool call' },
 ];
 
 function isField(t: EventTarget | null): boolean {

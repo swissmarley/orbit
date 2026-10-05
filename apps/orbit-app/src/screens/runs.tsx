@@ -6,6 +6,7 @@ import { RunsTable } from '../components/runs-table';
 import { EmptyState, ErrorState, ListSkeleton, PageHeader } from '../components/states';
 import { Label, Select } from '../components/ui/input';
 import { useBots, useRuns } from '../lib/queries';
+import { textMark } from '../lib/tone';
 
 export function RunsScreen() {
   const search: { status?: string | undefined; bot?: string | undefined } = useSearch({
@@ -35,7 +36,7 @@ export function RunsScreen() {
             <option value="">any</option>
             {RunStatus.options.map((s) => (
               <option key={s} value={s}>
-                {RUN_STATUS[s].mark} {RUN_STATUS[s].label}
+                {textMark(RUN_STATUS[s].mark)} {RUN_STATUS[s].label}
               </option>
             ))}
           </Select>

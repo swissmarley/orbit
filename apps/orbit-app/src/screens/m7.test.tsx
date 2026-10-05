@@ -127,8 +127,10 @@ describe('Settings → Integrations', () => {
       ],
     };
     // The registry and catalog hosts, answered in-process (jsdom has no network to spare).
+    const asked: string[] = [];
     const pluginFetch: typeof fetch = (input) => {
       const url = input instanceof Request ? input.url : input.toString();
+      asked.push(url);
       return Promise.resolve(
         url.endsWith('/catalog.json')
           ? new Response(JSON.stringify(catalog))
@@ -149,14 +151,19 @@ describe('Settings → Integrations', () => {
         service: { pluginsDir: null, pluginFetch },
       });
       m = mountApp('/settings?tab=integrations', { h });
-      const entry = await screen.findByTestId('catalog-entry');
-      expect(within(entry).getByText('orbit-plugin-clock@1.0.0')).toBeTruthy();
       const user = userEvent.setup();
+      // Opening the tab asks no third party: the catalog loads when the owner browses it.
+      const browse = await screen.findByRole('button', { name: /Browse catalog/ });
+      expect(asked).toEqual([]);
+      await user.click(browse);
+      const entry = await screen.findByTestId('catalog-entry');
+      expect(asked).toEqual(['https://catalog.example/catalog.json']);
+      expect(within(entry).getByText('orbit-plugin-clock@1.0.0')).toBeTruthy();
       await user.click(within(entry).getByRole('button', { name: 'Install Clock' }));
       const dialog = await screen.findByRole('dialog', { name: /Install Clock\?/ });
       expect(dialog.textContent).toMatch(/matched its integrity \(sha512-/);
       expect(dialog.textContent).toMatch(/1 tool \(1 read\)/);
-      expect(dialog.textContent).toMatch(/no workspace · no network/);
+      expect(dialog.textContent).toMatch(/no workspace and no network access/);
       expect(dialog.textContent).toMatch(/stays off until you enable it/);
       await noA11yViolations(document.body);
       await user.click(within(dialog).getByRole('button', { name: /^Install/ }));

@@ -2,8 +2,18 @@
 import { harness } from '@orbit/api/testing';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import axe from 'axe-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type Mounted, mountApp } from '../test/harness';
+
+async function noA11yViolations(root: Element) {
+  const r = await axe.run(root, {
+    rules: { 'color-contrast': { enabled: false }, region: { enabled: false } },
+  });
+  expect(
+    r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`),
+  ).toEqual([]);
+}
 
 let m: Mounted | undefined;
 afterEach(async () => {
@@ -53,13 +63,17 @@ describe('Settings → Audit (keyed chain, M8)', () => {
     const input = screen.getByLabelText<HTMLInputElement>('Checkpoint file to verify');
     await user.upload(input, new File([text], 'cp.json', { type: 'application/json' }));
     expect(
-      await screen.findByText(/still contains this checkpoint, signed by this audit key/),
+      await screen.findByText(
+        /cp\.json \(record #2\): the log still contains this checkpoint, signed by this audit key/,
+      ),
     ).toBeTruthy();
 
     const edited = JSON.stringify({ ...JSON.parse(text), count: 99 });
     await user.upload(input, new File([edited], 'cp.json', { type: 'application/json' }));
     expect(
-      await screen.findByText(/Checkpoint check failed: the checkpoint is not signed/),
+      await screen.findByText(
+        /Checkpoint check failed for cp\.json \(record #2\): the checkpoint is not signed.*Treat the log as altered: keep this file, export the JSONL and compare\./,
+      ),
     ).toBeTruthy();
 
     await user.upload(input, new File(['nope'], 'bad.json', { type: 'application/json' }));
@@ -144,6 +158,37 @@ describe('Memory → Export / Import (M8)', () => {
     expect(stored.every((x) => x.taint.includes('import'))).toBe(true);
   });
 
+  it('preselects the Bot the file came from, says where it is from, and toasts the export', async () => {
+    const h = harness();
+    const notes = (await h.json<{ id: string }>('POST', '/v1/bots', { name: 'Notes', goal: 'g' }))
+      .body;
+    await h.json('POST', '/v1/bots', { name: 'Copy', goal: 'g' });
+    await h.json('POST', '/v1/bots/notes/memory', { title: 'Launch owner', body: 'Ada.' });
+    const saved = captureDownloads();
+    m = mountApp(`/memory?bot=${notes.id}`, { h });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: /Export this Bot/ }));
+    expect(await screen.findByText('Exported 1 memory')).toBeTruthy();
+    await waitFor(() => expect(saved).toHaveLength(1));
+    m.unmount();
+
+    m = mountApp('/memory', { h });
+    await user.click(await screen.findByRole('button', { name: /Import…/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Import memories' });
+    const into = within(dialog).getByLabelText<HTMLSelectElement>('Into Bot');
+    expect(into.value).toBe('');
+    await user.upload(
+      within(dialog).getByLabelText('Export file (.jsonl)'),
+      new File([await saved[0]!.blob.text()], 'notes.jsonl'),
+    );
+    await waitFor(() => expect(into.value).toBe(notes.id));
+    expect(within(dialog).getByTestId('import-from').textContent).toMatch(
+      /^From: Notes \(exported \d{4}-\d{2}-\d{2}\)$/,
+    );
+    expect((await within(dialog).findByTestId('import-preview')).textContent).toMatch(/1 memory:/);
+    await noA11yViolations(dialog);
+  });
+
   it('shows why a file cannot be imported and does not offer to import it', async () => {
     const h = harness();
     await h.json('POST', '/v1/bots', { name: 'Notes', goal: 'g' });
@@ -155,6 +200,11 @@ describe('Memory → Export / Import (M8)', () => {
       within(dialog).getByLabelText('Export file (.jsonl)'),
       new File([[header, '{nope'].join('\n')], 'bad.jsonl'),
     );
+    // The file names no Bot: nothing is guessed, the owner picks one.
+    const into = within(dialog).getByLabelText<HTMLSelectElement>('Into Bot');
+    expect(into.value).toBe('');
+    expect(within(dialog).getByRole('option', { name: 'Choose a Bot' })).toBeTruthy();
+    await user.selectOptions(into, 'Notes');
     expect(await within(dialog).findByText(/line 2: not JSON/)).toBeTruthy();
     const button = within(dialog).getByRole('button', { name: 'Import' });
     expect(button.hasAttribute('disabled')).toBe(true);

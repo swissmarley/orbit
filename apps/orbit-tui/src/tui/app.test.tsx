@@ -65,6 +65,19 @@ describe('TUI rendering', () => {
     await t.waitFor((f) => !f.includes('Keys'));
   });
 
+  it('help at 80 columns: every key line fits; terminal commands follow the keys', async () => {
+    const t = open({ columns: 80, rows: 60 });
+    await t.waitFor(/Mailer/);
+    await t.press('?');
+    const frame = await t.waitFor(/In a terminal/);
+    expect(frame).toMatch(/M\s+mouse on \/ off: click selects, wheel scrolls\s/);
+    const lines = frame.split('\n');
+    const cliAt = lines.findIndex((l) => l.includes('In a terminal'));
+    const shellAt = lines.findIndex((l) => l.includes('orbit shell <bot>'));
+    expect(shellAt).toBeGreaterThan(cliAt);
+    expect(frame).toMatch(/orbit shell <bot> — take over the Bot's workspace/);
+  });
+
   it('shows the kill switch and usage-limit state in the status bar', async () => {
     const t = open(WIDE, data({ kill: { engaged: true, by: 'owner' } }));
     expect(await t.waitFor(/KILL SWITCH/)).toMatch(/■ KILL SWITCH/);
@@ -155,12 +168,47 @@ describe('TUI actions', () => {
       },
     };
     const p = open(WIDE, data({ runs: [pausedRun] }));
-    const frame = await p.waitFor(/Paused by owner before Bash ran/);
+    const frame = await p.waitFor(/Paused by you before Bash ran/);
     expect(frame).toMatch(/⏸ paused/);
     expect(frame).toMatch(/shell: orbit shell mailer/);
     await p.press('2');
     await p.waitFor(/s stop · P pause · u resume/);
   });
+
+  for (const size of [
+    { columns: 80, rows: 22 },
+    { columns: 120, rows: 22 },
+  ]) {
+    it(`a paused Run's reason wraps and ends with the next step and its keys (${size.columns} columns)`, async () => {
+      const pause = {
+        reason: 'interrupted' as const,
+        by: 'orbitd',
+        at: '2026-10-04T09:19:00.000Z',
+        interruptedTurn: true,
+        toolUseId: 't1',
+        toolName: 'send_email',
+        autoResume: false,
+        detail: 'send_email (t1) has no result',
+      };
+      const t = open(size, data({ runs: [{ ...run('run_a2', 'bot_a', 'paused'), pause }] }));
+      await t.waitFor(/Mailer/);
+      await t.press('2');
+      const frame = await t.waitFor(/\(u resumes · s stops\)/);
+      // The focused Timeline pane's text (bold borders), read across its rows.
+      const banner = frame
+        .split('\n')
+        .filter((l) => l.includes('┃'))
+        .map((l) => l.split('┃')[1] ?? '')
+        .join(' ')
+        .replace(/\s+/g, ' ');
+      expect(banner).toContain(
+        'Interrupted when orbitd stopped and needs you: send_email (t1) has no result.',
+      );
+      expect(banner).toContain('Check the outcome yourself, then resume it');
+      expect(banner).toContain('(u resumes · s stops)');
+      expect(frame).not.toMatch(/has no res…/);
+    });
+  }
 
   it('errors from orbitd show as a red toast, not a crash', async () => {
     const t = open();

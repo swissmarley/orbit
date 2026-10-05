@@ -38,6 +38,7 @@ import {
 import { confirmAction } from '../components/confirm';
 import { ENGINE_TOOLS } from '../lib/wizard';
 import { BotActions } from './bots';
+import { RoleGate } from '../components/role-gate';
 
 function Def({ term, children }: { term: string; children: React.ReactNode }) {
   return (
@@ -393,9 +394,11 @@ function Config({ bot }: { bot: Bot }) {
             </Select>
           </div>
         </div>
-        <Button onClick={startEdit}>
-          <Pencil aria-hidden /> Edit config
-        </Button>
+        <RoleGate route="updateBot">
+          <Button onClick={startEdit}>
+            <Pencil aria-hidden /> Edit config
+          </Button>
+        </RoleGate>
       </div>
       {fromV && toV ? (
         fromV.version === toV.version ? (
@@ -538,21 +541,23 @@ function MemoryAndTeam({ bot }: { bot: Bot }) {
                 ))}
               </ul>
               <div>
-                <Button
-                  size="sm"
-                  onClick={() =>
-                    void (async () => {
-                      const ok = await confirmAction({
-                        title: 'Forget the taint on these files?',
-                        body: 'Only after you checked them: later Runs that read them will no longer be treated as untrusted. The audit log records it.',
-                        confirm: 'Forget taint',
-                      });
-                      if (ok) await actions.clearTaint(bot);
-                    })().catch(() => undefined)
-                  }
-                >
-                  I checked them — forget the taint
-                </Button>
+                <RoleGate route="clearBotTaint">
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      void (async () => {
+                        const ok = await confirmAction({
+                          title: 'Forget the taint on these files?',
+                          body: 'Only after you checked them: later Runs that read them will no longer be treated as untrusted. The audit log records it.',
+                          confirm: 'Forget taint',
+                        });
+                        if (ok) await actions.clearTaint(bot);
+                      })().catch(() => undefined)
+                    }
+                  >
+                    I checked them — forget the taint
+                  </Button>
+                </RoleGate>
               </div>
             </>
           )}

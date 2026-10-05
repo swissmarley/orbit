@@ -1,6 +1,6 @@
 import type { Approval } from '@orbit/sdk-client/browser';
 import { describe, expect, it } from 'vitest';
-import { INITIAL_INBOX, type InboxState, onInboxKey, reconcileInbox } from './inbox';
+import { INITIAL_INBOX, type InboxState, gateInboxKey, onInboxKey, reconcileInbox } from './inbox';
 
 const card = (id: string): Approval =>
   ({ id, toolName: 'mcp__gmail__send_email', card: { botName: 'Mailer' } }) as unknown as Approval;
@@ -97,5 +97,46 @@ describe('Inbox key model', () => {
     const open = press(start, 'Enter').state;
     expect(reconcileInbox(open, LIST.slice(1)).mode).toEqual({ kind: 'list' });
     expect(reconcileInbox(start, LIST)).toBe(start);
+  });
+});
+
+describe('Inbox keys under a role (hosted, ADR-015)', () => {
+  const why = { decide: 'Needs the operator role', always: 'Needs the owner role' };
+  const open = press(start, 'Enter').state;
+  const gated = (s: InboxState, key: string, can: { decide: boolean; always: boolean }) =>
+    gateInboxKey(s, press(s, key), can, why);
+
+  it('a viewer opens and reads cards but starts no decision', () => {
+    const viewer = { decide: false, always: false };
+    expect(gated(start, 'Enter', viewer).state.mode).toEqual({ kind: 'card', id: 'a1' });
+    for (const key of ['a', 'e', 'd', 'A']) {
+      const r = gated(open, key, viewer);
+      expect(r.state).toBe(open);
+      expect(r.command?.kind).toBe('notice');
+    }
+    expect(gated(open, 'a', viewer).command).toEqual({
+      kind: 'notice',
+      text: 'Needs the operator role',
+    });
+  });
+
+  it('an operator approves, edits and denies, but cannot always-allow', () => {
+    const operator = { decide: true, always: false };
+    expect(gated(open, 'a', operator).command).toEqual({
+      kind: 'approve',
+      id: 'a1',
+      always: false,
+    });
+    expect(gated(open, 'd', operator).state.mode).toEqual({ kind: 'deny', id: 'a1' });
+    expect(gated(open, 'A', operator)).toEqual({
+      state: open,
+      command: { kind: 'notice', text: 'Needs the owner role' },
+    });
+  });
+
+  it('the owner is never held back', () => {
+    const owner = { decide: true, always: true };
+    for (const key of ['a', 'e', 'd', 'A'])
+      expect(gated(open, key, owner)).toEqual(press(open, key));
   });
 });

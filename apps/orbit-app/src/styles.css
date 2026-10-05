@@ -183,6 +183,8 @@
     font-size: 14px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
+    /* Status symbols (⏸, ⚠, ✔) stay text glyphs in the tone colour, never colour emoji. */
+    font-variant-emoji: text;
   }
   :focus-visible {
     outline: 2px solid var(--ring);

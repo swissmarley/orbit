@@ -2,6 +2,7 @@ import {
   type BotSpecInput,
   OrbitError,
   type OrbitErrorCode,
+  type PrincipalRole,
   RunEvent,
   errorMessage,
 } from '@orbit/core/browser';
@@ -13,8 +14,18 @@ import {
   type RouteQuery,
   type RouteResponse,
   buildPath,
+  routeRole,
   routes,
 } from '@orbit/api/contract';
+
+/**
+ * The least role a route needs (ADR-015), straight from the contract: clients
+ * use it to disable what the signed-in principal cannot do (orbitd refuses it
+ * anyway).
+ */
+export function roleFor(route: RouteName): PrincipalRole {
+  return routeRole(routes[route]);
+}
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 

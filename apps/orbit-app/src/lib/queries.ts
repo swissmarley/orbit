@@ -44,13 +44,17 @@ export function usePlugins() {
   return useQuery({ queryKey: keys.plugins, queryFn: () => c.plugins.list() });
 }
 
-/** The plugin catalog (ADR-019), with what is already installed. */
-export function usePluginCatalog() {
+/**
+ * The plugin catalog (ADR-019), with what is already installed. Reading it
+ * makes orbitd ask the catalog's host: only once `enabled` (the owner asked).
+ */
+export function usePluginCatalog(enabled = true) {
   const c = useClient();
   return useQuery({
     queryKey: keys.pluginCatalog,
     queryFn: () => c.plugins.catalog(),
     staleTime: 5 * 60_000,
+    enabled,
   });
 }
 
