@@ -272,6 +272,32 @@ export const ResumeRunBody = z.object({
   fixture,
 });
 
+export const PauseRunBody = z.object({
+  /** Stop the engine now (mid-turn) instead of at the Run's next tool call. */
+  now: z.boolean().optional(),
+});
+
+export const StartTakeoverBody = z.object({
+  /** The `orbit shell` process: a take-over whose process is gone is stale (ADR-016). */
+  pid: z.int().positive(),
+});
+
+/** An open take-over of a Bot's workspace (`orbit shell`, ADR-016). */
+export const Takeover = z.object({
+  botId: z.string(),
+  botName: z.string(),
+  /** Where the shell starts: the Bot's workspace. */
+  workspace: z.string(),
+  pid: z.int(),
+  startedAt: z.string(),
+  /** The Bot was paused before: it stays paused when the take-over ends. */
+  wasPaused: z.boolean(),
+  /** The pid of a stale take-over (its process gone) this one replaced; null otherwise. */
+  replacedStale: z.int().nullable(),
+  /** Runs of the Bot that wait (queued, parked, paused) until the take-over ends. */
+  waiting: z.array(z.string()),
+});
+
 export const ApproveBody = z.object({
   editedInput: z.record(z.string(), z.unknown()).nullable().optional(),
   always: z
@@ -571,10 +597,34 @@ export const routes = {
     tag: 'controls',
     response: RunState,
   },
+  pauseRun: {
+    method: 'POST',
+    path: '/v1/runs/{run}/pause',
+    summary: 'Pause a running Run at its next tool call (or now); resume it later',
+    tag: 'controls',
+    body: PauseRunBody,
+    response: RunState,
+  },
+  startTakeover: {
+    method: 'POST',
+    path: '/v1/bots/{bot}/takeover',
+    summary: "Hold a Bot and hand its workspace to the owner's shell (bearer token only)",
+    tag: 'controls',
+    body: StartTakeoverBody,
+    status: 201,
+    response: Takeover,
+  },
+  endTakeover: {
+    method: 'DELETE',
+    path: '/v1/bots/{bot}/takeover',
+    summary: 'End a take-over; the Bot runs again unless it was paused before (bearer token only)',
+    tag: 'controls',
+    response: Bot,
+  },
   resumeRun: {
     method: 'POST',
     path: '/v1/runs/{run}/resume',
-    summary: 'Queue a resume of a parked (all decided) or rate-limited Run',
+    summary: 'Queue a resume of a parked (all decided), paused or rate-limited Run',
     tag: 'runs',
     body: ResumeRunBody,
     status: 202,

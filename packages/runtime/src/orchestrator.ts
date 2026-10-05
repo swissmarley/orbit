@@ -816,6 +816,11 @@ export class Orchestrator {
     return this.driver.kind;
   }
 
+  /** A Bot's workspace, prepared as for a Run (the owner's take-over, ADR-016). */
+  async workspacePath(bot: Bot): Promise<string> {
+    return (await this.workspaces(bot, this.driver.kind)).path;
+  }
+
   activeRuns(): string[] {
     return [...this.active.keys()];
   }

@@ -574,7 +574,7 @@ describe('orbitd API — safety review fixes', () => {
 });
 
 describe('orbitd API — restart recovery', () => {
-  it('fails Runs left running, re-queues queued ones', async () => {
+  it('pauses Runs left running (no session known: for the owner), re-queues queued ones', async () => {
     h = current = harness({ start: false });
     await createBot({ name: 'Notes', mock: { fixture: 'pong' } });
     const queued = h.service.orchestrator.enqueue('notes');
@@ -593,9 +593,10 @@ describe('orbitd API — restart recovery', () => {
     ]);
     h.service.start();
     await settle();
+    // ADR-016: never failed outright; without an engine session it cannot continue by itself.
     expect(h.service.store.getRun(crashed.runId)).toMatchObject({
-      status: 'failed',
-      error: { code: 'interrupted', retryable: true },
+      status: 'paused',
+      pause: { reason: 'interrupted', autoResume: false },
     });
     expect(h.service.store.getRun(queued.runId)?.status).toBe('completed');
   });

@@ -160,8 +160,12 @@ export function createApp(opts: AppOptions): Hono {
   };
   const publicPaths = new Set(['/openapi.json', routes.health.path]);
   const sessions = opts.sessions ?? new SessionStore();
-  /** How each request authenticated (set by the auth middleware). */
-  const via = new WeakMap<Request, 'token' | 'session'>();
+  /**
+   * How each request authenticated (set by the auth middleware). Keyed by the
+   * context, not the request: the body limit replaces `c.req.raw` when a
+   * request has a body.
+   */
+  const via = new WeakMap<object, 'token' | 'session'>();
   const extraOrigins = () => {
     const list =
       typeof opts.allowedOrigins === 'function' ? opts.allowedOrigins() : opts.allowedOrigins;
@@ -259,7 +263,7 @@ export function createApp(opts: AppOptions): Hono {
     // Webhooks authenticate with their HMAC signature (verified before parsing).
     if (c.req.path.startsWith(HOOKS_PREFIX)) return next();
     if (tokenMatches(c.req.header('authorization'), opts.token)) {
-      via.set(c.req.raw, 'token');
+      via.set(c, 'token');
       return next();
     }
     const cookie = cookieValue(c.req.header('cookie'), sessionCookieName(c.req.url));
@@ -275,7 +279,7 @@ export function createApp(opts: AppOptions): Hono {
     }
     if (session === 'ok') {
       // Cookie + this session's secret (held only by the App's origin).
-      via.set(c.req.raw, 'session');
+      via.set(c, 'session');
       return next();
     }
     return c.json(
@@ -394,9 +398,17 @@ export function createApp(opts: AppOptions): Hono {
   });
 
   const requireVia = (c: Context) => {
-    const v = via.get(c.req.raw);
+    const v = via.get(c);
     if (!v) throw new OrbitError('unauthorized', 'Not signed in');
     return v;
+  };
+
+  const requireToken = (c: Context, what: string) => {
+    if (requireVia(c) !== 'token') {
+      throw new OrbitError('forbidden', `Only the CLI (the bearer token) can ${what}`, {
+        hint: 'Run `orbit shell <bot>` in a terminal on this machine.',
+      });
+    }
   };
 
   const handlers: Partial<Record<RouteName, Handler>> = {
@@ -471,6 +483,21 @@ export function createApp(opts: AppOptions): Hono {
       return service.store.listRunEvents(param(params, 'run'), { afterSeq: q.afterSeq ?? 0 });
     },
     stopRun: ({ params }) => service.stopRun(param(params, 'run')),
+    pauseRun: ({ params, body }) =>
+      service.pauseRun(param(params, 'run'), body as z.output<typeof routes.pauseRun.body>),
+    // A shell in the workspace bypasses Orbit's policy by design (ADR-016):
+    // only the local owner's bearer token (the CLI), never the App's cookie.
+    startTakeover: ({ params, body }, c) => {
+      requireToken(c, 'take over a workspace');
+      return service.startTakeover(
+        param(params, 'bot'),
+        (body as z.output<typeof routes.startTakeover.body>).pid,
+      );
+    },
+    endTakeover: ({ params }, c) => {
+      requireToken(c, 'end a take-over');
+      return service.endTakeover(param(params, 'bot'));
+    },
     resumeRun: ({ params, body }) =>
       service.resumeRun(param(params, 'run'), body as z.output<typeof routes.resumeRun.body>),
     listApprovals: ({ query }) => {

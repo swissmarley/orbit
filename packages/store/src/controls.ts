@@ -4,6 +4,20 @@ import { controls } from './schema';
 
 const GLOBAL_KILL = 'global_kill';
 const stopKey = (runId: string) => `stop_run:${runId}`;
+const takeoverKey = (botId: string) => `takeover:${botId}`;
+
+/**
+ * An open take-over of a Bot's workspace (`orbit shell`, ADR-016): the CLI
+ * process holding it, and whether the Bot was paused before (the hold is
+ * released afterwards only if it was not).
+ */
+export interface Takeover {
+  botId: string;
+  pid: number;
+  startedAt: string;
+  wasPaused: boolean;
+  by: string;
+}
 
 /**
  * Cross-process control flags (kill switches). Stored in the database so an
@@ -50,6 +64,22 @@ export class Controls {
     this.db.orm
       .delete(controls)
       .where(eq(controls.key, stopKey(runId)))
+      .run();
+  }
+
+  setTakeover(t: Takeover): void {
+    this.set(takeoverKey(t.botId), JSON.stringify(t));
+  }
+
+  takeover(botId: string): Takeover | null {
+    const raw = this.get(takeoverKey(botId));
+    return raw === undefined ? null : (JSON.parse(raw) as Takeover);
+  }
+
+  clearTakeover(botId: string): void {
+    this.db.orm
+      .delete(controls)
+      .where(eq(controls.key, takeoverKey(botId)))
       .run();
   }
 
