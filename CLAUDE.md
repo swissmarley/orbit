@@ -31,6 +31,14 @@ pnpm --filter @orbit/api openapi   # regenerate packages/api/openapi.json after 
 pnpm --filter @orbit/app build && pnpm orbit app   # the App, served by orbitd; one-time sign-in link (ADR-011)
 pnpm test:e2e           # build the App, Playwright against a real orbitd (mock driver) + axe, both themes
 pnpm --filter @orbit/app dev | storybook   # Vite dev server (needs ORBIT_ALLOWED_ORIGINS, see its README) / Storybook
+pnpm orbit pause <run> [--now] | shell <bot> | tui --mouse
+pnpm orbit audit verify [--checkpoint f] | audit checkpoint [--out f]
+pnpm orbit memory export [--bot b] [--out f] | memory import <bot> <file> [--untrusted] [--yes] | memory sweep
+pnpm orbit plugin catalog | plugin install <id> | npm:<pkg>@<ver> --integrity sha512-… [--dry-run] [--yes]
+pnpm load-test [--runs 200] [--clients 50] [--json]   # N concurrent mock Runs, M SSE subscribers, lossless resume
+pnpm package && pnpm smoke                 # build orbit-bots into packaging/npm/dist; pack, install, drive it (mock, ORBIT_PORT=0)
+docker compose up -d && docker compose exec orbitd orbit app --no-open   # API-key mode, host loopback only
+pnpm --filter @orbit/desktop build         # Tauri shell (Rust; WebKitGTK on Linux)
 ```
 
 ## Layout
@@ -44,15 +52,22 @@ pnpm --filter @orbit/app dev | storybook   # Vite dev server (needs ORBIT_ALLOWE
   per-segment sessions, the minimal MCP server), the triage path
   (`src/triage.ts`) (ADR-013), plugins (`src/plugins`: manifest loader,
   allowlisted plugin env, minimal MCP client, `PluginRegistry`, per-segment
-  `PluginSegment`) and inbound triggers (`src/triggers`: webhook HMAC, Slack
+  `PluginSegment`, OS sandbox in `sandbox.ts`, catalog installs in
+  `installer.ts` and `store.ts`) and inbound triggers (`src/triggers`: webhook HMAC, Slack
   Socket Mode, file/git watchers, `TriggerRouter`) (ADR-014)
 - `packages/policy` tiers (ADR-009), PolicyEngine, rules, approval queue + grants,
-  approval cards, hash-chained audit log, secrets vault
+  approval cards, hash-chained audit log with per-record MACs and signed
+  checkpoints (`keys.ts`: audit and vault keys), secrets vault
 - `packages/sandbox` directory / git-worktree workspaces with Claude Code's native
-  sandbox settings, Docker containers (API-key mode)
+  sandbox settings, Docker containers (API-key mode) with host-side proxies
+  (`src/proxy`: key-injecting API proxy, egress allowlist proxy, address
+  classes, key sources, `ProxyHost`, `host-key-proxy.ts` for host engines),
+  plugin OS sandbox (`plugin-sandbox.ts`:
+  bwrap args, Seatbelt profiles)
 - `packages/memory` memory store (SQLite FTS5 + markdown mirror under
   `$ORBIT_HOME/memory`), provenance/taint helpers, workspace-file taint,
-  context and feedback text, summarizer prompts, triage-call ledger (ADR-012)
+  context and feedback text, summarizer prompts, triage-call ledger (ADR-012),
+  JSONL export/import and retention (`portable.ts`)
 - `packages/api` Hono REST + SSE (`src/app.ts`) plus the engines' `/mcp/orbit`
   endpoint (not a client route), the route/zod contract (`src/contract.ts`,
   also `@orbit/api/contract`), OpenAPI, and `OrbitService` (queue, scheduler,
@@ -63,18 +78,28 @@ pnpm --filter @orbit/app dev | storybook   # Vite dev server (needs ORBIT_ALLOWE
 - `apps/orbitd` daemon composition root (single writer, loopback only, token
   auth); `apps/orbit-tui` `orbit` bin (thin client): commands in
   `src/commands`, the Ink TUI in `src/tui` (`model.ts` pure key handling,
-  `feed.ts` data over the client, `views.tsx`, `app.tsx`); `apps/orbit-app` the
+  `feed.ts` data over the client, `views.tsx`, `app.tsx`, `layout.ts` geometry
+  shared by views and the mouse hit test, `mouse.ts` SGR parser,
+  `terminal-mouse.ts`); `apps/orbit-app` the
   web App (React 19, Vite, Tailwind v4, Radix/shadcn-style `components/ui`,
   TanStack Router/Query): pure logic in `src/lib` (`inbox.ts` key model,
   `timeline.ts`, `diff.ts`, `wizard.ts`, `actions.ts` writes with toasts/Undo,
   `live.ts` SSE feed), `src/components`, `src/screens` (Settings →
   Integrations in `integrations.tsx`), stories in `src/stories`, Playwright in
   `e2e/`
+- `packaging/npm` the public `orbit-bots` package (esbuild bundles, bundle
+  guard, smoke test); `apps/orbit-desktop` Tauri 2 shell (Rust in
+  `src-tauri`, loads the App from orbitd via `orbit app --json`);
+  `docker/orbitd.Dockerfile` + `compose.yaml`; workflows `ci.yml`
+  (check, e2e, package, docker), `release.yml`, `desktop.yml`
 - `plugins/*` reference plugins (each `orbit-plugin.json` + `src/server.ts` +
   `src/tools.ts`): `kit` (the stdio MCP server helper), `github`, `slack`,
   `google`, `filesystem`, `browser`; `tools/guards/plugins.test.ts` checks every
   manifest against its server
 - `tools/guards` repo-wide security invariant tests
+- `packages/api/test/corpus` the M8 security corpus (payloads × channels,
+  budgets, kill switches); `@orbit/api/corpus` shares the payloads (test only);
+  `apps/orbitd/scripts/load-test.ts` the load test
 
 Dependency direction: `core` ← `store` ← `policy`, `memory`, `sandbox` ← `runtime` ←
 `api` ← `apps/*`. Clients only talk to orbitd through `@orbit/sdk-client`.
@@ -129,6 +154,30 @@ Plugins depend on `@orbit/plugin-kit` only (they run as separate processes).
 - Model spend outside a Run goes only through `TriagePath` (counted, capped by
   `triage.maxCallsPerDay`, refused under a kill switch or usage-limit hold,
   shown to the owner).
+- Pause and interruption (ADR-016): a pause parks a running Run at its next
+  tool-call decision (`--now` interrupts) and ends it `paused`; nothing resumes
+  a paused Run except the owner, or Orbit retrying an interrupted Run that is
+  safe (session known, fewer than 2 retries, no allowed EXTERNAL call without
+  a result; `onInterrupt: fail` opts out). `orbit shell` is the only take-over:
+  bearer token only, refused while a Run executes or waits mid-call and for
+  Docker Bots, holds the Bot through the Bot-pause hold, its shell gets the
+  `tool` allowlist plus `ORBIT_TAKEOVER=1`, both ends audited.
+- Roles (ADR-015): every contract route has a least role (GET = viewer, write =
+  owner unless the table says `operator`); a new route that differs names it
+  in `contract.ts`, and `roles.test.ts` lists every route. Service code records
+  `this.actor()` (the request's principal), never a hardcoded owner.
+- Memory imports are owner-only, all or nothing, redacted, provenance kept; a
+  trusted line is trusted only because the owner imports it (`--untrusted`
+  forces taint `import`); retention expires only unpinned Bot notes and
+  summaries. TUI mouse is opt-in; clicks only select, never act; input passes
+  through `MouseInput` before Ink.
+- Untrusted text goes through `neutraliseTags` (`@orbit/core`) before it is
+  wrapped; never write a new tag-escaping regex.
+- Asset paths come from `orbitLayout()` (`@orbit/runtime`), never from
+  `import.meta.dirname`; a new run-time import that cannot be bundled goes into
+  the esbuild externals and `packaging/npm` dependencies (drift test).
+- Pipe `pnpm typecheck` only with `set -o pipefail`; otherwise the exit code is
+  the pipe's last command and failures go unnoticed.
 - No TODO stubs in shipped code paths; record deferrals in `docs/PLAN.md` §7.
 - Deviations from the brief get an ADR in `docs/decisions/`.
 
@@ -140,11 +189,41 @@ Plugins depend on `@orbit/plugin-kit` only (they run as separate processes).
   `process.env`. CliDriver children never get `ANTHROPIC_API_KEY` /
   `ANTHROPIC_AUTH_TOKEN`; the API key never reaches unrelated children.
 - CliDriver is local single-user only (loopback bind, one principal, not
-  `ORBIT_MODE=hosted`). orbitd itself binds loopback only and refuses hosted
-  mode until TLS + OIDC (M8); its API needs the 0600 bearer token, or (the
-  App) a session cookie from a one-time ticket plus `X-Orbit-CSRF: 1`. Browser
-  origins: orbitd's own plus `api.allowedOrigins`, which accepts loopback and
-  Tauri origins only (ADR-011).
+  `ORBIT_MODE=hosted`). orbitd binds loopback; `0.0.0.0` only inside a
+  container (`ORBIT_CONTAINER=1` plus a container marker; publish to
+  `127.0.0.1` only); off-loopback only in hosted mode with in-process TLS.
+  Hosted mode needs `publicUrl` + OIDC, never uses the CliDriver, uses
+  `__Host-` Secure cookies and HSTS (ADR-015). The API needs the 0600 bearer
+  token (the `owner` principal), or (the App) a session cookie from a one-time
+  ticket (or the OIDC callback) plus `X-Orbit-CSRF`. Browser origins: orbitd's
+  own plus `api.allowedOrigins`, which accepts loopback and Tauri origins only
+  (ADR-011).
+- Docker sandboxes (ADR-018): `--network none`; the engine sees a placeholder
+  key; the real key reaches the API only through the per-Bot host-side key
+  proxy on a read-only-mounted 0600 Unix socket (two routes; `mcp_servers`,
+  URL sources and, without network, web server tools refused); egress only
+  through the CONNECT allowlist proxy (DNS checked on the host, private and
+  metadata addresses refused); both forward only while a Run holds a lease.
+  Bash is WRITE_LOCAL in a container only with `network: none`. Bedrock/Vertex
+  and CLI mode never run containers.
+- An API key or apiKeyHelper output never enters any child process: host SDK
+  engines get the placeholder and
+  `ANTHROPIC_BASE_URL=http://127.0.0.1:<port>/<segment token>` (orbitd's
+  `HostKeyProxy`, one lease per Run segment, closed on end or abort, token
+  redacted); Docker engines use their Unix socket. Only Bedrock/Vertex
+  credentials reach the engine (scrub on; Linux needs bubblewrap, checked
+  before start). `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` is 1 where Claude Code can
+  enforce it, else 0 (ADR-018 amendment).
+- Plugin servers run under bwrap / `sandbox-exec` built from the manifest's
+  `sandbox` section (`plugins.sandbox` auto|required|off, ADR-019): empty
+  `$HOME`, no `$ORBIT_HOME`, workspace, network and folders only as declared.
+  The Browser's proxy resolves names once and refuses private/metadata
+  answers; Chromium resolves nothing itself and keeps its own sandbox.
+  `orbit plugin install` checks the SRI before reading, uses a strict
+  extractor, never runs package code, stores under `plugins.storeDir` (never in
+  `$ORBIT_HOME`) and installs disabled.
+- The audit key (keychain or `audit.key`, 0600) never enters the database;
+  every record carries an HMAC; checkpoints are signed with it.
 - No hardcoded model IDs: use `ORBIT_DEFAULT_MODEL` / `ORBIT_TRIAGE_MODEL` or
   aliases (`opus`, `sonnet`, `haiku`).
 - Default-deny tool policy; EXTERNAL actions need approval; FINANCIAL is

@@ -27,8 +27,9 @@ orbit daemon stop
 Orbit picks one of two engines; `orbit doctor` explains which one and why.
 
 - **API key** (also Amazon Bedrock or Google Vertex): set `ANTHROPIC_API_KEY`
-  (or an `apiKeyHelper`) in the environment orbitd starts with. The key reaches
-  only the Agent SDK engine, never any other child process. Required for
+  (or an `apiKeyHelper`) in the environment orbitd starts with. The key never
+  leaves orbitd: engines reach the API through its loopback key proxy, so no
+  child process ever holds it. Required for
   anything other than personal, local, single-user use.
 - **Your own Claude Code login** (personal, local, single-user only): install
   the `claude` CLI and sign in with `claude login`. Orbit runs your `claude`

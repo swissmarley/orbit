@@ -2,7 +2,7 @@
 
 > Working name: **Orbit**. Self-hostable platform of always-on, goal-driven AI
 > agents ("Bots") powered by Claude Code and the Claude Agent SDK.
-> Status: **M7 complete; M8 next.**
+> Status: **M0–M8 complete (Orbit 0.1).** Next: the post-M8 items in §7.
 > Owner of this document: lead engineer (Claude). Update it at every milestone.
 
 ## 0. Starting point
@@ -99,7 +99,7 @@ docs/                PLAN.md, decisions/ADR-*.md, security.md, architecture.md
 ```
 
 Internal packages are consumed **as TypeScript source** (`exports` → `src/`);
-Vite, Vitest and `tsx` compile on the fly, and `tsup` bundles only the
+Vite, Vitest and `tsx` compile on the fly, and esbuild (ADR-017) bundles only the
 publishable artifacts (orbitd, `orbit` bin) in M8. No per-package build step
 in the inner loop.
 
@@ -216,18 +216,18 @@ allow (scoped rule + expiry). All decisions → audit log.
 
 ### 2.6 Safety model mapping
 
-| Requirement          | Mechanism                                                                                                                                                                                                                  | Proof (automated)                         |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| Default-deny tiers   | tool classifier → `READ`, `WRITE_LOCAL`, `EXTERNAL`, `FINANCIAL`; unknown → deny                                                                                                                                           | policy unit tests, table-driven           |
-| Drafting ≠ sending   | send-type tools are `EXTERNAL`; `draft_*` tools are `WRITE_LOCAL`                                                                                                                                                          | policy tests, Inbox Triage e2e            |
-| FINANCIAL hand-back  | always deny with "prepared for human" result                                                                                                                                                                               | policy tests                              |
-| Budgets              | runtime counters (tokens, $, turns, tool calls, wall-clock, runs/day) checked in hooks + orchestrator; abort on exceed                                                                                                     | budget tests with MockDriver              |
-| Kill switches        | per Run / per Bot / global; AbortController + process kill + queue freeze                                                                                                                                                  | kill-switch tests                         |
-| Secrets              | OS keychain (`@napi-rs/keyring`) with encrypted-file fallback; injected only into the tool process that needs them; redaction in PostToolUse (`updatedToolOutput`) and in the event writer                                 | redaction tests, leak tests               |
-| Injection guardrails | taint: Run becomes tainted when untrusted content enters (web, email, Slack, external MCP); tainted Runs cannot auto-allow `EXTERNAL`; content wrapped in `<untrusted source=…>`; Bots cannot edit their own policy/config | injection test corpus (M8)                |
-| Audit                | append-only `audit` table, hash-chained, `orbit audit export` (JSONL)                                                                                                                                                      | tamper-detection tests                    |
-| CLI compliance guard | `assertCliDriverAllowed`                                                                                                                                                                                                   | AuthResolver + guard tests (every branch) |
-| No credential leak   | env allowlists, lint ban on credential paths, redactor                                                                                                                                                                     | env snapshot tests via fake `claude`      |
+| Requirement          | Mechanism                                                                                                                                                                                                                  | Proof (automated)                                                                 |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Default-deny tiers   | tool classifier → `READ`, `WRITE_LOCAL`, `EXTERNAL`, `FINANCIAL`; unknown → deny                                                                                                                                           | policy unit tests, table-driven                                                   |
+| Drafting ≠ sending   | send-type tools are `EXTERNAL`; `draft_*` tools are `WRITE_LOCAL`                                                                                                                                                          | policy tests, Inbox Triage e2e                                                    |
+| FINANCIAL hand-back  | always deny with "prepared for human" result                                                                                                                                                                               | policy tests                                                                      |
+| Budgets              | runtime counters (tokens, $, turns, tool calls, wall-clock, runs/day) checked in hooks + orchestrator; abort on exceed                                                                                                     | budget tests with MockDriver                                                      |
+| Kill switches        | per Run / per Bot / global; AbortController + process kill + queue freeze                                                                                                                                                  | kill-switch tests                                                                 |
+| Secrets              | OS keychain (`@napi-rs/keyring`) with encrypted-file fallback; injected only into the tool process that needs them; redaction in PostToolUse (`updatedToolOutput`) and in the event writer                                 | redaction tests, leak tests                                                       |
+| Injection guardrails | taint: Run becomes tainted when untrusted content enters (web, email, Slack, external MCP); tainted Runs cannot auto-allow `EXTERNAL`; content wrapped in `<untrusted source=…>`; Bots cannot edit their own policy/config | injection corpus (`packages/api/test/corpus`)                                     |
+| Audit                | append-only `audit` table, hash-chained, each record HMAC'd with the audit key (keychain or `audit.key`, never the DB), signed checkpoints, `orbit audit export` (JSONL)                                                   | tamper-detection tests (incl. whole-chain rewrite and truncation via checkpoints) |
+| CLI compliance guard | `assertCliDriverAllowed`                                                                                                                                                                                                   | AuthResolver + guard tests (every branch)                                         |
+| No credential leak   | env allowlists, lint ban on credential paths, redactor                                                                                                                                                                     | env snapshot tests via fake `claude`                                              |
 
 ## 3. Milestones
 
@@ -648,12 +648,111 @@ Demo Bot **Inbox Triage** (scheduled, drafts replies, requests approval).
   background-subagent notes, focus back after Esc, template placement, TUI
   hint/vocabulary/error states, CLI alignment, `--rotate` for webhook secrets.
 
-### M8 — Hardening and packaging
+### M8 — Hardening and packaging ✅
 
 Budget/kill-switch/injection test corpus, load test (N concurrent Mock runs,
 SSE fan-out), docs (README with diagram, quickstart for both auth modes,
 compliance note, security model, screenshots), `docker compose up`
 (orbitd + app, API-key mode), Tauri build, npm bin, release workflow.
+
+- **Security corpus** (`packages/api/test/corpus`, full stack: service,
+  MockDriver behind a recording tap, policy, a real corpus plugin, triggers,
+  memory, delegation): 38 attacker payloads (instructions, tag breakouts in
+  every spelling, terminal escapes and bidi, 60 000-character texts) × ten
+  channels (Orbit- and GitHub-style webhooks, Slack, file and git watchers,
+  plugin output, untrusted memory, delegated answers, WebFetch, a file a
+  tainted Run wrote) — tainted with the right source, wrapped, never closing
+  or forging a tag, secrets redacted everywhere, every injected request parked,
+  denied or handed back as ADR-009 says; budgets in every dimension (resumes,
+  delegation, daily, triage); kill switches over six Run states × four
+  controls, triggers and triage refused under a global kill; the same payloads
+  scrubbed in `orbit logs`/`tail`, the TUI timeline and approval cards.
+  Bugs it found, fixed: look-alike tag spellings closed untrusted blocks and
+  untrusted tool output could forge `<orbit-memory>` (one `neutraliseTags`,
+  PostToolUse neutralises untrusted output); `maxTurns` was only passed to the
+  engine (now counted and enforced by Orbit); a stop, pause, kill or budget
+  waited for an in-flight plugin call (plugin servers now stop with the
+  segment); a kill switch set from another process left waiting Runs to
+  continue after the release; a delegating parent whose child ended at once
+  could stay parked forever; `get_rm`-style names floored at READ.
+- **Load test** (`pnpm load-test`): orbitd in process, N concurrent mock Runs,
+  M SSE subscribers through `@orbit/sdk-client` (two dropped mid-stream and
+  resumed with `Last-Event-ID`); every subscriber gets every event once, in
+  order, without gaps; throughput, delivery latency and peak RSS reported. A
+  CI-sized case (40 Runs × 10 subscribers) runs in the suite.
+- **Hosted mode** (ADR-015): `ORBIT_MODE=hosted` with `publicUrl`, OIDC
+  sign-in for the App (authorization code + PKCE, `jose`, mock issuer in
+  tests), in-process TLS (non-loopback bind) or a TLS proxy on the same
+  machine, `__Host-` Secure cookies, HSTS; principals with roles
+  (`viewer`/`operator`/`owner`), a least role on every contract route
+  enforced before handlers (`roles.test.ts` lists them all), audit actors are
+  the request's principal; webhooks on the public URL. Never the CliDriver.
+  Container bind for Docker Compose: `0.0.0.0` only with `ORBIT_CONTAINER=1`
+  and a container marker, published as `127.0.0.1`.
+- **Docker sandbox** (ADR-018): containers keep `--network none`; the engine
+  sees a placeholder key and reaches the API only through a per-Bot host-side
+  key-injecting proxy on a read-only 0600 Unix socket (two routes, request
+  bodies checked); egress only through a CONNECT allowlist proxy that resolves
+  names on the host and refuses private and metadata addresses; both forward
+  only while a Run holds a lease; Bash is WRITE_LOCAL in a container only with
+  `network: none`; `/workspace` paths mapped in policy; containers recreated
+  when their shape changes; the experimental gate is gone (API keys and
+  helpers; never Bedrock/Vertex or CLI mode). Verified against a real Docker
+  daemon and the real engine binary (stand-in upstream).
+- **No API key in any child process** (ADR-018 amendment): host SDK engines
+  get a placeholder key and `ANTHROPIC_BASE_URL=http://127.0.0.1:<port>/<token>`
+  of orbitd's `HostKeyProxy` (one loopback listener, a token per Run segment,
+  closed at the segment's end or abort, redacted); the key or apiKeyHelper
+  output stays in orbitd. This also fixed a startup failure found while
+  verifying the Docker sandbox: Claude Code refuses
+  `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` on Linux without bubblewrap, which would
+  have stopped every API-key Run on such hosts and in Docker Compose; the scrub
+  is now on where Claude Code can enforce it and off where no secret remains to
+  scrub. Bedrock/Vertex credentials still reach the engine (scrub on; Linux
+  needs bwrap, checked before start). Doctor reports `engineKey`. Verified
+  against the real engine binary (path prefix kept, placeholder accepted).
+- **Plugins** (ADR-019): stdio plugin servers run under bubblewrap (Linux) or
+  `sandbox-exec` (macOS) built from the manifest's new `sandbox` section
+  (`plugins.sandbox` auto|required|off): empty `$HOME`, no `$ORBIT_HOME`,
+  workspace, network and owner folders only as declared; Chromium keeps its
+  own sandbox inside bwrap. The Browser plugin's proxy resolves each name once,
+  refuses private/metadata answers and connects to what it checked; Chromium
+  resolves nothing itself. `orbit plugin install <id> | npm:<pkg>@<ver>
+--integrity` from a catalog: SRI checked before reading, strict extractor,
+  no package code run, stored outside `$ORBIT_HOME`, installed disabled
+  (`plugins/catalog.json` ships empty: no third-party plugin to vouch for).
+- **Run controls** (ADR-016): per-Run pause at the next tool-call decision
+  (`orbit pause <run> [--now]`, TUI `P`, App), interrupted Runs resume
+  automatically when safe (session known, fewer than 2 retries, no allowed
+  EXTERNAL call without a result; `onInterrupt: fail` opts out; a graceful
+  daemon stop pauses Runs), take-over through `orbit shell <bot>` (bearer
+  token only, holds the Bot, audited; the App shows the command).
+- **Audit and memory:** each audit record HMAC'd with an audit key kept like
+  the vault key (keychain or `audit.key`, never the database), signed
+  checkpoints (`orbit audit checkpoint`, `verify --checkpoint`) catch a
+  whole-chain rewrite or truncation; memory export/import as JSONL with
+  provenance (owner only, all or nothing, redacted, `--untrusted`), retention
+  (`memory.maxPerBot`, `memory.retentionDays`, never owner facts, feedback or
+  pinned memories).
+- **TUI and CLI:** opt-in mouse (`orbit tui --mouse`, `M`; clicks only
+  select), dynamic shell completion from a running daemon only
+  (`orbit __complete`).
+- **Packaging** (ADR-017): the npm package **`orbit-bots`** (bins `orbit`,
+  `orbitd`; esbuild bundles instead of tsup; native modules and the Agent SDK
+  stay dependencies; one asset-layout seam `orbitLayout()`; a bundle guard for
+  credential reads; `pnpm smoke` packs, installs and drives it; CI job
+  `package`), `docker/orbitd.Dockerfile` + `compose.yaml` (one container,
+  API-key mode, host loopback only, read-only root, all capabilities dropped;
+  CI job `docker`), a Tauri 2 desktop shell (`apps/orbit-desktop`, loads the
+  App from the local orbitd with a ticket from `orbit app --json`, no IPC for
+  the remote page; optional `desktop.yml`), and `release.yml` (check, npm
+  publish with provenance, GHCR image, desktop bundles, GitHub Release).
+- **Docs:** README with diagram and screenshots, `docs/quickstart.md` (demo,
+  subscription, API key, Docker Compose, hosted mode, desktop),
+  `docs/compliance.md` (subscription vs API key, who may start Runs),
+  `docs/security.md` (security model), `docs/architecture.md`.
+- Open questions 1 (npm name: `orbit-bots`) and 4 (generic OIDC, mock
+  issuer in tests) are settled.
 
 ## 4. Test strategy
 
@@ -686,47 +785,41 @@ CI never needs credentials: `ORBIT_DRIVER=mock` is forced in CI.
 ## 6. Open questions (defaults chosen; none blocking right now)
 
 1. **Product/npm name.** Workspace packages use `@orbit/*` (private). The
-   public npm name for the `orbit` bin is undecided (the `@orbit` scope is
-   likely taken). Default: decide at M8; candidates `orbit-bots`, `@<you>/orbit`.
+   public npm package is **`orbit-bots`** (decided in M8, ADR-017).
 2. **License/copyright.** Keep MIT © 2026 Nakya for all packages? Default: yes.
 3. **`CLAUDE_CODE_OAUTH_TOKEN` passthrough.** Users who authenticate the CLI
    with `claude setup-token` rely on this env var. Default: **not** forwarded to
    the `claude` child (Orbit never forwards OAuth credentials);
    `orbit doctor` detects it by name only and explains how to use
    `claude login` instead. Tell me if you want an explicit opt-in.
-4. **Hosted mode scope.** OIDC provider for hosted mode — default: generic
-   OIDC (tested with a mock issuer), no vendor-specific integration.
+4. **Hosted mode scope.** Generic OIDC (tested with a mock issuer), no
+   vendor-specific integration (implemented in M8, ADR-015).
 
 ## 7. Deferrals
 
 Items intentionally postponed from a milestone are listed here with the
 milestone that will pick them up. Shipped code paths contain no TODO stubs.
+Everything M8 was due to close is closed (see §3 M8); what remains needs
+credentials or machines this environment does not have, or is follow-up work
+after 0.1.
 
-| Item                                                                                                                                                                                      | From | To                                                   | Reason                                                                                                                                                     |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Live SdkDriver run (`--bare` auth + SDK hook callbacks against the real API)                                                                                                              | M1   | first session with an API key                        | no API key in the dev environment; covered by the contract suite with an injected `query()`, `pnpm test:live` exercises it automatically when a key is set |
-| Bedrock/Vertex `apiKeySource` values                                                                                                                                                      | M1   | first cloud-provider session                         | only login sources are rejected for them until observed                                                                                                    |
-| Docker `allowlist` network via an egress proxy (today: `bridge`, and Bash stays EXTERNAL)                                                                                                 | M2   | M8                                                   | needs the allowlist proxy                                                                                                                                  |
-| Native engine sandbox verified live (bwrap/socat absent in the dev container; path syntax of `sandbox.filesystem`)                                                                        | M2   | first session on a machine with bwrap/socat or macOS | settings are generated and only used when the tools are present                                                                                            |
-| Recreate containers when a Bot's sandbox limits or image change                                                                                                                           | M2   | M8                                                   | today a running container is reused                                                                                                                        |
-| Live run of DockerSandbox + SdkDriver (needs an API key and the sandbox image)                                                                                                            | M2   | first session with an API key                        | container mechanics are tested against the real Docker daemon                                                                                              |
-| M2 review M3: Docker mode keeps the API key out of the container (host-side key-injecting proxy) and gives the engine API egress without general egress; map `/workspace` paths in policy | M2   | M8                                                   | Docker is gated behind `ORBIT_EXPERIMENTAL_DOCKER=1` until then; Bash stays EXTERNAL in containers                                                         |
-| M2 review M6: keyed (HMAC) audit chain or exported head checkpoints                                                                                                                       | M2   | M8                                                   | chain detects edits/reorders/middle deletions today; whole-chain rewrite needs a key                                                                       |
-| Live check that `continue: false` from `PostToolUseFailure` stops the engine before its next turn                                                                                         | M3   | first session with usage headroom                    | covered by driver contract tests and the mock driver; the weekly CLI limit is nearly used                                                                  |
-| Hosted mode: OIDC principals, TLS, non-loopback bind (orbitd refuses all three today)                                                                                                     | M3   | M8                                                   | a bearer token over plain HTTP must not leave the machine                                                                                                  |
-| Packaged `orbitd` bin (the CLI starts the TypeScript bin through tsx in the dev tree)                                                                                                     | M3   | M8                                                   | packaging milestone                                                                                                                                        |
-| Automatic retry of Runs interrupted by a daemon stop (today: `run.failed: interrupted`, retryable, run it again)                                                                          | M3   | M8                                                   | needs an idempotency story for tool side effects                                                                                                           |
-| Mouse support in the TUI ("mouse optional")                                                                                                                                               | M4   | M8                                                   | keyboard covers every action; Ink mouse input needs raw escape parsing                                                                                     |
-| Dynamic shell completion of Bot names and run ids                                                                                                                                         | M4   | M8                                                   | would start the daemon from the shell's completion hook                                                                                                    |
-| Run view “take-over terminal” (attach to the Bot's workspace shell)                                                                                                                       | M5   | M8                                                   | needs a pty over an authenticated WebSocket and its own safety review (it would bypass the policy engine by design)                                        |
-| Per-Run pause (today: stop, resume a parked/rate-limited Run, or pause the whole Bot)                                                                                                     | M5   | M8                                                   | the engine has no suspend; a pause would be a park without an approval, designed with automatic retries                                                    |
-| Desktop shell (Tauri) using the Tauri origin and a ticket from the CLI                                                                                                                    | M5   | M8                                                   | ADR-011 already allows `tauri://localhost`; packaging milestone                                                                                            |
-| SDK in-process Orbit MCP server verified live (`createSdkMcpServer` + hook input shape for `mcp__orbit__*`)                                                                               | M6   | first session with an API key                        | covered by the SDK contract test with an injected `query()`; the CLI transport was verified live                                                           |
-| Memory export/import and retention settings (today: bounded at 1000 per Bot, oldest unkept evicted; delete in the browser)                                                                | M6   | M8                                                   | packaging/hardening milestone                                                                                                                              |
-| SDK engine's in-process plugin servers (`pluginSdkServer`, raw JSON schemas) verified live                                                                                                | M7   | first session with an API key                        | covered by typecheck and the mock/CLI paths; no API key here                                                                                               |
-| Plugins verified live against real GitHub, Slack and Google accounts (tests use local fakes; the CLI engine → `/mcp/plugins` path was verified live with the Filesystem plugin)           | M7   | first session with those accounts                    | no accounts in the dev environment                                                                                                                         |
-| Plugin processes run as the owner's user without an OS sandbox (Orbit's policy decides every call; env and secrets are allowlisted)                                                       | M7   | M8                                                   | needs a per-plugin container or sandbox profile                                                                                                            |
-| Browser plugin: DNS answers are not checked (an allowed name resolving to a private address is reachable)                                                                                 | M7   | M8                                                   | needs a resolver check in the filter proxy                                                                                                                 |
-| Installing plugins from a remote catalog or npm (today: reference plugins and local folders)                                                                                              | M7   | M8                                                   | packaging milestone; local folders keep the manifest reviewable                                                                                            |
-| Plugin tier floor: a read verb followed by an unknown action word (`get_rm`, `view_eval`) floors at READ, as `classifyTool` does                                                          | M7   | M8                                                   | contrived names; the M8 injection corpus hardens the verb lists for both                                                                                   |
-| Webhooks from other machines need a tunnel the owner runs (orbitd binds loopback only)                                                                                                    | M7   | M8 (hosted mode, TLS)                                | a bearer-free endpoint must not leave the machine without TLS                                                                                              |
+| Item                                                                                                                                                                                | From  | To                                                     | Reason                                                                                                                                                     |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Live SdkDriver run (`--bare` auth + SDK hook callbacks against the real API)                                                                                                        | M1    | first session with an API key                          | no API key in the dev environment; covered by the contract suite with an injected `query()`; `pnpm test:live` exercises it automatically when a key is set |
+| Bedrock/Vertex `apiKeySource` values                                                                                                                                                | M1    | first cloud-provider session                           | only login sources are rejected for them until observed                                                                                                    |
+| Native engine sandbox verified live (socat absent in the dev container; path syntax of `sandbox.filesystem`)                                                                        | M2    | first session on a machine with bwrap + socat or macOS | settings are generated and only used when the tools are present                                                                                            |
+| Live run of DockerSandbox + SdkDriver against the real API (the real engine in a `--network none` container was verified against a stand-in upstream)                               | M2    | first session with an API key                          | no API key here                                                                                                                                            |
+| Live check that `continue: false` from `PostToolUseFailure` stops the engine before its next turn                                                                                   | M3    | first session with usage headroom                      | covered by driver contract tests and the mock driver                                                                                                       |
+| SDK in-process Orbit MCP server and plugin servers verified live                                                                                                                    | M6/M7 | first session with an API key                          | covered by the SDK contract tests with an injected `query()`                                                                                               |
+| Plugins verified live against real GitHub, Slack and Google accounts                                                                                                                | M7    | first session with those accounts                      | tests use local fakes; the CLI engine → `/mcp/plugins` path was verified live                                                                              |
+| Remote CLI against a hosted orbitd (personal access tokens or device flow); group-claim mapping; several issuers                                                                    | M8    | after 0.1                                              | hosted mode serves the App over OIDC; the CLI on the server uses the local token                                                                           |
+| Rate limiting of `/v1/auth/oidc/login`; sessions that survive a restart                                                                                                             | M8    | after 0.1                                              | pending sign-ins are bounded (128) and sessions capped (32) in memory                                                                                      |
+| API calls an engine's children make through the key proxies (host or Docker) are not counted against token/cost budgets                                                             | M8    | after 0.1                                              | bounded by the lease, wall clock and kill switches and counted in doctor; metering in the proxy is the follow-up                                           |
+| The key proxies (host and Docker) and the egress proxy do not chain orbitd's own `HTTPS_PROXY`: hosts that reach the API only through an outbound proxy cannot run API-key Bots yet | M8    | after 0.1                                              | the egress proxy must connect to the address it checked; CONNECT chaining in `createApiForwarder` is the follow-up                                         |
+| Rootless Docker / Docker Desktop unverified; plugins of Docker Bots receive container paths (fail closed)                                                                           | M8    | after 0.1                                              | socket sharing and uid mapping differ there                                                                                                                |
+| macOS `sandbox-exec` profile for plugins not run live; npm installs not tried against registry.npmjs.org (fake registry only, the catalog is empty)                                 | M8    | first macOS session / first catalog entry              | generated and unit-tested                                                                                                                                  |
+| The GitHub plugin's sandbox sees the owner's whole git directory read-write (except `config`, `hooks`, `info`); `/etc` and `/usr` stay readable in plugin sandboxes                 | M8    | after 0.1                                              | narrowing to the Bot's own refs needs a git object store per Bot                                                                                           |
+| App Inbox lists approvals only, not Runs paused for the owner; an interrupted parent does not wait again for a child delegated in the same segment                                  | M8    | after 0.1                                              | paused Runs show in the Run lists and the Run view                                                                                                         |
+| Signed and notarised desktop bundles, auto-updater, Homebrew/winget; the desktop shell does not sign in again after an orbitd restart                                               | M8    | after 0.1                                              | needs signing identities                                                                                                                                   |
+| Memory retention from environment variables and a per-Bot retention field in the UI; clicks inside TUI overlays; completion of memory and rule ids                                  | M8    | after 0.1                                              | config file, keyboard and Bot spec cover them                                                                                                              |
+| The Docker image build, `docker compose up` and the desktop bundles are verified in CI only (no Docker daemon or WebKit build here)                                                 | M8    | first CI run                                           | `docker compose config`, the npm smoke test and the Linux Tauri build passed locally                                                                       |

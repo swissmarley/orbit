@@ -77,8 +77,11 @@ orbit doctor                        # engine: API key (SdkDriver)
 ```
 
 Amazon Bedrock (`CLAUDE_CODE_USE_BEDROCK=1`) and Google Vertex
-(`CLAUDE_CODE_USE_VERTEX=1`) work too, with your cloud credentials. The key
-reaches only the Agent SDK engine, never plugins or tools. Models default to
+(`CLAUDE_CODE_USE_VERTEX=1`) work too, with your cloud credentials. An API
+key never leaves orbitd: the engine gets a placeholder and reaches Anthropic
+through orbitd's loopback key proxy, so no engine, tool or plugin process ever
+holds the key (cloud credentials do reach the engine, which on Linux then needs
+bubblewrap). Models default to
 the `opus` alias, with `haiku` for triage; set `ORBIT_DEFAULT_MODEL` /
 `ORBIT_TRIAGE_MODEL` or a per-Bot `model`.
 

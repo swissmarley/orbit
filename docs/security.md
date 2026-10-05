@@ -34,6 +34,11 @@ tests is in [`PLAN.md` §2.6](PLAN.md#26-safety-model-mapping).
 | **Network attackers**                                | Someone on the LAN or the internet probes orbitd                                                                                   | Loopback only by default; hosted mode only with TLS and OIDC; webhooks need an HMAC signature                                                                       |
 | **Someone who edits Orbit's database file directly** | Rewriting the audit trail to hide an action                                                                                        | Hash-chained audit log, append-only triggers, verification on demand                                                                                                |
 
+Orbit's defences are exercised by a dedicated test corpus
+(`packages/api/test/corpus`): dozens of injection payloads through every
+channel, every budget dimension and every kill switch against every Run
+state.
+
 Out of scope: an attacker who already runs code as your user (they can read
 everything you can), a compromised Claude Code engine binary, and a
 compromised operating system or Docker daemon.
@@ -149,7 +154,31 @@ change only through the API, as you.
 per Bot, with Claude Code's native sandbox (bubblewrap on Linux,
 `sandbox-exec` on macOS) generated into the engine's settings when the
 platform supports it. API-key mode can use a Docker container per Bot with
-CPU, memory and PID limits, all capabilities dropped and `no-new-privileges`.
+CPU, memory and PID limits, all capabilities dropped and `no-new-privileges`
+(ADR-018):
+
+- The container has **no network** (`--network none`). The engine inside sees
+  only a placeholder key; Orbit's host-side **key proxy** adds the real key to
+  the two API routes the engine uses, reached over a read-only-mounted Unix
+  socket. The key is never in the container's environment, files, process
+  list or `docker inspect`.
+- Other traffic goes only through an **egress proxy** that allows the domains
+  you listed, resolves them on the host and refuses private, loopback and
+  cloud-metadata addresses. Both proxies forward only while a Run of that Bot
+  is active.
+- Containers are recreated when their image or limits change.
+
+**Plugins run in an OS sandbox** (ADR-019) where the platform has one
+(bubblewrap on Linux, `sandbox-exec` on macOS): an empty home directory (so
+`~/.ssh`, `~/.claude` and other credential stores simply are not there), no
+`$ORBIT_HOME`, and only the workspace, folders and network the plugin's
+manifest declares. `plugins.sandbox: required` refuses plugins that cannot be
+sandboxed. The Browser plugin resolves every name once, refuses answers that
+point at private or metadata addresses and connects to the address it
+checked, so DNS rebinding cannot reach your network. Plugins installed from
+the catalog are checked against their published integrity before they are
+read, unpacked with a strict extractor, never run install scripts and start
+disabled.
 
 ## Untrusted content and taint
 
@@ -218,6 +247,23 @@ refused, and nothing restarts by itself after you release it.
 - **Webhooks** (`/hooks/<bot>/<trigger>`) need an HMAC-SHA256 signature,
   verified in constant time before anything is parsed or stored; every
   signature is accepted once.
+- **In a container** (Docker Compose) orbitd may listen on `0.0.0.0` inside
+  the container only (`ORBIT_CONTAINER=1` and a container marker); publish its
+  port to the host's `127.0.0.1` only. Subscription mode is refused there.
+- **Hosted mode** (ADR-015, API key only) is the only way orbitd listens on a
+  network address: it needs a public `https://` URL, TLS (in orbitd or a TLS
+  proxy on the same machine) and an OIDC identity provider. People sign in
+  through OIDC (authorization code with PKCE; ID tokens verified for issuer,
+  audience, nonce, expiry and an asymmetric signature) and must match a
+  principal you configured, by subject or verified email. Each principal has
+  a role — `viewer`, `operator` (Runs and approvals) or `owner` (everything) —
+  enforced on every route, and every action is recorded under that principal.
+  Cookies are `__Host-` and `Secure`; responses carry HSTS.
+- **Take-over** (`orbit shell <bot>`) opens your own shell in a Bot's
+  workspace from the terminal only (the bearer token, never a browser
+  session), holds the Bot while it is open and is audited. The App shows the
+  command instead of opening a shell, because a shell in the browser would
+  bypass the policy engine.
 
 ## Audit
 
@@ -225,8 +271,13 @@ Every decision — approvals, denials, rules, secrets set or removed (names
 only), plugins enabled, taint cleared, kill switches — is an audit record. The
 audit table is append-only (SQL triggers reject updates and deletes) and every
 record carries the hash of its predecessor, so editing, deleting or reordering
-records is detected by `orbit audit verify`. `orbit audit export` writes JSONL.
-The audit log stores ids, never memory text or secret values.
+records is detected by `orbit audit verify`. Every record also carries an
+HMAC made with an audit key that lives in the OS keychain or a 0600 file —
+never in the database — so rewriting the whole chain needs that key too.
+`orbit audit checkpoint` prints a small signed snapshot of the chain's head
+for you to keep elsewhere; `orbit audit verify --checkpoint <file>` later
+proves nothing up to that point was rewritten or cut off. `orbit audit export`
+writes JSONL. The audit log stores ids, never memory text or secret values.
 
 ## What stays your responsibility
 
