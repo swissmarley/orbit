@@ -1,7 +1,15 @@
 /** @jsxRuntime automatic @jsxImportSource react */
-import { BotSpec, type BotSpecInput, TriggerSpec } from '@orbit/core/browser';
+import {
+  type BotProposal,
+  BotSpec,
+  type BotSpecInput,
+  type SubagentSpec,
+  TriggerSpec,
+  formatTokens,
+} from '@orbit/core/browser';
 import { useNavigate } from '@tanstack/react-router';
-import { ArrowLeft, ArrowRight, Check, Sparkles } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Bot as BotIcon, Check, Sparkles } from 'lucide-react';
+import { toast } from 'sonner';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { PageHeader } from '../components/states';
 import { Button } from '../components/ui/button';
@@ -11,7 +19,8 @@ import { Switch } from '../components/ui/misc';
 import { useActions } from '../lib/actions';
 import { cn } from '../lib/cn';
 import { prettyJson } from '../lib/diff';
-import { useDoctor } from '../lib/queries';
+import { errorText, useClient } from '../lib/api';
+import { useDoctor, useTriage } from '../lib/queries';
 import { ENGINE_TOOLS, proposeSpec } from '../lib/wizard';
 
 const STEPS = ['Goal', 'Setup', 'Limits', 'Review'] as const;
@@ -32,6 +41,8 @@ interface Draft {
   parkWindowSeconds: number;
   autoResume: boolean;
   fixture: string;
+  summarize: 'off' | 'result' | 'triage';
+  subagents: Record<string, SubagentSpec>;
 }
 
 export function draftToSpec(d: Draft): BotSpecInput {
@@ -55,7 +66,29 @@ export function draftToSpec(d: Draft): BotSpecInput {
       maxTokensPerRun: d.maxTokensPerRun.trim() ? Number(d.maxTokensPerRun) : null,
     },
     approvals: { parkWindowSeconds: d.parkWindowSeconds, autoResume: d.autoResume },
+    memory: { summarize: d.summarize },
+    ...(Object.keys(d.subagents).length > 0 ? { subagents: d.subagents } : {}),
     ...(d.fixture ? { mock: { fixture: d.fixture } } : {}),
+  };
+}
+
+/** A triage proposal as wizard fields (the owner's own goal text is kept). */
+export function applyProposal(d: Draft, p: BotProposal): Draft {
+  // Subagents may only use tools the Bot has.
+  const subagents = Object.fromEntries(
+    Object.entries(p.subagents).map(([k, v]) => [
+      k,
+      { ...v, ...(v.tools ? { tools: v.tools.filter((t) => p.tools.includes(t)) } : {}) },
+    ]),
+  );
+  return {
+    ...d,
+    name: d.name || p.name,
+    instructions: p.instructions || d.instructions,
+    tools: p.tools,
+    schedule: p.schedule ? 'cron' : 'manual',
+    ...(p.schedule ? { cron: p.schedule.cron } : {}),
+    subagents,
   };
 }
 
@@ -85,7 +118,32 @@ export function NewBotScreen() {
     parkWindowSeconds: 30,
     autoResume: true,
     fixture: '',
+    summarize: 'result',
+    subagents: {},
   });
+  const client = useClient();
+  const triage = useTriage();
+  const [asking, setAsking] = useState(false);
+  const triageLeft = triage.data ? Math.max(0, triage.data.limit - triage.data.callsToday) : null;
+  const subscription = doctor.data?.authMethod === 'subscription';
+  /** The metered path: one triage-model call, shown and capped before it is made. */
+  const askClaude = async () => {
+    setAsking(true);
+    try {
+      const r = await client.triage.proposeBot(d.goal);
+      setD((x) => applyProposal(x, r.proposal));
+      setReasons([
+        ...r.proposal.rationale,
+        `Proposed by ${r.model} · ${formatTokens(r.inputTokens)} in / ${formatTokens(r.outputTokens)} out${r.costUsd !== null ? ` · ~$${r.costUsd.toFixed(4)}` : ''} · ${r.usage.callsToday} of ${r.usage.limit} triage calls used today. Review every field.`,
+      ]);
+      void triage.refetch();
+      setStep(1);
+    } catch (err) {
+      toast.error('Claude could not propose a setup', { description: errorText(err) });
+    } finally {
+      setAsking(false);
+    }
+  };
   const stepHeading = useRef<HTMLHeadingElement>(null);
   const firstStep = useRef(true);
   useEffect(() => {
@@ -184,10 +242,31 @@ export function NewBotScreen() {
                     Describe the goal in a few words first.
                   </span>
                 ) : null}
+                <Button
+                  disabled={d.goal.trim().length < 3 || asking || triageLeft === 0}
+                  onClick={() => void askClaude()}
+                  aria-describedby={`${ids}-ask-cost`}
+                >
+                  <BotIcon aria-hidden /> {asking ? 'Asking Claude…' : 'Ask Claude to propose'}
+                </Button>
                 <Button variant="primary" disabled={d.goal.trim().length < 3} onClick={suggest}>
                   <Sparkles aria-hidden /> Suggest a setup
                 </Button>
               </div>
+              <p id={`${ids}-ask-cost`} className="text-right text-xs text-fg-muted">
+                “Suggest a setup” uses local rules and is free. “Ask Claude” makes one call to{' '}
+                <span className="font-mono">
+                  {doctor.data?.models.triage ?? 'the triage model'}
+                </span>
+                {mock
+                  ? ' (demo mode: no model is called)'
+                  : subscription
+                    ? ' on your Claude subscription (counts toward your usage limits)'
+                    : ' with your API key'}
+                {triageLeft !== null && triage.data
+                  ? ` — ${triageLeft} of ${triage.data.limit} triage calls left today.`
+                  : '.'}
+              </p>
             </>
           ) : null}
           {step === 1 ? (
@@ -387,6 +466,25 @@ export function NewBotScreen() {
                     value={d.parkWindowSeconds}
                     onChange={(e) => set('parkWindowSeconds', Number(e.target.value))}
                   />
+                </Field>
+                <Field
+                  id={`${ids}-mem`}
+                  label="After each run, remember"
+                  hint={
+                    d.summarize === 'triage'
+                      ? 'One small triage-model call per finished run, counted and capped per day (Settings → Budgets).'
+                      : 'Memory is offered to later runs as context, never as instructions.'
+                  }
+                >
+                  <Select
+                    id={`${ids}-mem`}
+                    value={d.summarize}
+                    onChange={(e) => set('summarize', e.target.value as Draft['summarize'])}
+                  >
+                    <option value="result">Its result (free)</option>
+                    <option value="triage">A summary by the triage model (metered)</option>
+                    <option value="off">Nothing</option>
+                  </Select>
                 </Field>
                 <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
                   <label htmlFor={`${ids}-auto`} className="text-sm text-fg">

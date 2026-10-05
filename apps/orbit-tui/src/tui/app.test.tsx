@@ -266,3 +266,57 @@ describe('more untrusted text', () => {
     expect(frames).not.toContain('\u0007');
   });
 });
+
+describe('M6: memory browser and delegation tree', () => {
+  it('m opens the memory browser with trust in words; Enter shows provenance; x deletes after y', async () => {
+    const t = open();
+    await t.waitFor(/Mailer/);
+    await t.press('m');
+    const list = await t.waitFor(/Memory · Mailer/);
+    expect(list).toMatchSnapshot();
+    expect(list).toMatch(/✓ trusted/);
+    expect(list).toMatch(/⚠ untrusted/);
+    await t.press('j', KEYS.enter);
+    const detail = await t.waitFor(/from WebFetch/);
+    expect(detail).toMatch(/never offered to Runs automatically/);
+    await t.press(KEYS.escape, 'x');
+    await t.waitFor(/Delete the memory/);
+    await t.press('y');
+    await t.waitFor(/memory deleted/);
+    expect(t.mock.memory.remove).toHaveBeenCalledWith('mem_2');
+    expect(t.mock.memory.list.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('e edits a memory and Ctrl-S saves it through orbitd', async () => {
+    const t = open();
+    await t.waitFor(/Mailer/);
+    await t.press('m');
+    await t.waitFor(/Launch owner/);
+    await t.press('e');
+    await t.waitFor(/Edit memory mem_1/);
+    await t.press(KEYS.backspace, 'R', '\u0013');
+    await t.waitFor(/saved/);
+    expect(t.mock.memory.update).toHaveBeenCalledWith('mem_1', {
+      title: 'Launch owneR',
+      body: 'Ada owns the launch.\nIt opens Tuesday.',
+    });
+  });
+
+  it('t shows the delegation tree of the selected Run', async () => {
+    const t = open();
+    await t.waitFor(/Mailer/);
+    await t.press(']', '[', '2', 't');
+    const frame = await t.waitFor(/Delegation tree/);
+    await t.waitFor(/└─ ✔ done {2}Notes {2}run_b1/);
+    expect(t.lastFrame()).toMatch(/✔ done {2}Mailer {2}run_a1 {2}← this run/);
+    expect(frame).toMatch(/own approvals/);
+  });
+
+  it('+ rates a finished Run', async () => {
+    const t = open();
+    await t.waitFor(/Mailer/);
+    await t.press('j', '2', '+');
+    await t.waitFor(/feedback saved/);
+    expect(t.mock.runs.feedback).toHaveBeenCalledWith('run_b1', { rating: 'up' });
+  });
+});

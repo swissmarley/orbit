@@ -5,6 +5,7 @@ import axe from 'axe-core';
 import { describe, expect, it } from 'vitest';
 import preview from '../../.storybook/preview';
 import * as approvalStories from './approval.stories';
+import * as memoryStories from './memory.stories';
 import * as primitiveStories from './primitives.stories';
 import * as runStories from './run.stories';
 import * as tokenStories from './tokens.stories';
@@ -14,6 +15,7 @@ const all = {
   ...composeStories(primitiveStories, preview),
   ...composeStories(approvalStories, preview),
   ...composeStories(runStories, preview),
+  ...composeStories(memoryStories, preview),
 };
 
 /** Every story renders and has no axe violations (contrast is checked in the browser e2e suite). */

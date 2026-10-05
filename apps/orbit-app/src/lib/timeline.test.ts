@@ -126,3 +126,23 @@ describe('timeline', () => {
     expect(summarizeToolInput('x', null)).toBe('');
   });
 });
+
+describe('M6 events in the timeline', () => {
+  it('shows delegation with links to the child Run, memory and summaries', async () => {
+    const { teamEvents } = await import('../stories/fixtures');
+    const notes = buildTimeline(teamEvents).flatMap((i) => (i.kind === 'note' ? [i] : []));
+    const text = notes.map((n) => n.text);
+    expect(text).toEqual(
+      expect.arrayContaining([
+        '2 memories offered as context',
+        'Delegated to Researcher',
+        'Paused until the delegated Run answers; it resumes by itself',
+        'Delegated Run answered (untrusted data for this Run)',
+        'Memory note saved: Launch owner (untrusted)',
+        'Summarized by haiku · 1.8k in / 90 out · ~$0.0021',
+      ]),
+    );
+    const delegated = notes.find((n) => n.text === 'Delegated to Researcher');
+    expect(delegated?.runId).toBe('run_child0000001');
+  });
+});

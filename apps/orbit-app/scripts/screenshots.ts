@@ -46,7 +46,38 @@ try {
     triggers: [{ kind: 'cron', cron: '0 9 * * 1-5' }],
     budgets: { maxRunsPerDay: 5 },
   });
-  await new Promise((r) => setTimeout(r, 1500));
+  // M6: a team (delegation tree), memory with provenance, feedback, workspace taint.
+  const lead = await o.api<{ id: string }>('POST', '/v1/bots', {
+    name: 'Launch lead',
+    goal: 'Coordinate the launch and keep notes',
+    mock: { fixture: 'delegate-to-peer' },
+    delegation: { allowedBots: ['Researcher'] },
+    subagents: {
+      reader: {
+        description: 'Reads files and reports',
+        prompt: 'Read and report.',
+        model: 'haiku',
+      },
+    },
+  });
+  const web = await o.api<{ id: string }>('POST', '/v1/bots', {
+    name: 'Web watcher',
+    goal: 'Watch the launch page and save it',
+    mock: { fixture: 'web-then-write' },
+    memory: { summarize: 'triage' },
+  });
+  const team = await o.api<{ runId: string }>('POST', `/v1/bots/${lead.id}/runs`, {});
+  await o.api('POST', `/v1/bots/${web.id}/runs`, {});
+  await o.api('POST', `/v1/bots/${lead.id}/memory`, {
+    title: 'House style',
+    body: 'Short answers. Name the source of every fact.',
+    pinned: true,
+  });
+  await new Promise((r) => setTimeout(r, 4000));
+  await o.api('POST', `/v1/runs/${team.runId}/feedback`, {
+    rating: 'down',
+    comment: 'Name the source next time',
+  });
 
   const screens: [string, string][] = [
     ['inbox', '/inbox'],
@@ -61,6 +92,12 @@ try {
     ['settings-engine', '/settings?tab=engine'],
     ['settings-policies', '/settings?tab=policies'],
     ['settings-audit', '/settings?tab=audit'],
+    ['settings-budgets', '/settings?tab=budgets'],
+    ['run-delegation', `/runs/${team.runId}`],
+    ['memory', '/memory'],
+    ['memory-web', `/memory?bot=${web.id}`],
+    ['bot-memory-team', `/bots/${lead.id}?tab=memory`],
+    ['bot-web-taint', `/bots/${web.id}?tab=memory`],
     ['welcome', '/welcome'],
   ];
   for (const scheme of ['light', 'dark'] as const) {

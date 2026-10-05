@@ -1,4 +1,4 @@
-import type { Bot, BotSpecInput, RunState } from '@orbit/core/browser';
+import type { Bot, BotSpecInput, Memory, RunState } from '@orbit/core/browser';
 import type { Approval, RouteBody } from '@orbit/sdk-client/browser';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
@@ -272,6 +272,67 @@ export function useActions() {
         await c.secrets.remove(name).catch(fail('Could not remove the secret'));
         void refresh(keys.secrets);
         toast.success(`Removed ${name}`);
+      },
+
+      async createMemory(bot: Bot, body: RouteBody<'createMemory'>): Promise<Memory> {
+        const m = await c.memory.create(bot.id, body).catch(fail('Could not save the memory'));
+        void refresh(keys.memory);
+        toast.success('Memory saved', {
+          description: m.pinned ? 'Pinned: every new Run sees it.' : 'New Runs may see it.',
+        });
+        return m;
+      },
+
+      async updateMemory(
+        m: Memory,
+        patch: RouteBody<'updateMemory'>,
+        undoable = true,
+      ): Promise<Memory> {
+        const saved = await c.memory.update(m.id, patch).catch(fail('Could not save the memory'));
+        void refresh(keys.memory);
+        // Undo restores what text and pin can restore; a trust review cannot be undone.
+        const restorable = !patch.trusted;
+        toast.success(patch.trusted ? 'Marked as reviewed and trusted' : 'Memory saved', {
+          duration: UNDO_MS,
+          ...(undoable && restorable
+            ? {
+                action: {
+                  label: 'Undo',
+                  onClick: () =>
+                    void actions
+                      .updateMemory(
+                        saved,
+                        { title: m.title, body: m.body, pinned: m.pinned },
+                        false,
+                      )
+                      .catch(() => undefined),
+                },
+              }
+            : {}),
+        });
+        return saved;
+      },
+
+      async deleteMemory(m: Memory): Promise<void> {
+        await c.memory.remove(m.id).catch(fail('Could not delete the memory'));
+        void refresh(keys.memory);
+        toast.success('Memory deleted', { description: 'Its markdown file is gone too.' });
+      },
+
+      async feedback(runId: string, rating: 'up' | 'down', comment?: string): Promise<void> {
+        await c.runs
+          .feedback(runId, { rating, ...(comment?.trim() ? { comment: comment.trim() } : {}) })
+          .catch(fail('Could not save your feedback'));
+        void refresh(keys.run(runId), keys.memory);
+        toast.success('Thanks — feedback saved', {
+          description: 'The Bot sees it as context in future Runs.',
+        });
+      },
+
+      async clearTaint(bot: Bot): Promise<void> {
+        const r = await c.memory.clearTaint(bot.id).catch(fail('Could not clear the taint'));
+        void refresh(keys.botTaint(bot.id));
+        toast.success(`Forgot taint on ${r.cleared} file${r.cleared === 1 ? '' : 's'}`);
       },
 
       async signOut() {

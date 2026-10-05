@@ -42,7 +42,12 @@ pnpm --filter @orbit/app exec tsx scripts/screenshots.ts <dir>   # screenshots o
   proposal (`wizard.ts`), theme.
 - `src/components`: `ui/` primitives, the approval card, timeline, shell
   (header with connection, queue, usage limit, driver and auth), palette.
-- `src/screens`: Inbox, Bots, Bot detail, Run, Runs, New Bot, Settings,
-  Welcome, sign-in.
+- `src/screens`: Inbox, Bots, Bot detail (incl. Memory & team), Run (live
+  delegation tree, feedback, what it remembered), Runs, Memory (browse,
+  search, edit, review, delete), New Bot (local suggestion or a metered “Ask
+  Claude” proposal), Settings (triage usage under Budgets; audit rows as names
+  and links), Welcome, sign-in.
+- More pure logic: `delegation.ts` (the tree), `audit.ts` (names and links for
+  audit rows).
 - Statuses, tiers and times come from `@orbit/core/browser` (`vocabulary.ts`),
   shared with the TUI and the CLI.

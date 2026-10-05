@@ -29,10 +29,20 @@ export function staleKeysFor(e: RunEvent): (readonly unknown[])[] {
     e.type === 'run.cancelled' ||
     e.type === 'run.rate_limited' ||
     e.type === 'run.resume_scheduled' ||
-    e.type === 'usage'
+    e.type === 'usage' ||
+    e.type === 'delegation.started' ||
+    e.type === 'delegation.finished'
   ) {
     out.push(keys.runs, keys.queue, keys.schedules);
   }
+  if (
+    e.type === 'memory.written' ||
+    e.type === 'memory.summarized' ||
+    e.type === 'feedback.recorded'
+  ) {
+    out.push(keys.memory, keys.triage);
+  }
+  if (e.type === 'run.tainted') out.push(keys.memory);
   if (e.type === 'approval.requested' || e.type === 'approval.decided') out.push(keys.approvals);
   if (e.type === 'run.killed') out.push(keys.kill, keys.bots);
   return out;

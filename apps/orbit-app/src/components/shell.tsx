@@ -3,6 +3,7 @@ import { formatLocalTime } from '@orbit/core/browser';
 import { useQueryClient } from '@tanstack/react-query';
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
 import {
+  Brain,
   Command as CommandIcon,
   Inbox,
   Keyboard,
@@ -170,7 +171,7 @@ function NavLink({
   children,
   count,
 }: {
-  to: '/inbox' | '/bots' | '/runs' | '/settings';
+  to: '/inbox' | '/bots' | '/runs' | '/memory' | '/settings';
   icon: ReactNode;
   children: ReactNode;
   count?: number;
@@ -318,6 +319,9 @@ export function AppShell() {
           </NavLink>
           <NavLink to="/runs" icon={<ListTree aria-hidden />}>
             Runs
+          </NavLink>
+          <NavLink to="/memory" icon={<Brain aria-hidden />}>
+            Memory
           </NavLink>
           <NavLink to="/settings" icon={<Settings aria-hidden />}>
             Settings

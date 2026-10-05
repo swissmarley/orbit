@@ -22,6 +22,7 @@ pnpm orbit stop <run> | bot pause <bot> | kill [--off] | audit verify | secret s
 pnpm orbit daemon start|stop|status|restart | queue | schedules | bot create … --cron '0 9 * * 1-5'
 pnpm orbit              # in a terminal: the full-screen TUI (also `orbit tui`; ? shows the keys)
 pnpm orbit tail <run> | bot run|logs <bot> | completion bash|zsh|fish
+pnpm orbit memory list|show|add|edit|rm … | feedback <run> up|down | tree <run> | triage
 pnpm orbitd             # the daemon in the foreground (log otherwise: $ORBIT_HOME/logs/orbitd.log)
 pnpm --filter @orbit/api openapi   # regenerate packages/api/openapi.json after contract changes
 pnpm --filter @orbit/app build && pnpm orbit app   # the App, served by orbitd; one-time sign-in link (ADR-011)
@@ -36,15 +37,20 @@ pnpm --filter @orbit/app dev | storybook   # Vite dev server (needs ORBIT_ALLOWE
   times (`vocabulary.ts`); `@orbit/core/browser` is the Node-free subset
 - `packages/store` SQLite (Drizzle): append-only events, run projections, bots
 - `packages/runtime` orchestrator, scheduler, triggers, drivers (Sdk/Cli/Mock),
-  AuthResolver, rate limits
+  AuthResolver, rate limits, Orbit's MCP tools (`src/orbit-tools`: toolset,
+  per-segment sessions, the minimal MCP server) and the triage path
+  (`src/triage.ts`) (ADR-013)
 - `packages/policy` tiers (ADR-009), PolicyEngine, rules, approval queue + grants,
   approval cards, hash-chained audit log, secrets vault
 - `packages/sandbox` directory / git-worktree workspaces with Claude Code's native
   sandbox settings, Docker containers (API-key mode)
-- `packages/memory` memory store, summarizer, feedback
-- `packages/api` Hono REST + SSE (`src/app.ts`), the route/zod contract
-  (`src/contract.ts`, also `@orbit/api/contract`), OpenAPI, and `OrbitService`
-  (queue, scheduler, rate limits, approval expiry behind the API)
+- `packages/memory` memory store (SQLite FTS5 + markdown mirror under
+  `$ORBIT_HOME/memory`), provenance/taint helpers, workspace-file taint,
+  context and feedback text, summarizer prompts, triage-call ledger (ADR-012)
+- `packages/api` Hono REST + SSE (`src/app.ts`) plus the engines' `/mcp/orbit`
+  endpoint (not a client route), the route/zod contract (`src/contract.ts`,
+  also `@orbit/api/contract`), OpenAPI, and `OrbitService` (queue, scheduler,
+  rate limits, approval expiry, delegation, memory, feedback, summaries)
 - `packages/sdk-client` typed client (validated responses), SSE reconnect with
   Last-Event-ID, local discovery (`$ORBIT_HOME/daemon.json` + `daemon.token`);
   `@orbit/sdk-client/browser` is the client without discovery (no `node:fs`)
@@ -91,6 +97,17 @@ Dependency direction: `core` ← `store` ← `policy`, `memory`, `sandbox` ← `
   command tree); model-written text shown in a terminal goes through
   `clean()`.
 - Conventional Commits (`feat(runtime): …`, `test(policy): …`, `docs: …`).
+- Memory (ADR-012): every memory carries `source` and `taint`; only trusted
+  memory is offered to Runs automatically, always inside `<orbit-memory …>`
+  tags as data; reading an untrusted one taints the Run; only the owner clears
+  taint (audited). Feedback text is composed by Orbit, never quoted from model
+  output. The audit log stores memory ids, never memory text.
+- Delegation (ADR-013): `delegate_to_bot` parks the parent (`delegating`) and
+  resumes it with the answers as untrusted data; children inherit the parent's
+  taint and remaining budget; stopping a Run stops its children.
+- Model spend outside a Run goes only through `TriagePath` (counted, capped by
+  `triage.maxCallsPerDay`, refused under a kill switch or usage-limit hold,
+  shown to the owner).
 - No TODO stubs in shipped code paths; record deferrals in `docs/PLAN.md` §7.
 - Deviations from the brief get an ADR in `docs/decisions/`.
 
@@ -111,13 +128,22 @@ Dependency direction: `core` ← `store` ← `policy`, `memory`, `sandbox` ← `
   aliases (`opus`, `sonnet`, `haiku`).
 - Default-deny tool policy; EXTERNAL actions need approval; FINANCIAL is
   always handed back to the human. Budgets are enforced in runtime code.
+- `/mcp/orbit` takes only per-segment tokens (never the API token or a
+  cookie), refuses any `Origin`, and runs a tool call only if Orbit's policy
+  allowed exactly that call first. The CLI engine gets the token in a 0600
+  `--mcp-config` file, never on a command line; the SDK engine uses an
+  in-process server.
 
 ## Drivers (packages/runtime/src/drivers)
 
 - `normalize.ts` is the only place engine messages become `RunEvent`s.
 - `cli.ts` spawns `claude -p` (prompt on stdin); tool calls are decided by the
   PreToolUse hook → `hook-bridge.ts` (ADR-008). `sdk.ts` uses `query()` hooks.
-- `mock.ts` replays `fixtures/claude-<version>/*.jsonl`; record new fixtures with
+- Orbit's MCP tools reach the CLI engine through `--mcp-config` (file) and
+  the SDK engine through `createSdkMcpServer`; subagents go as `--agents` /
+  `agents`.
+- `mock.ts` replays `fixtures/claude-<version>/*.jsonl` (Orbit tools run for
+  real; `<name>-resumed.jsonl` is replayed on resume); record new fixtures with
   `claude -p … --output-format stream-json --verbose` and scrub them with
   `scripts/scrub-fixture.ts` before committing.
 - `test/driver-contract.ts` is the shared suite every driver must pass.

@@ -1,4 +1,11 @@
-import { Bot, type RunEvent, type RunEventBody, type RunState, replayRun } from '@orbit/core';
+import {
+  Bot,
+  type MemoryHit,
+  type RunEvent,
+  type RunEventBody,
+  type RunState,
+  replayRun,
+} from '@orbit/core';
 import type { Approval } from '@orbit/sdk-client';
 import { vi } from 'vitest';
 import type { TuiClient } from '../src/tui/feed';
@@ -129,6 +136,35 @@ export function approval(id: string, over: Partial<Approval['card']> = {}): Appr
   };
 }
 
+export function memory(id: string, over: Partial<MemoryHit> = {}): MemoryHit {
+  return {
+    id,
+    botId: 'bot_a',
+    kind: 'note',
+    source: 'bot',
+    title: `Note ${id}`,
+    body: 'Ada owns the launch.\nIt opens Tuesday.',
+    taint: [],
+    runId: 'run_a1',
+    approvalId: null,
+    signal: null,
+    pinned: false,
+    createdBy: 'bot:bot_a',
+    createdAt: T,
+    updatedAt: T,
+    editedAt: null,
+    snippet: '',
+    rank: 0,
+    ...over,
+  };
+}
+
+export const memories = (): MemoryHit[] => [
+  memory('mem_1', { title: 'Launch owner' }),
+  memory('mem_2', { title: 'Rumour from a web page', taint: ['WebFetch'] }),
+  memory('mem_3', { title: 'Owner disliked a result', kind: 'feedback', source: 'feedback' }),
+];
+
 export function data(over: Partial<Data> = {}): Data {
   return {
     ...EMPTY_DATA,
@@ -171,6 +207,30 @@ export function fakeClient(
       start: vi.fn((botId: string) => Promise.resolve(run('run_new', botId, 'queued'))),
       stop: vi.fn((runId: string) => Promise.resolve(run(runId, 'bot_a', 'cancelled'))),
       resume: vi.fn((runId: string) => Promise.resolve(run(runId, 'bot_a', 'queued'))),
+      tree: vi.fn((runId: string) => {
+        const parent = {
+          ...run('run_a1', 'bot_a', 'completed'),
+          children: [
+            { runId: 'run_b1', botId: 'bot_b', botName: 'Notes', status: 'completed' as const },
+          ],
+        };
+        const child = { ...run('run_b1', 'bot_b', 'completed'), parentRunId: 'run_a1', depth: 1 };
+        return Promise.resolve(
+          runId === 'run_a1' || runId === 'run_b1'
+            ? { root: 'run_a1', runs: [parent, child] }
+            : { root: runId, runs: [run(runId, 'bot_a', 'completed')] },
+        );
+      }),
+      feedback: vi.fn(() =>
+        Promise.resolve(memory('mem_fb', { kind: 'feedback', source: 'feedback' })),
+      ),
+    },
+    memory: {
+      list: vi.fn(() => Promise.resolve(memories())),
+      update: vi.fn((id: string, patch: Record<string, unknown>) =>
+        Promise.resolve({ ...memory(id), ...patch }),
+      ),
+      remove: vi.fn(() => Promise.resolve({ ok: true as const })),
     },
     approvals: {
       list: vi.fn(() => Promise.resolve(d.approvals)),

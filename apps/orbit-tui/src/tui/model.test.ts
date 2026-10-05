@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { approval, bot, data, run } from '../../test/tui-fixtures';
-import { INITIAL_UI, type KeyInfo, type Ui, onKey, reconcile, selectedRun } from './model';
+import { approval, bot, data, memories, run } from '../../test/tui-fixtures';
+import {
+  INITIAL_UI,
+  type KeyInfo,
+  type Ui,
+  onKey,
+  reconcile,
+  selectedRun,
+  treeRows,
+} from './model';
 
 const press = (ui: Ui, input: string, key: KeyInfo = {}, d = data()) => onKey(ui, d, input, key);
 
@@ -197,5 +205,130 @@ describe('TUI key model', () => {
     const settled = reconcile(INITIAL_UI, data());
     expect(reconcile(settled, data())).toBe(settled);
     expect(run('x', 'bot_a', 'queued').status).toBe('queued');
+  });
+});
+
+describe('M6: memory browser, delegation tree, feedback', () => {
+  const withMem = (over = {}) => data({ memories: memories(), ...over });
+  const openMemory = () => press(INITIAL_UI, 'm', {}, withMem());
+
+  it('m opens the selected Bot’s memory and loads it; elsewhere it says where it works', () => {
+    const r = openMemory();
+    expect(r.ui.overlay).toMatchObject({ kind: 'memory', botId: 'bot_a', index: 0, open: false });
+    expect(r.command).toEqual({ kind: 'loadMemory', botId: 'bot_a', query: '' });
+    expect(press({ ...INITIAL_UI, focus: 'approvals' }, 'm').ui.toast?.text).toMatch(/Bots pane/);
+  });
+
+  it('j/k select, Enter opens a memory, Esc goes back then closes', () => {
+    const d = withMem();
+    let ui = openMemory().ui;
+    ui = press(ui, 'j', {}, d).ui;
+    ui = press(ui, 'j', {}, d).ui;
+    ui = press(ui, 'j', {}, d).ui;
+    expect(ui.overlay).toMatchObject({ index: 2 });
+    ui = press(ui, '', { return: true }, d).ui;
+    expect(ui.overlay).toMatchObject({ open: true });
+    ui = press(ui, 'j', {}, d).ui;
+    expect(ui.overlay).toMatchObject({ open: true, scroll: 1, index: 2 });
+    ui = press(ui, '', { escape: true }, d).ui;
+    expect(ui.overlay).toMatchObject({ open: false });
+    expect(press(ui, '', { escape: true }, d).ui.overlay).toBeNull();
+  });
+
+  it('/ searches the full text', () => {
+    const d = withMem();
+    let ui = press(openMemory().ui, '/', {}, d).ui;
+    for (const c of 'launch') ui = press(ui, c, {}, d).ui;
+    expect(ui.overlay).toMatchObject({ search: 'launch' });
+    const r = press(ui, '', { return: true }, d);
+    expect(r.ui.overlay).toMatchObject({ search: null, query: 'launch', index: 0 });
+    expect(r.command).toEqual({ kind: 'loadMemory', botId: 'bot_a', query: 'launch' });
+  });
+
+  it('x deletes after an explicit y and returns to the browser', () => {
+    const d = withMem();
+    const asked = press(openMemory().ui, 'x', {}, d);
+    expect(asked.ui.overlay).toMatchObject({ kind: 'confirm' });
+    const yes = press(asked.ui, 'y', {}, d);
+    expect(yes.command).toEqual({ kind: 'deleteMemory', memoryId: 'mem_1' });
+    expect(yes.ui.overlay).toMatchObject({ kind: 'memory' });
+    const no = press(asked.ui, '', { return: true }, d);
+    expect(no.command).toBeUndefined();
+    expect(no.ui.overlay).toMatchObject({ kind: 'memory' });
+  });
+
+  it('T reviews an untrusted memory (asks); P pins only trusted ones', () => {
+    const d = withMem();
+    const onRumour = press(openMemory().ui, 'j', {}, d).ui;
+    const t = press(onRumour, 'T', {}, d);
+    expect(t.ui.overlay).toMatchObject({
+      kind: 'confirm',
+      command: { kind: 'updateMemory', memoryId: 'mem_2', patch: { trusted: true } },
+    });
+    const pin = press(onRumour, 'P', {}, d);
+    expect(pin.command).toBeUndefined();
+    expect(pin.ui.toast?.text).toMatch(/Only trusted/);
+    expect(press(openMemory().ui, 'P', {}, d).command).toEqual({
+      kind: 'updateMemory',
+      memoryId: 'mem_1',
+      patch: { pinned: true },
+    });
+  });
+
+  it('e edits title and text; Tab switches; Ctrl-S saves; Esc cancels', () => {
+    const d = withMem();
+    let ui = press(openMemory().ui, 'e', {}, d).ui;
+    expect(ui.overlay).toMatchObject({ kind: 'memoryEdit', field: 'title', title: 'Launch owner' });
+    ui = press(ui, '', { backspace: true }, d).ui;
+    ui = press(ui, 'R', {}, d).ui;
+    ui = press(ui, '', { tab: true }, d).ui;
+    ui = press(ui, '', { return: true }, d).ui;
+    ui = press(ui, 'x', {}, d).ui;
+    expect(ui.overlay).toMatchObject({ field: 'body', title: 'Launch owneR' });
+    const saved = press(ui, 's', { ctrl: true }, d);
+    expect(saved.command).toEqual({
+      kind: 'updateMemory',
+      memoryId: 'mem_1',
+      patch: { title: 'Launch owneR', body: 'Ada owns the launch.\nIt opens Tuesday.\nx' },
+    });
+    expect(saved.ui.overlay).toMatchObject({ kind: 'memory' });
+    expect(press(ui, '', { escape: true }, d).command).toBeUndefined();
+  });
+
+  it('t shows the delegation tree of the selected Run and stops following it on close', () => {
+    const ui = { ...INITIAL_UI, focus: 'timeline' as const };
+    const r = press(ui, 't');
+    expect(r.ui.overlay).toMatchObject({ kind: 'tree', runId: 'run_a2' });
+    expect(r.command).toEqual({ kind: 'loadTree', runId: 'run_a2' });
+    expect(press(r.ui, '', { escape: true }).command).toEqual({ kind: 'loadTree', runId: null });
+  });
+
+  it('+ and - rate a finished Run; a running one is refused', () => {
+    const ui = { ...INITIAL_UI, focus: 'timeline' as const, botIndex: 1, botId: 'bot_b' };
+    expect(press(ui, '+').command).toEqual({ kind: 'feedback', runId: 'run_b1', rating: 'up' });
+    expect(press(ui, '-').command).toEqual({ kind: 'feedback', runId: 'run_b1', rating: 'down' });
+    const parked = press({ ...ui, botIndex: 0, botId: 'bot_a' }, '+');
+    expect(parked.command).toBeUndefined();
+    expect(parked.ui.toast?.text).toMatch(/once it has ended/);
+  });
+
+  it('treeRows draws the tree with statuses in words and marks this Run', () => {
+    const parent = {
+      ...run('run_a1', 'bot_a', 'completed'),
+      children: [
+        { runId: 'run_b1', botId: 'bot_b', botName: 'Notes', status: 'completed' as const },
+      ],
+    };
+    const child = run('run_b1', 'bot_b', 'running');
+    const rows = treeRows(
+      { root: 'run_a1', runs: [parent, child] },
+      (id) => (id === 'bot_a' ? 'Mailer' : 'Notes'),
+      'run_b1',
+    );
+    expect(rows.map((r) => r.text)).toEqual([
+      '✔ done  Mailer  run_a1',
+      '└─ ● running  Notes  run_b1  ← this run',
+    ]);
+    expect(rows[1]?.current).toBe(true);
   });
 });

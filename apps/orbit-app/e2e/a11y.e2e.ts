@@ -10,6 +10,8 @@ const SCREENS = [
   '/settings?tab=engine',
   '/settings?tab=policies',
   '/settings?tab=audit',
+  '/settings?tab=budgets',
+  '/memory',
   '/welcome',
 ];
 
@@ -24,6 +26,7 @@ test.describe('accessibility (axe, WCAG 2.1 AA, both themes)', () => {
         ...SCREENS,
         `/bots/${bot.id}`,
         `/bots/${bot.id}?tab=config`,
+        `/bots/${bot.id}?tab=memory`,
         `/runs/${run.runId}`,
       ];
       for (const path of pages) {
@@ -63,6 +66,7 @@ test.describe('accessibility (axe, WCAG 2.1 AA, both themes)', () => {
       ...SCREENS,
       `/bots/${bot.id}`,
       `/bots/${bot.id}?tab=config`,
+      `/bots/${bot.id}?tab=memory`,
       `/runs/${run.runId}`,
     ];
     for (const width of [768, 1024]) {

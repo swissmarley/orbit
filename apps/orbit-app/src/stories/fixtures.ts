@@ -133,3 +133,57 @@ export const runEvents: RunEvent[] = [
   }),
   ev('run.parked', { approvalIds: ['apr_demo'], sessionId: null }),
 ];
+
+/** A Run that delegated to a peer Bot and saved memory (M6). */
+export const teamEvents: RunEvent[] = [
+  ev('run.queued', {
+    prompt: 'Find out who owns the launch and note it',
+    trigger: { kind: 'manual', source: null },
+    priority: 10,
+    fixture: null,
+  }),
+  ev('memory.recalled', { memoryIds: ['mem_a', 'mem_b'], via: 'context', tainted: false }),
+  ev('message.assistant', {
+    messageId: null,
+    text: "I'll ask the Researcher Bot to look through the shared notes.",
+    parentToolUseId: null,
+  }),
+  ev('delegation.started', {
+    childRunId: 'run_child0000001',
+    childBotId: 'bot_research',
+    childBotName: 'Researcher',
+    task: 'Find who owns the launch in the shared notes.',
+  }),
+  ev('run.parked', { approvalIds: [], sessionId: null, delegations: ['run_child0000001'] }),
+  ev('delegation.finished', {
+    childRunId: 'run_child0000001',
+    childBotId: 'bot_research',
+    status: 'completed',
+    result: 'Ada owns the launch; the window opens Tuesday at 09:00 UTC.',
+    totals: { tokens: 1200, costUsd: 0, toolCalls: 2 },
+  }),
+  ev('run.tainted', { source: 'delegate:Researcher', toolUseId: null }),
+  ev('run.resumed', { reason: 'delegation', sessionId: null }),
+  ev('memory.written', {
+    memoryId: 'mem_c',
+    kind: 'note',
+    source: 'bot',
+    title: 'Launch owner',
+    tainted: true,
+  }),
+  ev('run.completed', {
+    result: 'Ada owns the launch.',
+    stopReason: 'end_turn',
+    sessionId: null,
+    permissionDenials: [],
+  }),
+  ev('memory.summarized', {
+    memoryId: 'mem_d',
+    mode: 'triage',
+    model: 'haiku',
+    inputTokens: 1800,
+    outputTokens: 90,
+    costUsd: 0.0021,
+    error: null,
+  }),
+];

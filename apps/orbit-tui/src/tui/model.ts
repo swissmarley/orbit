@@ -1,4 +1,12 @@
-import { type Bot, type RunEvent, type RunState, STATUS_LEGEND } from '@orbit/core';
+import {
+  type Bot,
+  type MemoryHit,
+  RUN_STATUS,
+  type RunEvent,
+  type RunState,
+  STATUS_LEGEND,
+  TERMINAL_RUN_STATUSES,
+} from '@orbit/core';
 import type { Approval, DoctorReport, RouteResponse } from '@orbit/sdk-client';
 
 /**
@@ -21,6 +29,10 @@ export interface Data {
   kill: { engaged: boolean; by: string | null } | null;
   /** Events of the selected Run, in order. */
   events: RunEvent[];
+  /** Memories of the Bot whose memory browser is open (newest first, or best match). */
+  memories: MemoryHit[];
+  /** The delegation tree the tree overlay shows. */
+  tree: RouteResponse<'runTree'> | null;
   connected: boolean;
   /** The first load finished (until then: "connecting…", never empty states). */
   loaded: boolean;
@@ -35,6 +47,8 @@ export const EMPTY_DATA: Data = {
   queue: null,
   kill: null,
   events: [],
+  memories: [],
+  tree: null,
   connected: false,
   loaded: false,
   error: null,
@@ -44,8 +58,33 @@ export type Overlay =
   | { kind: 'help'; scroll: number }
   /** The whole approval card, unclipped: approving always happens from here. */
   | { kind: 'card'; approvalId: string; scroll: number }
-  | { kind: 'confirm'; message: string; command: Command }
-  | { kind: 'deny'; approvalId: string; text: string };
+  /** `back`: the overlay to return to afterwards (e.g. the memory browser). */
+  | { kind: 'confirm'; message: string; command: Command; back?: Overlay }
+  | { kind: 'deny'; approvalId: string; text: string }
+  /**
+   * The memory browser of one Bot: a list, a memory opened in full, and a
+   * search prompt (`search` is non-null while typing).
+   */
+  | {
+      kind: 'memory';
+      botId: string;
+      index: number;
+      open: boolean;
+      scroll: number;
+      search: string | null;
+      query: string;
+    }
+  /** Editing a memory: Tab switches field, Ctrl-S saves, Esc goes back. */
+  | {
+      kind: 'memoryEdit';
+      memoryId: string;
+      field: 'title' | 'body';
+      title: string;
+      body: string;
+      back: Overlay;
+    }
+  /** The delegation tree of the selected Run. */
+  | { kind: 'tree'; runId: string; scroll: number };
 
 export interface Ui {
   focus: PaneId;
@@ -94,7 +133,18 @@ export type Command =
   | { kind: 'resumeRun'; runId: string }
   | { kind: 'approve'; approvalId: string; always: boolean }
   | { kind: 'deny'; approvalId: string; reason: string | null }
-  | { kind: 'kill'; on: boolean };
+  | { kind: 'kill'; on: boolean }
+  /** Load (and keep fresh) the memory browser's list. */
+  | { kind: 'loadMemory'; botId: string; query: string }
+  | {
+      kind: 'updateMemory';
+      memoryId: string;
+      patch: { title?: string; body?: string; pinned?: boolean; trusted?: true };
+    }
+  | { kind: 'deleteMemory'; memoryId: string }
+  /** Load (and keep fresh) the delegation tree of a Run; null stops. */
+  | { kind: 'loadTree'; runId: string | null }
+  | { kind: 'feedback'; runId: string; rating: 'up' | 'down' };
 
 /** The subset of Ink's Key the bindings use. */
 export interface KeyInfo {
@@ -144,6 +194,50 @@ export function alwaysAllowMessage(a: Approval): string {
 
 const clamp = (n: number, max: number) => Math.max(0, Math.min(n, Math.max(0, max)));
 
+/** The memory under the browser's cursor. */
+export function selectedMemory(data: Data, o: { index: number }): MemoryHit | undefined {
+  return data.memories[Math.min(o.index, data.memories.length - 1)];
+}
+
+const MAX_TITLE = 200;
+const MAX_BODY = 8000;
+
+/** The delegation tree as indented lines (parents before children). */
+export function treeRows(
+  tree: RouteResponse<'runTree'>,
+  botName: (id: string) => string,
+  current: string,
+): {
+  text: string;
+  tone: (typeof RUN_STATUS)[keyof typeof RUN_STATUS]['tone'];
+  current: boolean;
+}[] {
+  const byId = new Map(tree.runs.map((r) => [r.runId, r]));
+  const out: {
+    text: string;
+    tone: (typeof RUN_STATUS)[keyof typeof RUN_STATUS]['tone'];
+    current: boolean;
+  }[] = [];
+  const seen = new Set<string>();
+  const walk = (r: RunState, prefix: string, last: boolean, top: boolean) => {
+    if (seen.has(r.runId)) return;
+    seen.add(r.runId);
+    const s = RUN_STATUS[r.status];
+    out.push({
+      text: `${top ? '' : `${prefix}${last ? '└─ ' : '├─ '}`}${s.mark} ${s.label}  ${botName(r.botId)}  ${r.runId}${r.runId === current ? '  ← this run' : ''}`,
+      tone: s.tone,
+      current: r.runId === current,
+    });
+    const kids = r.children.flatMap((c) => byId.get(c.runId) ?? []);
+    kids.forEach((k, i) =>
+      walk(k, top ? '' : `${prefix}${last ? '   ' : '│  '}`, i === kids.length - 1, false),
+    );
+  };
+  const root = byId.get(tree.root);
+  if (root) walk(root, '', true, true);
+  return out;
+}
+
 export interface KeyResult {
   ui: Ui;
   command?: Command;
@@ -169,8 +263,129 @@ export function onKey(ui: Ui, data: Data, input: string, key: KeyInfo): KeyResul
   }
   if (o?.kind === 'confirm') {
     // Only an explicit y confirms; anything else (Enter included) cancels.
-    if (input === 'y') return next({ overlay: null }, o.command);
-    return next({ overlay: null, toast: { text: 'Cancelled', tone: 'info' } });
+    if (input === 'y') return next({ overlay: o.back ?? null }, o.command);
+    return next({ overlay: o.back ?? null, toast: { text: 'Cancelled', tone: 'info' } });
+  }
+  if (o?.kind === 'tree') {
+    if (key.escape || input === 'q' || input === 't')
+      return next({ overlay: null }, { kind: 'loadTree', runId: null });
+    if (input === 'j' || key.downArrow)
+      return { ui: { ...ui, overlay: { ...o, scroll: o.scroll + 1 } } };
+    if (input === 'k' || key.upArrow)
+      return { ui: { ...ui, overlay: { ...o, scroll: Math.max(0, o.scroll - 1) } } };
+    return { ui };
+  }
+  if (o?.kind === 'memoryEdit') {
+    if (key.escape) return next({ overlay: o.back, toast: { text: 'Not saved', tone: 'info' } });
+    if (key.ctrl && input === 's') {
+      const title = o.title.trim();
+      if (!title) return next({ toast: { text: 'A memory needs a title', tone: 'error' } });
+      return next(
+        { overlay: o.back },
+        {
+          kind: 'updateMemory',
+          memoryId: o.memoryId,
+          patch: { title, body: o.body },
+        },
+      );
+    }
+    if (key.tab)
+      return { ui: { ...ui, overlay: { ...o, field: o.field === 'title' ? 'body' : 'title' } } };
+    const value = o.field === 'title' ? o.title : o.body;
+    const set = (v: string): KeyResult => ({
+      ui: { ...ui, overlay: { ...o, ...(o.field === 'title' ? { title: v } : { body: v }) } },
+    });
+    if (key.return)
+      return o.field === 'title'
+        ? { ui: { ...ui, overlay: { ...o, field: 'body' } } }
+        : set(`${value}\n`);
+    if (key.backspace || key.delete) return set(value.slice(0, -1));
+    const max = o.field === 'title' ? MAX_TITLE : MAX_BODY;
+    if (input && !key.ctrl && value.length + input.length <= max) {
+      // Titles are one line.
+      return set(value + (o.field === 'title' ? input.replace(/[\r\n]+/g, ' ') : input));
+    }
+    return { ui };
+  }
+  if (o?.kind === 'memory') {
+    const m = selectedMemory(data, o);
+    if (o.search !== null) {
+      if (key.escape) return { ui: { ...ui, overlay: { ...o, search: null } } };
+      if (key.return) {
+        const query = o.search.trim();
+        return next(
+          { overlay: { ...o, search: null, query, index: 0, open: false, scroll: 0 } },
+          { kind: 'loadMemory', botId: o.botId, query },
+        );
+      }
+      if (key.backspace || key.delete)
+        return { ui: { ...ui, overlay: { ...o, search: o.search.slice(0, -1) } } };
+      if (input && !key.ctrl && o.search.length < 200)
+        return { ui: { ...ui, overlay: { ...o, search: o.search + input } } };
+      return { ui };
+    }
+    if (key.escape || input === 'q') {
+      if (o.open) return next({ overlay: { ...o, open: false, scroll: 0 } });
+      return next({ overlay: null });
+    }
+    if (input === 'j' || key.downArrow) {
+      return o.open
+        ? { ui: { ...ui, overlay: { ...o, scroll: o.scroll + 1 } } }
+        : next({ overlay: { ...o, index: clamp(o.index + 1, data.memories.length - 1) } });
+    }
+    if (input === 'k' || key.upArrow) {
+      return o.open
+        ? { ui: { ...ui, overlay: { ...o, scroll: Math.max(0, o.scroll - 1) } } }
+        : next({ overlay: { ...o, index: clamp(o.index - 1, data.memories.length - 1) } });
+    }
+    if (input === '/') return next({ overlay: { ...o, search: o.query } });
+    if (!m) return { ui };
+    if (key.return) return next({ overlay: { ...o, open: true, scroll: 0 } });
+    if (input === 'e') {
+      return next({
+        overlay: {
+          kind: 'memoryEdit',
+          memoryId: m.id,
+          field: 'title',
+          title: m.title,
+          body: m.body,
+          back: o,
+        },
+      });
+    }
+    if (input === 'x') {
+      return next({
+        overlay: {
+          kind: 'confirm',
+          message: `Delete the memory "${m.title}"? The Bot forgets it; this cannot be undone.`,
+          command: { kind: 'deleteMemory', memoryId: m.id },
+          back: { ...o, open: false, scroll: 0 },
+        },
+      });
+    }
+    if (input === 'T') {
+      if (m.taint.length === 0) return next({ toast: { text: 'Already trusted', tone: 'info' } });
+      return next({
+        overlay: {
+          kind: 'confirm',
+          message: `Mark "${m.title}" as reviewed and trusted? Runs may then see it automatically. (Audited.)`,
+          command: { kind: 'updateMemory', memoryId: m.id, patch: { trusted: true } },
+          back: o,
+        },
+      });
+    }
+    if (input === 'P') {
+      if (m.taint.length > 0) {
+        return next({
+          toast: {
+            text: 'Only trusted memories can be pinned — review it first (T)',
+            tone: 'error',
+          },
+        });
+      }
+      return next({}, { kind: 'updateMemory', memoryId: m.id, patch: { pinned: !m.pinned } });
+    }
+    return { ui };
   }
   if (o?.kind === 'card') {
     const card = data.approvals.find((a) => a.id === o.approvalId);
@@ -282,6 +497,22 @@ export function onKey(ui: Ui, data: Data, input: string, key: KeyInfo): KeyResul
       if (input === 'r') {
         return next({ runIndex: 0, runId: null, scroll: 0 }, { kind: 'runBot', botId: bot.id });
       }
+      if (input === 'm') {
+        return next(
+          {
+            overlay: {
+              kind: 'memory',
+              botId: bot.id,
+              index: 0,
+              open: false,
+              scroll: 0,
+              search: null,
+              query: '',
+            },
+          },
+          { kind: 'loadMemory', botId: bot.id, query: '' },
+        );
+      }
       if (input === 'p') {
         const paused = bot.pausedAt === null;
         return next({
@@ -312,6 +543,21 @@ export function onKey(ui: Ui, data: Data, input: string, key: KeyInfo): KeyResul
         });
       }
       if (input === 'u') return next({}, { kind: 'resumeRun', runId: run.runId });
+      if (input === 't') {
+        return next(
+          { overlay: { kind: 'tree', runId: run.runId, scroll: 0 } },
+          { kind: 'loadTree', runId: run.runId },
+        );
+      }
+      if (input === '+' || input === '-') {
+        if (!TERMINAL_RUN_STATUSES.includes(run.status)) {
+          return next({ toast: { text: 'Rate a Run once it has ended', tone: 'info' } });
+        }
+        return next(
+          {},
+          { kind: 'feedback', runId: run.runId, rating: input === '+' ? 'up' : 'down' },
+        );
+      }
       break;
     }
     case 'approvals': {
@@ -352,6 +598,10 @@ export function onKey(ui: Ui, data: Data, input: string, key: KeyInfo): KeyResul
     u: ['timeline', 'u resumes a Run from the Timeline — press 2'],
     r: ['bots', 'r runs a Bot from the Bots pane — press 1'],
     p: ['bots', 'p pauses a Bot from the Bots pane — press 1'],
+    m: ['bots', "m opens the selected Bot's memory from the Bots pane — press 1"],
+    t: ['timeline', 't shows the delegation tree from the Timeline — press 2'],
+    '+': ['timeline', '+ / - rate a finished Run from the Timeline — press 2'],
+    '-': ['timeline', '+ / - rate a finished Run from the Timeline — press 2'],
   };
   const hint = where[input];
   if (hint && hint[0] !== ui.focus) return next({ toast: { text: hint[1], tone: 'info' } });
@@ -422,6 +672,11 @@ export const HELP: readonly { keys: string; does: string }[] = [
   { keys: 'p', does: 'pause / resume the selected Bot' },
   { keys: 's', does: 'stop the selected Run (Timeline)' },
   { keys: 'u', does: 'resume a parked or rate-limited Run (Timeline)' },
+  { keys: 't', does: 'delegation tree of the selected Run (Timeline)' },
+  { keys: '+ / -', does: 'rate a finished Run good / not good (Timeline)' },
+  { keys: 'm', does: "the selected Bot's memory (Bots): Enter view, / search, e edit, x delete" },
+  { keys: 'T / P (memory)', does: 'mark an untrusted memory reviewed / pin a trusted one' },
+  { keys: 'Ctrl-S (editing)', does: 'save the memory (Tab switches title / text, Esc cancels)' },
   { keys: 'g G', does: 'Timeline top / follow live' },
   { keys: 'Enter / a', does: 'open the whole card; a there approves' },
   { keys: 'A (in the card)', does: 'approve and always allow this tool for the Bot (7 days)' },

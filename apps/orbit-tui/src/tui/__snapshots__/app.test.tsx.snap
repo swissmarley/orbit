@@ -1,5 +1,30 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`M6: memory browser and delegation tree > m opens the memory browser with trust in words; Enter shows provenance; x deletes after y 1`] = `
+"orbit │ ● live │ 0/2 running │ mock · Demo mode                                                                   ? help
+╔══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗
+║ Memory · Mailer · 3 shown                                                                                            ║
+║                                                                                                                      ║
+║ › ✓ trusted   note     Bot      Launch owner                                                                         ║
+║   ⚠ untrusted note     Bot      Rumour from a web page                                                               ║
+║   ✓ trusted   feedback feedback Owner disliked a result                                                              ║
+║                                                                                                                      ║
+║                                                                                                                      ║
+║                                                                                                                      ║
+║                                                                                                                      ║
+║                                                                                                                      ║
+║                                                                                                                      ║
+║                                                                                                                      ║
+║                                                                                                                      ║
+║                                                                                                                      ║
+║                                                                                                                      ║
+║                                                                                                                      ║
+║                                                                                                                      ║
+║ j/k select · Enter open · / search · e edit · x delete · T trust · P pin · Esc close                                 ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝
+"
+`;
+
 exports[`TUI actions > a approves the selected card through orbitd and reports it 1`] = `
 "orbit │ ● live │ 0/2 running │ mock · Demo mode                                                                   ? help
 ╔══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗
@@ -22,7 +47,7 @@ exports[`TUI actions > a approves the selected card through orbitd and reports i
 ║                                                                                                                      ║
 ║ a approve · A always allow… · d deny · j/k scroll · Esc back                                                         ║
 ╚══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝
-j/k select · Enter/a open card to approve · d deny · Tab panes · ? help · q quit"
+"
 `;
 
 exports[`TUI actions > d asks for a reason, then denies with it 1`] = `
@@ -61,18 +86,18 @@ exports[`TUI rendering > help overlay lists every binding 1`] = `
 ║  p                            pause / resume the selected Bot                          ║
 ║  s                            stop the selected Run (Timeline)                         ║
 ║  u                            resume a parked or rate-limited Run (Timeline)           ║
+║  t                            delegation tree of the selected Run (Timeline)           ║
+║  + / -                        rate a finished Run good / not good (Timeline)           ║
+║  m                            the selected Bot's memory (Bots): Enter view, / search…  ║
+║  T / P (memory)               mark an untrusted memory reviewed / pin a trusted one    ║
+║  Ctrl-S (editing)             save the memory (Tab switches title / text, Esc cancel…  ║
 ║  g G                          Timeline top / follow live                               ║
 ║  Enter / a                    open the whole card; a there approves                    ║
 ║  A (in the card)              approve and always allow this tool for the Bot (7 days)  ║
 ║  d                            deny, with a reason the Bot will see                     ║
 ║  K                            global kill switch (asks first; only y confirms)         ║
-║  R                            refresh                                                  ║
-║  Enter                        Bots: open the Timeline · Approvals: open the card       ║
-║  Esc                          close a card, prompt or this help                        ║
-║  y                            confirm a question (any other key cancels)               ║
-║  ?                            this help (j/k scroll)                                   ║
 ╚════════════════════════════════════════════════════════════════════════════════════════╝
-j/k select · r run · p pause · [ ] runs · Enter timeline · Tab panes · ? help · q quit"
+"
 `;
 
 exports[`TUI rendering > narrow: one pane at a time with a tab bar 1`] = `
@@ -118,5 +143,5 @@ exports[`TUI rendering > wide: three panes, status bar, the parked Run and its a
 ┃                             ┃│                                               ││                                      │
 ┃                             ┃│                                               ││                                      │
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛╰───────────────────────────────────────────────╯╰──────────────────────────────────────╯
-j/k select · r run · p pause · [ ] runs · Enter timeline · Tab panes · ? help · q quit"
+j/k select · r run · p pause · m memory · [ ] runs · Enter timeline · Tab panes · ? help · q quit"
 `;

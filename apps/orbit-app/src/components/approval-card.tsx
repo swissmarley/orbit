@@ -128,6 +128,17 @@ export function ApprovalCard({
         </div>
       ) : null}
 
+      {c.delegatedBy ? (
+        <div
+          role="note"
+          className="rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-fg"
+        >
+          <span aria-hidden>⇢</span> Delegated by another Bot:{' '}
+          <span className="font-medium">{scrubControls(c.delegatedBy)}</span>. Its task text was
+          written by a Bot, not by you.
+        </div>
+      ) : null}
+
       {financial ? (
         <div
           role="note"

@@ -10,6 +10,7 @@ import { AppShell } from './components/shell';
 import { BotDetailScreen } from './screens/bot-detail';
 import { BotsScreen } from './screens/bots';
 import { InboxScreen } from './screens/inbox';
+import { MemoryScreen } from './screens/memory';
 import { NewBotScreen } from './screens/new-bot';
 import { RunScreen } from './screens/run';
 import { RunsScreen } from './screens/runs';
@@ -92,6 +93,17 @@ export function buildRouter(context: RouterContext) {
         }),
       }),
       createRoute({ getParentRoute: () => shellRoute, path: '/runs/$runId', component: RunScreen }),
+      createRoute({
+        getParentRoute: () => shellRoute,
+        path: '/memory',
+        component: MemoryScreen,
+        validateSearch: (s: Record<string, unknown>) => ({
+          bot: str(s.bot),
+          q: str(s.q),
+          kind: str(s.kind),
+          memory: str(s.memory),
+        }),
+      }),
       createRoute({
         getParentRoute: () => shellRoute,
         path: '/settings',

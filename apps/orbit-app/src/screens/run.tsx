@@ -1,5 +1,6 @@
 /** @jsxRuntime automatic @jsxImportSource react */
 import {
+  RUN_STATUS,
   TERMINAL_RUN_STATUSES,
   type RunEvent,
   type RunState,
@@ -16,6 +17,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Pause,
+  ThumbsDown,
+  ThumbsUp,
   Play,
   Radio,
   RotateCcw,
@@ -33,9 +36,22 @@ import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Kbd } from '../components/ui/misc';
+import { cn } from '../lib/cn';
+import { TONE_TEXT } from '../lib/tone';
 import { useActions } from '../lib/actions';
-import { useBot, usePendingApprovals, useRun, useRunEvents } from '../lib/queries';
+import { Textarea } from '../components/ui/input';
+import { type DelegationNode, delegationTree, treeSize } from '../lib/delegation';
+import {
+  useBot,
+  useBots,
+  usePendingApprovals,
+  useRun,
+  useRunEvents,
+  useRunMemory,
+  useRunTree,
+} from '../lib/queries';
 import { type SubagentNode, buildTimeline, subagentTree } from '../lib/timeline';
+import { TrustBadge } from './memory';
 
 function Controls({ run }: { run: RunState }) {
   const actions = useActions();
@@ -126,15 +142,19 @@ function Meters({ run, held }: { run: RunState; held: number }) {
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <Meter
-          label="Tokens"
-          value={tokens}
+          label={run.delegated.tokens > 0 ? 'Tokens (incl. delegated)' : 'Tokens'}
+          value={tokens + run.delegated.tokens}
           max={b?.maxTokensPerRun ?? null}
           format={formatTokens}
         />
         <Meter
-          label="Tool calls"
-          value={run.counts.toolCalls}
-          max={b?.maxToolCallsPerRun ?? null}
+          label={run.delegated.toolCalls > 0 ? 'Tool calls (incl. delegated)' : 'Tool calls'}
+          value={run.counts.toolCalls + run.delegated.toolCalls}
+          max={
+            run.budgetCap
+              ? Math.min(run.budgetCap.toolCalls, b?.maxToolCallsPerRun ?? Infinity)
+              : (b?.maxToolCallsPerRun ?? null)
+          }
         />
         <Meter
           label="Cost (engine estimate)"
@@ -183,6 +203,168 @@ function Tree({ nodes }: { nodes: SubagentNode[] }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+function DelegationList({ node }: { node: DelegationNode }) {
+  const w = RUN_STATUS[node.run.status];
+  return (
+    <li>
+      <span className="flex flex-wrap items-center gap-1.5">
+        <span className={cn('text-xs', TONE_TEXT[w.tone])} title={w.meaning}>
+          <span aria-hidden>{w.mark}</span> {w.label}
+        </span>
+        {node.current ? (
+          <span aria-current="page" className="font-medium text-fg">
+            {scrubControls(node.botName)} <span className="text-xs text-fg-muted">(this run)</span>
+          </span>
+        ) : (
+          <Link
+            to="/runs/$runId"
+            params={{ runId: node.run.runId }}
+            className="text-accent hover:underline"
+          >
+            {scrubControls(node.botName)}
+          </Link>
+        )}
+      </span>
+      {node.children.length > 0 ? (
+        <ul className="mt-1 flex flex-col gap-1 border-l border-border pl-3">
+          {node.children.map((c) => (
+            <DelegationList key={c.run.runId} node={c} />
+          ))}
+        </ul>
+      ) : null}
+    </li>
+  );
+}
+
+/** Bots handing work to Bots: the whole tree this Run belongs to, live. */
+function Delegation({ run }: { run: RunState }) {
+  const tree = useRunTree(run.runId);
+  const bots = useBots();
+  const name = (id: string) => bots.data?.find((b) => b.id === id)?.spec.name ?? id;
+  const root = tree.data ? delegationTree(tree.data.runs, tree.data.root, name, run.runId) : null;
+  if (!root || treeSize(root) < 2) return null;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Delegation</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2 text-sm">
+        <ul aria-label="Delegation tree">
+          <DelegationList node={root} />
+        </ul>
+        <p className="text-xs text-fg-muted">
+          Each delegated Run has its own approvals and inherits what its parent had left of its
+          budget and its untrusted inputs. Stopping a Run stops the Runs it delegated.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Thumbs up or down on a finished Run: feedback the Bot sees in future Runs. */
+function Feedback({ run }: { run: RunState }) {
+  const actions = useActions();
+  const [rating, setRating] = useState<'up' | 'down' | null>(null);
+  const [comment, setComment] = useState('');
+  const [busy, setBusy] = useState(false);
+  if (!TERMINAL_RUN_STATUSES.includes(run.status)) return null;
+  const choose = rating ?? run.rating;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Your feedback</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        <div className="flex gap-2" role="group" aria-label="Rate this run">
+          <Button
+            size="sm"
+            aria-pressed={choose === 'up'}
+            variant={choose === 'up' ? 'primary' : 'secondary'}
+            onClick={() => setRating('up')}
+          >
+            <ThumbsUp aria-hidden /> Good
+          </Button>
+          <Button
+            size="sm"
+            aria-pressed={choose === 'down'}
+            variant={choose === 'down' ? 'primary' : 'secondary'}
+            onClick={() => setRating('down')}
+          >
+            <ThumbsDown aria-hidden /> Not good
+          </Button>
+        </div>
+        {rating ? (
+          <form
+            className="flex flex-col gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setBusy(true);
+              void actions
+                .feedback(run.runId, rating, comment)
+                .then(() => {
+                  setRating(null);
+                  setComment('');
+                })
+                .catch(() => undefined)
+                .finally(() => setBusy(false));
+            }}
+          >
+            <Textarea
+              aria-label="What was good or bad (optional)"
+              placeholder="What was good or bad? (optional)"
+              value={comment}
+              maxLength={2000}
+              rows={3}
+              onChange={(e) => setComment(e.target.value)}
+            />
+            <Button type="submit" size="sm" variant="primary" disabled={busy}>
+              Save feedback
+            </Button>
+          </form>
+        ) : (
+          <p className="text-xs text-fg-muted">
+            {run.rating
+              ? `You rated it ${run.rating === 'up' ? 'good' : 'not good'}. Rate again to add more.`
+              : 'The Bot sees your rating and comment as context in future Runs.'}
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Memories this Run wrote: notes, its summary, your feedback. */
+function RunMemory({ run }: { run: RunState }) {
+  const memory = useRunMemory(run.runId);
+  if (!memory.data || memory.data.length === 0) return null;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Remembered</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <ul className="flex flex-col gap-2 text-sm">
+          {memory.data.map((m) => (
+            <li key={m.id} className="flex flex-col gap-0.5">
+              <span className="flex items-center gap-2">
+                <TrustBadge memory={m} />
+                <span className="text-xs text-fg-muted">{m.kind}</span>
+              </span>
+              <Link
+                to="/memory"
+                search={{ bot: run.botId, memory: m.id }}
+                className="line-clamp-2 text-accent hover:underline"
+              >
+                {scrubControls(m.title)}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -336,7 +518,20 @@ export function RunScreen() {
             >
               {bot.data ? scrubControls(bot.data.spec.name) : r.botId}
             </Link>
-            <span>trigger: {r.trigger?.kind ?? 'manual'}</span>
+            {r.parentRunId ? (
+              <span>
+                delegated by{' '}
+                <Link
+                  to="/runs/$runId"
+                  params={{ runId: r.parentRunId }}
+                  className="text-accent hover:underline"
+                >
+                  run …{r.parentRunId.slice(-8)}
+                </Link>
+              </span>
+            ) : (
+              <span>trigger: {r.trigger?.kind ?? 'manual'}</span>
+            )}
             <span>
               queued <Time iso={r.createdAt} />
             </span>
@@ -426,6 +621,8 @@ export function RunScreen() {
           )}
         </div>
         <aside className="flex flex-col gap-4" aria-label="Run details">
+          <Feedback run={r} />
+          <Delegation run={r} />
           <Meters run={r} held={held} />
           {tree.length > 0 ? (
             <Card>
@@ -437,6 +634,7 @@ export function RunScreen() {
               </CardContent>
             </Card>
           ) : null}
+          <RunMemory run={r} />
           <Link to="/runs" className="flex items-center gap-1 text-xs text-fg-muted hover:text-fg">
             <ChevronLeft className="size-3" aria-hidden /> All runs
           </Link>

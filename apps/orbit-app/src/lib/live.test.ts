@@ -33,3 +33,16 @@ describe('sign-in ticket', () => {
     expect(takeTicketFromLocation(location, history)).toBeNull();
   });
 });
+
+describe('M6 invalidation', () => {
+  it('memory and delegation events refresh memory, triage and run lists', () => {
+    const e = (type: string, data: Record<string, unknown> = {}) =>
+      ({ id: 1, runId: 'r', botId: 'b', seq: 1, ts: '', type, data }) as RunEvent;
+    expect(staleKeysFor(e('memory.written'))).toEqual(
+      expect.arrayContaining([keys.memory, keys.triage]),
+    );
+    expect(staleKeysFor(e('feedback.recorded'))).toContainEqual(keys.memory);
+    expect(staleKeysFor(e('delegation.finished'))).toContainEqual(keys.runs);
+    expect(staleKeysFor(e('run.tainted'))).toContainEqual(keys.memory);
+  });
+});

@@ -1,11 +1,13 @@
 /** @jsxRuntime automatic @jsxImportSource react */
 import {
+  MEMORY_SOURCE_WORD,
   RUN_STATUS,
   type RunEvent,
   type RunState,
   type Tone,
   formatClock,
   formatLocalTime,
+  memoryTrust,
 } from '@orbit/core';
 import { Box, Text } from 'ink';
 import type { painter } from '../io';
@@ -21,6 +23,8 @@ import {
   runsOf,
   selectedApproval,
   selectedBot,
+  selectedMemory,
+  treeRows,
 } from './model';
 
 export type Paint = ReturnType<typeof painter>;
@@ -490,5 +494,210 @@ export function TabBar({ focus, pending }: { focus: PaneId; pending: number }) {
         </Text>
       ))}
     </Text>
+  );
+}
+
+/** The memory browser of one Bot: list with trust in words, a memory in full, search. */
+export function MemoryOverlay(props: {
+  data: Data;
+  overlay: Extract<NonNullable<Ui['overlay']>, { kind: 'memory' }>;
+  botName: string;
+  width: number;
+  height: number;
+}) {
+  const { data, overlay: o } = props;
+  const m = selectedMemory(data, o);
+  const inner = Math.max(10, props.width - 4);
+  const room = Math.max(1, props.height - 5);
+  const header = (
+    <Text bold wrap="truncate">
+      Memory · {short(props.botName, 40)}
+      {o.query ? <Text color="gray"> · matching “{short(o.query, 30)}”</Text> : null}
+      <Text color="gray"> · {data.memories.length} shown</Text>
+    </Text>
+  );
+  const footer = (
+    <Text color="gray" wrap="truncate">
+      {o.search !== null
+        ? 'type to search · Enter search · Esc cancel'
+        : o.open
+          ? 'j/k scroll · e edit · x delete · T trust · P pin · Esc back'
+          : 'j/k select · Enter open · / search · e edit · x delete · T trust · P pin · Esc close'}
+    </Text>
+  );
+  let body: React.ReactNode[];
+  if (o.open && m) {
+    const trust = memoryTrust(m);
+    const lines: React.ReactNode[] = [
+      <Text key="title" bold wrap="wrap">
+        {clean(m.title)}
+      </Text>,
+      <Text key="meta" color="gray" wrap="wrap">
+        {m.id} · {m.kind} · by {MEMORY_SOURCE_WORD[m.source]} · {formatClock(m.createdAt)}
+        {m.runId ? ` · run ${m.runId}` : ''}
+        {m.editedAt ? ' · edited by you' : ''}
+        {m.pinned ? ' · pinned' : ''}
+      </Text>,
+      <Text key="trust" color={TONE_COLOR[trust.tone]} wrap="wrap">
+        {trust.mark} {trust.label}
+        {m.taint.length
+          ? ` — from ${clean(m.taint.join(', '))}; never offered to Runs automatically`
+          : ''}
+      </Text>,
+      <Text key="gap"> </Text>,
+      ...clean(m.body)
+        .split('\n')
+        .map((l, i) => (
+          <Text key={`l${i}`} wrap="wrap">
+            {l || ' '}
+          </Text>
+        )),
+    ];
+    const scroll = Math.min(o.scroll, Math.max(0, lines.length - room));
+    body = lines.slice(scroll, scroll + room);
+  } else if (data.memories.length === 0) {
+    body = [
+      <Text key="empty" color="gray" wrap="wrap">
+        {o.query
+          ? 'No memories match.'
+          : 'No memories yet. Bots remember the result of each finished Run, notes they save, and your feedback (+/- on a Run, edits, denials).'}
+      </Text>,
+    ];
+  } else {
+    const top = Math.max(0, Math.min(o.index - Math.floor(room / 2), data.memories.length - room));
+    body = data.memories.slice(top, top + room).map((x, i) => {
+      const at = top + i === o.index;
+      const trust = memoryTrust(x);
+      const label = `${trust.mark} ${trust.label}`.padEnd(11);
+      const meta = `${x.kind.padEnd(8)} ${MEMORY_SOURCE_WORD[x.source].padEnd(8)} `;
+      return (
+        <Text key={x.id} wrap="truncate" {...(at ? { inverse: true } : {})}>
+          {at ? '› ' : '  '}
+          <Text color={TONE_COLOR[trust.tone]}>{label}</Text> {meta}
+          {x.pinned ? '📌 ' : ''}
+          {short(x.title, Math.max(10, inner - 36))}
+        </Text>
+      );
+    });
+  }
+  return (
+    <Box
+      flexDirection="column"
+      borderStyle="double"
+      borderColor="cyan"
+      paddingX={1}
+      width={props.width}
+      height={props.height}
+      overflow="hidden"
+    >
+      {header}
+      {o.search !== null ? (
+        <Text wrap="truncate">
+          / {o.search}
+          <Text inverse> </Text>
+        </Text>
+      ) : (
+        <Text> </Text>
+      )}
+      {body}
+      <Box flexGrow={1} />
+      {footer}
+    </Box>
+  );
+}
+
+/** Editing a memory: title and text, saved with Ctrl-S. */
+export function MemoryEditOverlay(props: {
+  overlay: Extract<NonNullable<Ui['overlay']>, { kind: 'memoryEdit' }>;
+  width: number;
+  height: number;
+}) {
+  const o = props.overlay;
+  const room = Math.max(1, props.height - 7);
+  const bodyLines = o.body.split('\n');
+  const shown = bodyLines.slice(Math.max(0, bodyLines.length - room));
+  return (
+    <Box
+      flexDirection="column"
+      borderStyle="double"
+      borderColor="yellow"
+      paddingX={1}
+      width={props.width}
+      height={props.height}
+      overflow="hidden"
+    >
+      <Text bold wrap="truncate">
+        Edit memory {o.memoryId}
+      </Text>
+      <Text wrap="truncate">
+        <Text bold {...(o.field === 'title' ? { color: 'cyan' } : {})}>
+          {o.field === 'title' ? '▶ Title ' : '  Title '}
+        </Text>
+        {scrubControls(o.title)}
+        {o.field === 'title' ? <Text inverse> </Text> : null}
+      </Text>
+      <Text bold {...(o.field === 'body' ? { color: 'cyan' } : {})}>
+        {o.field === 'body' ? '▶ Text' : '  Text'}
+      </Text>
+      {shown.map((l, i) => (
+        <Text key={i} wrap="wrap">
+          {scrubControls(l) || ' '}
+          {o.field === 'body' && i === shown.length - 1 ? <Text inverse> </Text> : null}
+        </Text>
+      ))}
+      <Box flexGrow={1} />
+      <Text color="gray" wrap="truncate">
+        Tab title/text · Enter new line · Ctrl-S save · Esc cancel · editing keeps an untrusted
+        memory untrusted
+      </Text>
+    </Box>
+  );
+}
+
+/** The delegation tree of a Run: Bots handing work to Bots, live. */
+export function TreeOverlay(props: {
+  data: Data;
+  overlay: Extract<NonNullable<Ui['overlay']>, { kind: 'tree' }>;
+  width: number;
+  height: number;
+}) {
+  const { data, overlay: o } = props;
+  const name = (id: string) => data.bots.find((b) => b.id === id)?.spec.name ?? id;
+  const rows = data.tree ? treeRows(data.tree, name, o.runId) : [];
+  const room = Math.max(1, props.height - 5);
+  const scroll = Math.min(o.scroll, Math.max(0, rows.length - room));
+  return (
+    <Box
+      flexDirection="column"
+      borderStyle="double"
+      borderColor="cyan"
+      paddingX={1}
+      width={props.width}
+      height={props.height}
+      overflow="hidden"
+    >
+      <Text bold wrap="truncate">
+        Delegation tree
+      </Text>
+      {!data.tree ? (
+        <Text color="gray">loading…</Text>
+      ) : rows.length <= 1 ? (
+        <Text color="gray" wrap="wrap">
+          This Run did not delegate and was not delegated. Bots with delegation.allowedBots hand
+          tasks to peers with delegate_to_bot; each becomes a child Run.
+        </Text>
+      ) : (
+        rows.slice(scroll, scroll + room).map((r, i) => (
+          <Text key={i} wrap="truncate" color={TONE_COLOR[r.tone]} bold={r.current}>
+            {r.text}
+          </Text>
+        ))
+      )}
+      <Box flexGrow={1} />
+      <Text color="gray" wrap="wrap">
+        Each child Run has its own approvals and inherits what is left of its parent&apos;s budget
+        and its untrusted inputs. j/k scroll · Esc close
+      </Text>
+    </Box>
   );
 }

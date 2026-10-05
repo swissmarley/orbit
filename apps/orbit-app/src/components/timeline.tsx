@@ -165,6 +165,14 @@ function Row({ item }: { item: TimelineItem }) {
               </Link>
             </>
           ) : null}
+          {item.runId ? (
+            <>
+              {' '}
+              <Link to="/runs/$runId" params={{ runId: item.runId }} className="underline">
+                Open run
+              </Link>
+            </>
+          ) : null}
           {item.detail ? (
             <p className="mt-0.5 whitespace-pre-wrap text-fg-muted">{item.detail}</p>
           ) : null}

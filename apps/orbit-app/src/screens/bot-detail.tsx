@@ -15,7 +15,17 @@ import { Label, Select, Textarea } from '../components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { useActions } from '../lib/actions';
 import { prettyJson, specDiff } from '../lib/diff';
-import { useBot, useBotVersions, useRules, useRuns, useSchedules } from '../lib/queries';
+import {
+  useBot,
+  useBotTaint,
+  useBotVersions,
+  useBots,
+  useMemoryList,
+  useRules,
+  useRuns,
+  useSchedules,
+} from '../lib/queries';
+import { confirmAction } from '../components/confirm';
 import { ENGINE_TOOLS } from '../lib/wizard';
 import { BotActions } from './bots';
 
@@ -398,7 +408,184 @@ function Config({ bot }: { bot: Bot }) {
   );
 }
 
-const TABS = ['overview', 'runs', 'permissions', 'config'] as const;
+const SUMMARIZE: Record<Bot['spec']['memory']['summarize'], string> = {
+  off: 'off — nothing is remembered after a Run',
+  result: "the Run's final answer (free, no model call)",
+  triage: 'a summary by the triage model (one metered call per Run, capped per day)',
+};
+
+/** Memory settings, workspace taint, subagents and delegation peers. */
+function MemoryAndTeam({ bot }: { bot: Bot }) {
+  const s = bot.spec;
+  const memory = useMemoryList({ bot: bot.id, limit: 500 });
+  const taint = useBotTaint(bot.id);
+  const bots = useBots();
+  const actions = useActions();
+  const count = memory.data?.length ?? 0;
+  const untrusted = (memory.data ?? []).filter((m) => m.taint.length > 0).length;
+  const subagents = Object.entries(s.subagents);
+  const peer = (ref: string) =>
+    bots.data?.find((b) => b.id === ref || b.spec.name.toLowerCase() === ref.trim().toLowerCase());
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <Card>
+        <CardHeader>
+          <CardTitle>Memory</CardTitle>
+          <Link
+            to="/memory"
+            search={{ bot: bot.id }}
+            className="text-xs text-accent hover:underline"
+          >
+            Browse {count} {count === 1 ? 'memory' : 'memories'}
+          </Link>
+        </CardHeader>
+        <CardContent className="text-sm">
+          <dl className="grid grid-cols-[10rem_1fr] gap-x-3 gap-y-1">
+            <Def term="After each Run">{SUMMARIZE[s.memory.summarize]}</Def>
+            <Def term="Context for new Runs">
+              {s.memory.inject
+                ? `trusted memories and recent feedback, up to ${s.memory.maxContextChars} characters`
+                : 'none'}
+            </Def>
+            <Def term="Memory tools">{s.memory.tools ? 'search, read and write notes' : 'off'}</Def>
+            <Def term="Untrusted">
+              {untrusted === 0
+                ? 'none'
+                : `${untrusted} — never offered automatically; reading one taints the Run`}
+            </Def>
+          </dl>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Workspace files from untrusted Runs</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2 text-sm">
+          {taint.isPending ? (
+            <ListSkeleton rows={1} />
+          ) : !taint.data || taint.data.length === 0 ? (
+            <p className="text-fg-muted">
+              None. Files written while untrusted content was in a Run would be listed here: a later
+              Run that reads one is treated as untrusted too.
+            </p>
+          ) : (
+            <>
+              <ul className="flex flex-col gap-1">
+                {taint.data.map((f) => (
+                  <li key={f.path} className="flex flex-wrap items-center gap-2">
+                    <Badge tone="warning">
+                      <span aria-hidden>⚠</span> untrusted
+                    </Badge>
+                    <span className="font-mono text-xs">
+                      {f.path === '*' ? 'the whole workspace (a shell ran)' : scrubControls(f.path)}
+                    </span>
+                    <span className="text-xs text-fg-muted">
+                      from {scrubControls(f.sources.join(', '))} ·{' '}
+                      <Link
+                        to="/runs/$runId"
+                        params={{ runId: f.runId }}
+                        className="text-accent hover:underline"
+                      >
+                        run …{f.runId.slice(-8)}
+                      </Link>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <div>
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    void (async () => {
+                      const ok = await confirmAction({
+                        title: 'Forget the taint on these files?',
+                        body: 'Only after you checked them: later Runs that read them will no longer be treated as untrusted. The audit log records it.',
+                        confirm: 'Forget taint',
+                      });
+                      if (ok) await actions.clearTaint(bot);
+                    })().catch(() => undefined)
+                  }
+                >
+                  I checked them — forget the taint
+                </Button>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Subagents</CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm">
+          {subagents.length === 0 ? (
+            <p className="text-fg-muted">
+              None. Subagents take routine sub-tasks inside a Run; their tool calls go through the
+              same policy.
+            </p>
+          ) : (
+            <ul className="flex flex-col gap-3">
+              {subagents.map(([name, a]) => (
+                <li key={name}>
+                  <p className="font-medium text-fg">
+                    {name}
+                    {a.model ? (
+                      <span className="ml-2 font-mono text-xs text-fg-muted">{a.model}</span>
+                    ) : null}
+                  </p>
+                  <p className="text-fg-muted">{scrubControls(a.description)}</p>
+                  <p className="text-xs text-fg-subtle">
+                    tools: {a.tools ? a.tools.join(', ') : "the Bot's"}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Delegates to</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2 text-sm">
+          {s.delegation.allowedBots.length === 0 ? (
+            <p className="text-fg-muted">Nobody: this Bot works alone.</p>
+          ) : (
+            <ul className="flex flex-wrap gap-2">
+              {s.delegation.allowedBots.map((ref) => {
+                const p = peer(ref);
+                return (
+                  <li key={ref}>
+                    {p ? (
+                      <Link
+                        to="/bots/$botId"
+                        params={{ botId: p.id }}
+                        className="text-accent hover:underline"
+                      >
+                        {scrubControls(p.spec.name)}
+                      </Link>
+                    ) : (
+                      <span className="text-fg-muted">
+                        {scrubControls(ref)} <span className="text-xs">(no such Bot yet)</span>
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <p className="text-xs text-fg-muted">
+            Up to {s.delegation.maxChildrenPerRun} delegations per Run. Each one is a child Run with
+            its own approvals, what is left of this Run's budget and its untrusted inputs; its
+            answer comes back as untrusted data.
+          </p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+const TABS = ['overview', 'runs', 'memory', 'permissions', 'config'] as const;
 type Tab = (typeof TABS)[number];
 
 export function BotDetailScreen() {
@@ -452,6 +639,7 @@ export function BotDetailScreen() {
         <TabsList aria-label="Bot sections">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="runs">Runs{runs.data ? ` (${runs.data.length})` : ''}</TabsTrigger>
+          <TabsTrigger value="memory">Memory & team</TabsTrigger>
           <TabsTrigger value="permissions">Permissions</TabsTrigger>
           <TabsTrigger value="config">Config & versions</TabsTrigger>
         </TabsList>
@@ -468,6 +656,9 @@ export function BotDetailScreen() {
               Start one with Run, or give the Bot a schedule.
             </EmptyState>
           )}
+        </TabsContent>
+        <TabsContent value="memory">
+          <MemoryAndTeam bot={b} />
         </TabsContent>
         <TabsContent value="permissions">
           <Permissions bot={b} />

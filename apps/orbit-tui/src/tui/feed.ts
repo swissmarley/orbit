@@ -6,8 +6,25 @@ import { type Data, EMPTY_DATA } from './model';
 /** What the TUI needs from orbitd (an OrbitClient, or a fake in tests). */
 export type TuiClient = Pick<
   OrbitClient,
-  'bots' | 'runs' | 'approvals' | 'kill' | 'queue' | 'doctor' | 'events'
+  'bots' | 'runs' | 'approvals' | 'kill' | 'queue' | 'doctor' | 'events' | 'memory'
 >;
+
+/** Events that change a memory browser or a delegation tree. */
+const MEMORY_EVENTS = new Set<RunEvent['type']>([
+  'memory.written',
+  'memory.summarized',
+  'feedback.recorded',
+]);
+const TREE_EVENTS = new Set<RunEvent['type']>([
+  'delegation.started',
+  'delegation.finished',
+  'run.started',
+  'run.parked',
+  'run.resumed',
+  'run.completed',
+  'run.failed',
+  'run.cancelled',
+]);
 
 /** Events that change lists (runs, approvals, queue), not just the timeline. */
 const LIST_EVENTS = new Set<RunEvent['type']>([
@@ -38,6 +55,8 @@ export class Feed {
   private selectedRun: string | null = null;
   private refreshTimer: NodeJS.Timeout | undefined;
   private refreshing: Promise<void> | null = null;
+  private memoryWatch: { botId: string; query: string } | null = null;
+  private treeWatch: string | null = null;
 
   constructor(
     private readonly client: TuiClient,
@@ -100,6 +119,43 @@ export class Feed {
     return this.refreshing;
   }
 
+  /** Load the memory browser's list and keep it fresh; null stops. */
+  async watchMemory(watch: { botId: string; query: string } | null): Promise<void> {
+    this.memoryWatch = watch;
+    if (!watch) {
+      this.set({ memories: [] });
+      return;
+    }
+    try {
+      const memories = await this.client.memory.list({
+        bot: watch.botId,
+        ...(watch.query ? { q: watch.query } : {}),
+        limit: 200,
+      });
+      if (this.memoryWatch !== watch) return;
+      // Memory text is model- or user-written: scrubbed once, here.
+      this.set({ memories: scrubDeep(memories) });
+    } catch (err) {
+      this.set({ error: errorMessage(err) });
+    }
+  }
+
+  /** Load a Run's delegation tree and keep it fresh; null stops. */
+  async watchTree(runId: string | null): Promise<void> {
+    this.treeWatch = runId;
+    if (!runId) {
+      this.set({ tree: null });
+      return;
+    }
+    try {
+      const tree = await this.client.runs.tree(runId);
+      if (this.treeWatch !== runId) return;
+      this.set({ tree: scrubDeep(tree) });
+    } catch (err) {
+      this.set({ error: errorMessage(err) });
+    }
+  }
+
   private scheduleRefresh(): void {
     clearTimeout(this.refreshTimer);
     this.refreshTimer = setTimeout(() => void this.refresh(), this.opts.refreshDelayMs ?? 100);
@@ -134,6 +190,16 @@ export class Feed {
           this.set({ events: [...this.data.events, e] });
         }
         if (LIST_EVENTS.has(e.type)) this.scheduleRefresh();
+        if (this.memoryWatch && MEMORY_EVENTS.has(e.type) && e.botId === this.memoryWatch.botId) {
+          void this.watchMemory(this.memoryWatch);
+        }
+        if (
+          this.treeWatch &&
+          TREE_EVENTS.has(e.type) &&
+          this.data.tree?.runs.some((r) => r.runId === e.runId)
+        ) {
+          void this.watchTree(this.treeWatch);
+        }
       }
     } catch (err) {
       if (!this.abort.signal.aborted) this.set({ error: errorMessage(err) });

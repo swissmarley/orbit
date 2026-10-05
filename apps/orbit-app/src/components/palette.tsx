@@ -4,6 +4,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { Command } from 'cmdk';
 import {
   Bot as BotIcon,
+  Brain,
   Inbox,
   LayoutGrid,
   ListTree,
@@ -24,6 +25,16 @@ import { setTheme } from '../lib/theme';
 import { confirmAction } from './confirm';
 
 export const paletteStore = createStore(false);
+
+/** Every Settings tab, findable from the palette (M5 UI review). */
+export const SETTINGS_ENTRIES: readonly { tab: string; label: string; keywords: string }[] = [
+  { tab: 'general', label: 'General', keywords: 'theme appearance kill switch' },
+  { tab: 'engine', label: 'Auth & engine', keywords: 'doctor driver api key subscription model' },
+  { tab: 'policies', label: 'Policies', keywords: 'rules allow deny tiers' },
+  { tab: 'budgets', label: 'Budgets', keywords: 'limits cost tokens triage usage' },
+  { tab: 'secrets', label: 'Secrets', keywords: 'vault keys tokens' },
+  { tab: 'audit', label: 'Audit log', keywords: 'audit verify export history' },
+];
 
 const item =
   'flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-fg aria-selected:bg-accent-subtle aria-selected:text-fg [&_svg]:size-4 [&_svg]:text-fg-muted';
@@ -87,9 +98,25 @@ export function CommandPalette() {
           <Command.Item className={item} onSelect={run(() => navigate({ to: '/bots/new' }))}>
             <Plus aria-hidden /> New Bot
           </Command.Item>
+          <Command.Item className={item} onSelect={run(() => navigate({ to: '/memory' }))}>
+            <Brain aria-hidden /> Memory — what Bots remember
+          </Command.Item>
           <Command.Item className={item} onSelect={run(() => navigate({ to: '/settings' }))}>
             <Settings aria-hidden /> Settings
           </Command.Item>
+        </Command.Group>
+        <Command.Group heading="Settings" className={group}>
+          {SETTINGS_ENTRIES.map((s) => (
+            <Command.Item
+              key={s.tab}
+              value={`Settings ${s.label} ${s.keywords}`}
+              keywords={['settings', ...s.keywords.split(' ')]}
+              className={item}
+              onSelect={run(() => navigate({ to: '/settings', search: { tab: s.tab } }))}
+            >
+              <Settings aria-hidden /> Settings: {s.label}
+            </Command.Item>
+          ))}
         </Command.Group>
         {approvals.data && approvals.data.length > 0 ? (
           <Command.Group heading="Needs you" className={group}>

@@ -61,6 +61,8 @@ export type TimelineItem =
       text: string;
       detail?: string;
       approvalId?: string;
+      /** A related Run (delegation child) to link to. */
+      runId?: string;
     };
 
 function oneLine(text: string, max = 100): string {
@@ -105,7 +107,7 @@ export function buildTimeline(events: readonly RunEvent[]): TimelineItem[] {
     mark: string,
     tone: Tone,
     text: string,
-    extra: { detail?: string; approvalId?: string } = {},
+    extra: { detail?: string; approvalId?: string; runId?: string } = {},
   ) =>
     items.push({
       kind: 'note',
@@ -117,6 +119,7 @@ export function buildTimeline(events: readonly RunEvent[]): TimelineItem[] {
       text: scrubControls(text),
       ...(extra.detail !== undefined ? { detail: scrubControls(extra.detail) } : {}),
       ...(extra.approvalId ? { approvalId: extra.approvalId } : {}),
+      ...(extra.runId ? { runId: extra.runId } : {}),
     });
 
   for (const e of events) {
@@ -245,9 +248,69 @@ export function buildTimeline(events: readonly RunEvent[]): TimelineItem[] {
         note(e, '■', 'danger', `Stopped by the ${e.data.scope} kill switch (${e.data.by})`);
         break;
       case 'run.parked':
-        note(e, RUN_STATUS.waiting_approval.mark, 'attention', 'Waiting for your approval', {
-          ...(e.data.approvalIds[0] ? { approvalId: e.data.approvalIds[0] } : {}),
+        if (e.data.approvalIds.length > 0 || e.data.delegations.length === 0) {
+          note(e, RUN_STATUS.waiting_approval.mark, 'attention', 'Waiting for your approval', {
+            ...(e.data.approvalIds[0] ? { approvalId: e.data.approvalIds[0] } : {}),
+          });
+        } else {
+          note(
+            e,
+            RUN_STATUS.delegating.mark,
+            'info',
+            `Paused until ${e.data.delegations.length === 1 ? 'the delegated Run answers' : `${e.data.delegations.length} delegated Runs answer`}; it resumes by itself`,
+          );
+        }
+        break;
+      case 'delegation.started':
+        note(e, '⇢', 'info', `Delegated to ${e.data.childBotName}`, {
+          detail: e.data.task,
+          runId: e.data.childRunId,
         });
+        break;
+      case 'delegation.finished':
+        note(
+          e,
+          '⇠',
+          e.data.status === 'completed' ? 'success' : 'warning',
+          `Delegated Run ${e.data.status === 'completed' ? 'answered' : e.data.status} (untrusted data for this Run)`,
+          { detail: e.data.result, runId: e.data.childRunId },
+        );
+        break;
+      case 'memory.written':
+        note(
+          e,
+          '✎',
+          e.data.tainted ? 'warning' : 'neutral',
+          `${e.data.source === 'summarizer' ? 'Summary' : 'Memory note'} saved: ${e.data.title}${e.data.tainted ? ' (untrusted)' : ''}`,
+        );
+        break;
+      case 'memory.recalled':
+        note(
+          e,
+          '⌕',
+          e.data.tainted ? 'warning' : 'neutral',
+          e.data.via === 'context'
+            ? `${e.data.memoryIds.length} ${e.data.memoryIds.length === 1 ? 'memory' : 'memories'} offered as context`
+            : `Memory ${e.data.via}: ${e.data.memoryIds.length} found${e.data.tainted ? ' — untrusted, the run is now tainted' : ''}`,
+        );
+        break;
+      case 'memory.summarized':
+        if (e.data.error) note(e, '✎', 'warning', 'No summary', { detail: e.data.error });
+        else if (e.data.mode === 'triage')
+          note(
+            e,
+            '✎',
+            'neutral',
+            `Summarized by ${e.data.model ?? 'the triage model'} · ${formatTokens(e.data.inputTokens)} in / ${formatTokens(e.data.outputTokens)} out${e.data.costUsd !== null ? ` · ~$${e.data.costUsd.toFixed(4)}` : ''}`,
+          );
+        break;
+      case 'feedback.recorded':
+        note(
+          e,
+          e.data.signal === 'thumbs_up' ? '▲' : e.data.signal === 'thumbs_down' ? '▼' : '✎',
+          'neutral',
+          `Feedback recorded (${e.data.signal.replace('_', ' ')})`,
+        );
         break;
       case 'run.resumed':
         note(e, '▶', 'info', `Resumed after ${e.data.reason.replace('_', ' ')}`);

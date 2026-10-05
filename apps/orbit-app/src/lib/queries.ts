@@ -1,6 +1,6 @@
 import type { RunEvent } from '@orbit/core/browser';
 import type { RouteQuery } from '@orbit/sdk-client/browser';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useClient } from './api';
 
 /** Query keys: one place, so live events can invalidate precisely. */
@@ -23,6 +23,14 @@ export const keys = {
   rules: ['orbit', 'rules'] as const,
   audit: ['orbit', 'audit'] as const,
   secrets: ['orbit', 'secrets'] as const,
+  memory: ['orbit', 'memory'] as const,
+  memoryList: (q: RouteQuery<'listMemory'>) => ['orbit', 'memory', 'list', q] as const,
+  memoryOne: (id: string) => ['orbit', 'memory', 'one', id] as const,
+  runMemory: (id: string) => ['orbit', 'memory', 'run', id] as const,
+  /** Under `runs`, so every run invalidation refreshes delegation trees too. */
+  runTree: (id: string) => ['orbit', 'runs', 'tree', id] as const,
+  botTaint: (id: string) => ['orbit', 'memory', 'taint', id] as const,
+  triage: ['orbit', 'triage'] as const,
 };
 
 export function useSession() {
@@ -124,4 +132,47 @@ export function useAudit(limit = 200) {
 export function useSecrets() {
   const c = useClient();
   return useQuery({ queryKey: keys.secrets, queryFn: () => c.secrets.list() });
+}
+
+export function useMemoryList(q: RouteQuery<'listMemory'>) {
+  const c = useClient();
+  // Keep the list on screen while a new search loads (no skeleton flash per keystroke).
+  return useQuery({
+    queryKey: keys.memoryList(q),
+    queryFn: () => c.memory.list(q),
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useRunMemory(runId: string) {
+  const c = useClient();
+  return useQuery({
+    queryKey: keys.runMemory(runId),
+    queryFn: () => c.runs.memory(runId),
+    enabled: runId !== '',
+  });
+}
+
+/** The delegation tree a Run belongs to (live: run events invalidate `runs`). */
+export function useRunTree(runId: string) {
+  const c = useClient();
+  return useQuery({
+    queryKey: keys.runTree(runId),
+    queryFn: () => c.runs.tree(runId),
+    enabled: runId !== '',
+  });
+}
+
+export function useBotTaint(botId: string) {
+  const c = useClient();
+  return useQuery({
+    queryKey: keys.botTaint(botId),
+    queryFn: () => c.memory.taint(botId),
+    enabled: botId !== '',
+  });
+}
+
+export function useTriage() {
+  const c = useClient();
+  return useQuery({ queryKey: keys.triage, queryFn: () => c.triage.usage() });
 }

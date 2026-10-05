@@ -17,6 +17,9 @@ import {
   ApprovalsPane,
   BotsPane,
   CardOverlay,
+  MemoryEditOverlay,
+  MemoryOverlay,
+  TreeOverlay,
   ConfirmBar,
   DENY_TITLE,
   DenyPrompt,
@@ -74,6 +77,23 @@ export async function perform(
       await client.kill.set(command.on);
       return command.on ? '■ kill switch engaged' : 'kill switch released';
     }
+    case 'updateMemory': {
+      const m = await client.memory.update(command.memoryId, command.patch);
+      return command.patch.trusted
+        ? `✓ marked trusted: ${m.title}`
+        : command.patch.pinned !== undefined && command.patch.title === undefined
+          ? `${m.pinned ? '📌 pinned' : 'unpinned'}: ${m.title}`
+          : `✔ saved: ${m.title}`;
+    }
+    case 'deleteMemory':
+      await client.memory.remove(command.memoryId);
+      return 'memory deleted';
+    case 'feedback':
+      await client.runs.feedback(command.runId, { rating: command.rating });
+      return `${command.rating === 'up' ? '▲' : '▼'} feedback saved — the Bot sees it next time`;
+    // Loaded through the feed (see App).
+    case 'loadMemory':
+    case 'loadTree':
     case 'refresh':
     case 'quit':
       return '';
@@ -139,9 +159,23 @@ export function App({ client, paint, size, refreshDelayMs }: AppProps) {
       void feed.refresh();
       return;
     }
+    if (command.kind === 'loadMemory') {
+      void feed.watchMemory({ botId: command.botId, query: command.query });
+      return;
+    }
+    if (command.kind === 'loadTree') {
+      void feed.watchTree(command.runId);
+      return;
+    }
+    const memoryOverlay = uiRef.current.overlay;
     perform(client, command)
       .then((text) => {
         toast(text);
+        // Memory changes refresh the browser that made them.
+        if (command.kind === 'updateMemory' || command.kind === 'deleteMemory') {
+          const o = result.ui.overlay ?? memoryOverlay;
+          if (o?.kind === 'memory') void feed.watchMemory({ botId: o.botId, query: o.query });
+        }
         return feed.refresh();
       })
       .catch((err: unknown) => toast(errorMessage(err), 'error'));
@@ -173,9 +207,9 @@ export function App({ client, paint, size, refreshDelayMs }: AppProps) {
   }, [ui.scroll, maxScroll]);
 
   const hints: Record<Ui['focus'], string> = {
-    bots: 'j/k select · r run · p pause · [ ] runs · Enter timeline · Tab panes · ? help · q quit',
+    bots: 'j/k select · r run · p pause · m memory · [ ] runs · Enter timeline · Tab panes · ? help · q quit',
     timeline:
-      'j/k scroll · g/G top/live · s stop · u resume · [ ] runs · Tab panes · ? help · q quit',
+      'j/k scroll · g/G top/live · s stop · u resume · t tree · +/- rate · [ ] runs · Tab panes · ? help · q quit',
     approvals: 'j/k select · Enter/a open card to approve · d deny · Tab panes · ? help · q quit',
   };
 
@@ -218,6 +252,18 @@ export function App({ client, paint, size, refreshDelayMs }: AppProps) {
       <StatusBar data={data} width={columns} />
       {overlay?.kind === 'help' ? (
         <HelpOverlay width={Math.min(columns, 90)} height={bodyHeight} scroll={overlay.scroll} />
+      ) : overlay?.kind === 'memory' ? (
+        <MemoryOverlay
+          data={data}
+          overlay={overlay}
+          botName={data.bots.find((b) => b.id === overlay.botId)?.spec.name ?? overlay.botId}
+          width={columns}
+          height={bodyHeight}
+        />
+      ) : overlay?.kind === 'memoryEdit' ? (
+        <MemoryEditOverlay overlay={overlay} width={columns} height={bodyHeight} />
+      ) : overlay?.kind === 'tree' ? (
+        <TreeOverlay data={data} overlay={overlay} width={columns} height={bodyHeight} />
       ) : cardApproval && overlay?.kind === 'card' ? (
         <CardOverlay
           approval={cardApproval}
@@ -247,7 +293,13 @@ export function App({ client, paint, size, refreshDelayMs }: AppProps) {
           wrap="truncate"
           color={ui.toast?.tone === 'error' ? 'red' : data.error ? 'red' : 'gray'}
         >
-          {ui.toast?.text ?? (data.error ? `⚠ ${scrubControls(data.error)}` : hints[ui.focus])}
+          {ui.toast?.text ??
+            (data.error
+              ? `⚠ ${scrubControls(data.error)}`
+              : // Full-screen overlays show their own keys; pane hints would only mislead.
+                overlay && overlay.kind !== 'confirm' && overlay.kind !== 'deny'
+                ? ' '
+                : hints[ui.focus])}
         </Text>
       ) : null}
     </Box>

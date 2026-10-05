@@ -1,5 +1,5 @@
 /** @jsxRuntime automatic @jsxImportSource react */
-import { scrubControls } from '@orbit/core/browser';
+import { formatTokens, scrubControls } from '@orbit/core/browser';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { Download, KeyRound, LogOut, Octagon, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { useId, useState } from 'react';
@@ -15,7 +15,16 @@ import { useActions } from '../lib/actions';
 import { MOD } from '../lib/platform';
 import { errorText, useClient } from '../lib/api';
 import { helpStore } from '../components/keyboard-help';
-import { useAudit, useBots, useDoctor, useKill, useRules, useSecrets } from '../lib/queries';
+import { type AuditRef, auditAction, auditActor, auditRef } from '../lib/audit';
+import {
+  useAudit,
+  useBots,
+  useDoctor,
+  useKill,
+  useRules,
+  useSecrets,
+  useTriage,
+} from '../lib/queries';
 import { useStore } from '../lib/store';
 import { type ThemeChoice, setTheme, themeStore } from '../lib/theme';
 import { Kbd } from '../components/ui/misc';
@@ -384,7 +393,89 @@ function Policies() {
   );
 }
 
+/** The triage path's spend: every summary and proposal call, against the daily cap. */
+export function TriageUsageCard() {
+  const triage = useTriage();
+  const doctor = useDoctor();
+  const subscription = doctor.data?.authMethod === 'subscription';
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Triage model usage</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3 text-sm">
+        <p className="text-fg-muted">
+          Post-run summaries (when a Bot's memory is set to “triage”) and Create Bot proposals call{' '}
+          <span className="font-mono text-xs">
+            {doctor.data?.models.triage ?? 'the triage model'}
+          </span>
+          {subscription
+            ? ' on your Claude subscription — they count toward your usage limits.'
+            : ' with your API credentials.'}{' '}
+          Orbit never makes these calls without counting them here, and stops at the daily limit (
+          <span className="font-mono text-xs">triage.maxCallsPerDay</span>).
+        </p>
+        {triage.isPending ? (
+          <ListSkeleton rows={1} />
+        ) : triage.isError ? (
+          <ErrorState error={triage.error} />
+        ) : (
+          <>
+            <p className="text-fg" role="status">
+              <span className="font-semibold tabular-nums">
+                {triage.data.callsToday} of {triage.data.limit}
+              </span>{' '}
+              calls today · {formatTokens(triage.data.inputTokensToday)} in /{' '}
+              {formatTokens(triage.data.outputTokensToday)} out · ~$
+              {triage.data.costUsdToday.toFixed(4)}
+              {triage.data.limit === 0 ? ' · turned off' : ''}
+            </p>
+            {triage.data.recent.length > 0 ? (
+              <ul className="flex flex-col gap-1 text-xs">
+                {triage.data.recent.slice(0, 8).map((c) => (
+                  <li key={c.id} className="flex flex-wrap gap-x-2 text-fg-muted">
+                    <span className={c.status === 'ok' ? 'text-success' : 'text-danger'}>
+                      <span aria-hidden>{c.status === 'ok' ? '✔' : '✘'}</span>{' '}
+                      {c.status === 'ok' ? 'ok' : 'failed'}
+                    </span>
+                    <Time iso={c.createdAt} />
+                    <span>{c.purpose === 'summary' ? 'summary' : 'Bot proposal'}</span>
+                    <span className="font-mono">{scrubControls(c.model)}</span>
+                    <span>
+                      {formatTokens(c.inputTokens)}/{formatTokens(c.outputTokens)} tokens
+                    </span>
+                    {c.runId ? (
+                      <Link
+                        to="/runs/$runId"
+                        params={{ runId: c.runId }}
+                        className="text-accent hover:underline"
+                      >
+                        run …{c.runId.slice(-8)}
+                      </Link>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-xs text-fg-subtle">No triage calls yet.</p>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function Budgets() {
+  return (
+    <div className="flex flex-col gap-4">
+      <BotBudgets />
+      <TriageUsageCard />
+    </div>
+  );
+}
+
+function BotBudgets() {
   const bots = useBots();
   if (bots.isPending) return <ListSkeleton rows={3} />;
   if (bots.isError) return <ErrorState error={bots.error} />;
@@ -544,8 +635,21 @@ function Secrets() {
   );
 }
 
+/** A name with a link where the App has a page for it; the raw id on hover. */
+function AuditCell({ refOf }: { refOf: AuditRef | null }) {
+  if (!refOf) return null;
+  if (!refOf.link) return <span title={refOf.id}>{refOf.text}</span>;
+  return (
+    <Link {...refOf.link} title={refOf.id} className="text-accent hover:underline">
+      {refOf.text}
+    </Link>
+  );
+}
+
 function Audit() {
   const audit = useAudit();
+  const bots = useBots();
+  const botName = (id: string) => bots.data?.find((b) => b.id === id)?.spec.name;
   const client = useClient();
   const [verify, setVerify] = useState<string | null>(null);
   const check = async () => {
@@ -621,10 +725,14 @@ function Audit() {
                   <td className="px-4 py-1.5 text-xs whitespace-nowrap text-fg-muted">
                     <Time iso={r.ts} />
                   </td>
-                  <td className="px-4 py-1.5 font-mono text-xs">{scrubControls(r.action)}</td>
-                  <td className="px-4 py-1.5 text-xs">{scrubControls(r.actor)}</td>
-                  <td className="px-4 py-1.5 font-mono text-xs text-fg-muted">
-                    {scrubControls(r.subject ?? '')}
+                  <td className="px-4 py-1.5 text-xs" title={scrubControls(r.action)}>
+                    {auditAction(r.action)}
+                  </td>
+                  <td className="px-4 py-1.5 text-xs">
+                    <AuditCell refOf={auditActor(r.actor, botName)} />
+                  </td>
+                  <td className="px-4 py-1.5 text-xs text-fg-muted">
+                    <AuditCell refOf={auditRef(r.subject, botName)} />
                   </td>
                 </tr>
               ))}
