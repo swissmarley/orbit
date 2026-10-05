@@ -646,7 +646,7 @@ export class Orchestrator {
           : s.status === 'completed' || s.status === 'failed' || s.status === 'cancelled'
             ? undefined
             : s.status === 'delegating'
-              ? `It waits for the Bots it delegated to; pause one of their running Runs, or ${stop.toLowerCase()}.`
+              ? `It waits for the Bots it delegated to; pause one of their running Runs, or stop it with \`orbit stop ${runId}\`.`
               : `${stop}, or pause its Bot with \`orbit bot pause\`.`;
       throw new OrbitError(
         'invalid_input',
