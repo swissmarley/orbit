@@ -30,10 +30,20 @@ export const MEMORY_LIMITS = {
   botBodyChars: 4000,
   /** `memory_write` calls per Run. */
   botWritesPerRun: 20,
-  /** Memories kept per Bot (owner + bot + summaries + feedback). */
+  /** Memories kept per Bot (owner + bot + summaries + feedback): the default of `memory.maxPerBot`. */
   perBot: 1000,
+  /** The highest `memory.maxPerBot` the owner can configure. */
+  perBotCeiling: 10_000,
+  /** The longest `memory.retentionDays`. */
+  retentionDaysMax: 3650,
   /** Untrusted sources remembered per memory (and per tainted file). */
   taintSources: 20,
+  /** Characters of one untrusted-source name. */
+  taintSourceChars: 200,
+  /** Characters of one line of a memory export (a body of 8000 characters escaped as JSON fits). */
+  exportLineChars: 64_000,
+  /** Bytes of one import request. */
+  importBytes: 16 * 1024 * 1024,
 } as const;
 
 export const Memory = z.object({
@@ -115,3 +125,89 @@ export const FEEDBACK_SIGNAL_WORD: Readonly<Record<FeedbackSignal, string>> = {
   approved: 'approved',
   denied: 'denied',
 };
+
+// ── export / import (ADR-012, M8) ───────────────────────────────────────────
+
+export const MEMORY_EXPORT_KIND = 'orbit-memory-export';
+export const MEMORY_EXPORT_VERSION = 1;
+
+/** The first line of a memory export (JSON Lines). */
+export const MemoryExportHeader = z.object({
+  kind: z.literal(MEMORY_EXPORT_KIND),
+  v: z.int().min(1),
+  exportedAt: z.string(),
+  bots: z.array(z.object({ id: z.string(), name: z.string() })),
+  count: z.int().min(0),
+});
+export type MemoryExportHeader = z.infer<typeof MemoryExportHeader>;
+
+const exportId = z.string().max(64);
+const isoTime = z.iso.datetime({ offset: true });
+
+/**
+ * One memory in an export: its text and provenance. On import `id` and
+ * `botId` are only references (ids are minted anew, the owner names the
+ * target Bot); everything else is kept, the text redacted and stripped of
+ * control characters like any memory write.
+ */
+export const MemoryExportLine = z.object({
+  id: exportId.optional(),
+  botId: exportId.optional(),
+  kind: MemoryKind,
+  source: MemorySource,
+  title: z.string().max(MEMORY_LIMITS.titleChars),
+  body: z.string().max(MEMORY_LIMITS.bodyChars),
+  taint: z
+    .array(z.string().min(1).max(MEMORY_LIMITS.taintSourceChars))
+    .max(MEMORY_LIMITS.taintSources)
+    .default([]),
+  runId: exportId.nullable().default(null),
+  approvalId: exportId.nullable().default(null),
+  signal: FeedbackSignal.nullable().default(null),
+  pinned: z.boolean().default(false),
+  createdAt: isoTime,
+  updatedAt: isoTime.optional(),
+  editedAt: isoTime.nullable().default(null),
+});
+export type MemoryExportLine = z.infer<typeof MemoryExportLine>;
+
+export const ImportMemoryBody = z.object({
+  /** The export file: a header line, then one memory per line. */
+  jsonl: z.string().min(1),
+  /** Mark every imported memory untrusted (taint `import`), whatever the file says. */
+  untrusted: z.boolean().default(false),
+  /** Validate and count only; nothing is written. */
+  dryRun: z.boolean().default(false),
+});
+
+export const MemoryImportResult = z.object({
+  dryRun: z.boolean(),
+  botId: z.string(),
+  /** Memories in the file (all of them valid, or nothing is imported). */
+  total: z.int(),
+  /** Offered to Runs automatically after import. */
+  trusted: z.int(),
+  untrusted: z.int(),
+  /** Trusted lines that claim to be written by you (`source: owner`): accepted because you import them. */
+  claimsOwner: z.int(),
+  bySource: z.record(MemorySource, z.int()),
+  pinned: z.int(),
+  /** Existing Bot notes and summaries dropped to stay within `memory.maxPerBot`. */
+  evicts: z.int(),
+  /** Ids of the new memories (empty for a dry run). */
+  imported: z.array(z.string()),
+  /** Lines that failed validation (line numbers are 1-based, the header is line 1). */
+  errors: z.array(z.object({ line: z.int(), message: z.string() })),
+});
+export type MemoryImportResult = z.infer<typeof MemoryImportResult>;
+
+export const MemorySweepResult = z.object({
+  /** Unpinned Bot notes and summaries older than the retention period, deleted. */
+  expired: z.int(),
+  /** Memories dropped to stay within `memory.maxPerBot`. */
+  trimmed: z.int(),
+  bots: z.array(z.object({ botId: z.string(), expired: z.int(), trimmed: z.int() })),
+  maxPerBot: z.int(),
+  retentionDays: z.int().nullable(),
+});
+export type MemorySweepResult = z.infer<typeof MemorySweepResult>;

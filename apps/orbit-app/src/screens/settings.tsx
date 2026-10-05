@@ -1,8 +1,18 @@
 /** @jsxRuntime automatic @jsxImportSource react */
 import { formatCost, formatTokens, scrubControls } from '@orbit/core/browser';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
-import { Download, KeyRound, LogOut, Octagon, Plus, ShieldCheck, Trash2 } from 'lucide-react';
-import { useId, useState } from 'react';
+import {
+  Download,
+  FileCheck,
+  KeyRound,
+  LogOut,
+  Octagon,
+  Plus,
+  ShieldCheck,
+  Trash2,
+} from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { useId, useRef, useState } from 'react';
 import { confirmAction } from '../components/confirm';
 import { EmptyState, ErrorState, ListSkeleton, PageHeader } from '../components/states';
 import { Time } from '../components/status';
@@ -17,7 +27,9 @@ import { errorText, useClient } from '../lib/api';
 import { helpStore } from '../components/keyboard-help';
 import { type AuditRef, auditAction, auditActor, auditRef } from '../lib/audit';
 import {
+  keys,
   useAudit,
+  useAuditStatus,
   useBots,
   useDoctor,
   useKill,
@@ -671,18 +683,54 @@ function AuditCell({ refOf }: { refOf: AuditRef | null }) {
   );
 }
 
+/** Save `text` as a file the browser downloads. */
+function saveFile(name: string, type: string, text: string): void {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** "Keyed since …" and the records from before the upgrade (ADR-007, M8). */
+function AuditKeying() {
+  const status = useAuditStatus();
+  if (!status.data) return null;
+  const s = status.data;
+  return (
+    <p className="text-sm text-fg-muted" data-testid="audit-keying">
+      <KeyRound aria-hidden className="mr-1 inline size-4 align-text-bottom" />
+      {s.keyedSince ? (
+        <>
+          Keyed since <Time iso={s.keyedSince.ts} /> (record #{s.keyedSince.seq})
+        </>
+      ) : s.keyed ? (
+        'Keyed: the next record will carry a MAC'
+      ) : (
+        'Not keyed'
+      )}
+      {s.unkeyed > 0
+        ? ` · ${s.unkeyed} older record${s.unkeyed === 1 ? '' : 's'} from before the audit key existed (up to #${s.lastUnkeyedSeq ?? 0}) carry no MAC`
+        : ''}
+    </p>
+  );
+}
+
 function Audit() {
   const audit = useAudit();
   const bots = useBots();
   const botName = (id: string) => bots.data?.find((b) => b.id === id)?.spec.name;
   const client = useClient();
+  const queryClient = useQueryClient();
+  const fileInput = useRef<HTMLInputElement>(null);
   const [verify, setVerify] = useState<string | null>(null);
   const check = async () => {
     try {
       const r = await client.audit.verify();
       setVerify(
         r.ok
-          ? `✔ Chain intact: ${r.count} records verified.`
+          ? `✔ Chain intact: ${r.count} records verified${r.unkeyed > 0 ? ` (${r.unkeyed} from before the audit key, unkeyed)` : ''}.`
           : `✘ Broken at record #${r.firstBadSeq}: ${r.reason}`,
       );
     } catch (err) {
@@ -691,12 +739,48 @@ function Audit() {
   };
   const download = async () => {
     const text = await client.audit.export();
-    const url = URL.createObjectURL(new Blob([text], { type: 'application/x-ndjson' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `orbit-audit-${new Date().toISOString().slice(0, 10)}.jsonl`;
-    a.click();
-    URL.revokeObjectURL(url);
+    saveFile(
+      `orbit-audit-${new Date().toISOString().slice(0, 10)}.jsonl`,
+      'application/x-ndjson',
+      text,
+    );
+  };
+  const checkpoint = async () => {
+    try {
+      const cp = await client.audit.checkpoint();
+      saveFile(
+        `orbit-audit-checkpoint-${cp.ts.slice(0, 10)}-${cp.seq}.json`,
+        'application/json',
+        `${JSON.stringify(cp, null, 2)}\n`,
+      );
+      setVerify(
+        `✔ Checkpoint at record #${cp.seq} downloaded. Keep it somewhere other than this machine.`,
+      );
+    } catch (err) {
+      setVerify(`✘ ${errorText(err)}`);
+    }
+    void queryClient.invalidateQueries({ queryKey: keys.audit });
+  };
+  const verifyAgainst = async (file: File) => {
+    try {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(await file.text()) as unknown;
+      } catch {
+        setVerify(`✘ ${file.name} is not a checkpoint file (not JSON).`);
+        return;
+      }
+      const r = await client.audit.verifyCheckpoint(
+        parsed as Parameters<typeof client.audit.verifyCheckpoint>[0],
+      );
+      setVerify(
+        r.ok
+          ? `✔ The log still contains this checkpoint, signed by this audit key (${r.since} records since).`
+          : `✘ Checkpoint check failed: ${scrubControls(r.reason ?? 'unknown')}`,
+      );
+    } catch (err) {
+      setVerify(`✘ ${errorText(err)}`);
+    }
   };
   return (
     <div className="flex flex-col gap-4">
@@ -707,6 +791,25 @@ function Audit() {
         <Button onClick={() => void download().catch(() => undefined)}>
           <Download aria-hidden /> Export JSONL
         </Button>
+        <Button onClick={() => void checkpoint()}>
+          <Download aria-hidden /> Download checkpoint
+        </Button>
+        <Button onClick={() => fileInput.current?.click()}>
+          <FileCheck aria-hidden /> Verify against a checkpoint…
+        </Button>
+        <input
+          ref={fileInput}
+          type="file"
+          accept="application/json,.json"
+          aria-label="Checkpoint file to verify"
+          className="sr-only"
+          tabIndex={-1}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            if (file) void verifyAgainst(file);
+          }}
+        />
         {verify ? (
           <p
             role="status"
@@ -716,6 +819,7 @@ function Audit() {
           </p>
         ) : null}
       </div>
+      <AuditKeying />
       {audit.isPending ? (
         <ListSkeleton rows={4} />
       ) : audit.isError ? (

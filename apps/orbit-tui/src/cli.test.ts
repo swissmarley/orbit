@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ExitCode, type RunEvent } from '@orbit/core';
@@ -541,6 +541,25 @@ describe('orbit CLI', () => {
       expect(missing.map((c) => c.path)).toEqual([]);
     });
 
+    it('__complete lists names and ids from the running daemon (M8)', async () => {
+      const h = harness(mockEnv());
+      await h.run('bot', 'create', '--name', 'Inbox Triage', '--goal', 'x');
+      await h.run('run', 'inbox-triage', '--json');
+      h.reset();
+      expect(await h.run('__complete', 'bots')).toBe(0);
+      expect(h.out).toEqual(['inbox-triage']);
+      h.reset();
+      expect(await h.run('__complete', 'runs')).toBe(0);
+      expect(h.out).toHaveLength(1);
+      expect(h.out[0]).toMatch(/^run_/);
+      h.reset();
+      expect(await h.run('__complete', 'plugins')).toBe(0);
+      expect(h.out).toEqual(expect.arrayContaining(['github', 'filesystem']));
+      h.reset();
+      expect(await h.run('__complete', 'approvals')).toBe(0);
+      expect(h.out).toEqual([]);
+    });
+
     it('generates bash, zsh and fish completions; bash completes subcommands and options', async () => {
       const h = harness(mockEnv());
       expect(await h.run('completion', 'bash')).toBe(0);
@@ -682,6 +701,40 @@ describe('orbit CLI', () => {
       expect(h.json<{ ok: boolean; count: number }>()).toMatchObject({ ok: true });
     });
 
+    it('audit checkpoint --out and verify --checkpoint (keyed chain, M8)', async () => {
+      const h = harness(mockEnv());
+      await h.run('bot', 'create', '--name', 'Notes', '--goal', 'x');
+      h.reset();
+      expect(await h.run('audit', 'verify')).toBe(0);
+      expect(h.text()).toMatch(/✔ Audit chain intact \(\d+ records; keyed since #1 /);
+      h.reset();
+      const file = join(home, 'checkpoint.json');
+      expect(await h.run('audit', 'checkpoint', '--out', file)).toBe(0);
+      expect(h.err.join('\n')).toMatch(/Checkpoint at #\d+ .* written to .*checkpoint\.json/);
+      if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o600);
+      const cp = JSON.parse(readFileSync(file, 'utf8')) as { seq: number; count: number };
+      expect(cp).toMatchObject({ kind: 'orbit-audit-checkpoint', v: 1 });
+      h.reset();
+      await h.run('bot', 'create', '--name', 'Other', '--goal', 'y');
+      h.reset();
+      expect(await h.run('audit', 'verify', '--checkpoint', file, '--json')).toBe(0);
+      expect(h.json<{ ok: boolean; since: number }>()).toMatchObject({ ok: true, since: 1 });
+      h.reset();
+      expect(await h.run('audit', 'verify', '--checkpoint', file)).toBe(0);
+      expect(h.text()).toMatch(/still contains checkpoint #\d+ \(1 records since/);
+
+      writeFileSync(file, JSON.stringify({ ...cp, count: cp.count + 1 }));
+      h.reset();
+      expect(await h.run('audit', 'verify', '--checkpoint', file)).toBe(ExitCode.error);
+      expect(h.text()).toMatch(/✘ Checkpoint check failed: the checkpoint is not signed/);
+      writeFileSync(file, 'not json');
+      h.reset();
+      expect(await h.run('audit', 'verify', '--checkpoint', file)).toBe(ExitCode.usage);
+      h.reset();
+      expect(await h.run('audit', 'checkpoint', '--json')).toBe(0);
+      expect(h.json<{ kind: string }>().kind).toBe('orbit-audit-checkpoint');
+    });
+
     it('deny with a reason and --no-resume leaves the run parked-but-decided', async () => {
       const h = harness(mockEnv());
       await mailer(h);
@@ -770,6 +823,65 @@ describe('orbit CLI', () => {
   });
 
   describe('M6: memory, feedback, delegation, triage', () => {
+    it('exports and imports memories (preview, --yes, --untrusted) and sweeps retention', async () => {
+      const h = harness(mockEnv());
+      await h.run('bot', 'create', '--name', 'Notes', '--goal', 'x');
+      await h.run('bot', 'create', '--name', 'Copy', '--goal', 'y');
+      const body = join(home, 'fact.md');
+      writeFileSync(body, 'Ada owns the launch.\n');
+      await h.run('memory', 'add', 'notes', '--title', 'Owner', '--body-file', body);
+      h.reset();
+      const out = join(home, 'notes.jsonl');
+      expect(await h.run('memory', 'export', '--bot', 'notes', '--out', out, '--json')).toBe(0);
+      expect(h.json<{ count: number }>()).toEqual({ out, count: 1 });
+      if (process.platform !== 'win32') expect(statSync(out).mode & 0o777).toBe(0o600);
+      h.reset();
+      expect(await h.run('memory', 'export')).toBe(0);
+      expect(JSON.parse(h.text().split('\n')[0]!)).toMatchObject({
+        kind: 'orbit-memory-export',
+        count: 1,
+      });
+
+      h.reset();
+      expect(await h.run('memory', 'import', 'copy', out)).toBe(ExitCode.usage);
+      expect(h.text()).toMatch(/1 memory: 1 trusted, 0 untrusted/);
+      expect(h.text()).toMatch(
+        /1 claims to be written by you; they are trusted only because you chose to import/,
+      );
+      expect(h.err.join('\n')).toMatch(/Re-run with --yes/);
+      h.reset();
+      expect(await h.run('memory', 'list', 'copy', '--json')).toBe(0);
+      expect(h.json<unknown[]>()).toEqual([]);
+
+      h.reset();
+      expect(await h.run('memory', 'import', 'copy', out, '--yes')).toBe(0);
+      expect(h.text()).toMatch(/✔ Imported 1 into copy/);
+      h.reset();
+      expect(await h.run('memory', 'import', 'copy', out, '--untrusted', '--yes', '--json')).toBe(
+        0,
+      );
+      const forced = h.json<{ imported: string[]; trusted: number; untrusted: number }>();
+      expect(forced).toMatchObject({ trusted: 0, untrusted: 1 });
+      h.reset();
+      expect(await h.run('memory', 'show', forced.imported[0]!, '--json')).toBe(0);
+      expect(h.json<{ taint: string[] }>().taint).toEqual(['import']);
+
+      writeFileSync(out, 'garbage\n');
+      h.reset();
+      expect(await h.run('memory', 'import', 'copy', out, '--yes')).toBe(ExitCode.usage);
+      expect(h.text()).toMatch(/✘ line 1: not JSON/);
+
+      h.reset();
+      expect(await h.run('memory', 'sweep', '--json')).toBe(0);
+      expect(h.json<{ expired: number; retentionDays: number | null }>()).toMatchObject({
+        expired: 0,
+        retentionDays: null,
+      });
+      h.reset();
+      expect(await h.run('memory', 'sweep')).toBe(0);
+      expect(h.text()).toMatch(/keep forever, at most 1000 per Bot/);
+    });
+
     it('lists, shows, adds, edits and deletes memories; rates Runs; shows the triage budget', async () => {
       const h = harness(mockEnv());
       await h.run(

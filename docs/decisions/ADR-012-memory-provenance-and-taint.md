@@ -104,3 +104,51 @@ written after the Run's outcome (`memory.written`, `memory.summarized` follow
   the TUI and CLI scrub control characters), never as HTML or markdown.
 - Default `summarize: result` keeps memory useful without any model spend;
   the triage modes are opt-in and capped.
+
+## M8: export, import and retention
+
+**Export.** `GET /v1/memory/export[?bot=]` (`orbit memory export [--bot]
+[--out]`, Memory → Export) writes JSON Lines: a versioned header
+(`{kind: "orbit-memory-export", v: 1, exportedAt, bots, count}`), then one
+memory per line with its text and provenance (`source`, `taint`, `runId`,
+`approvalId`, `signal`, `pinned`, timestamps, the original `id` and `botId`
+as references). Exports are audited with a count.
+
+**Import** (`POST /v1/bots/{bot}/memory/import`, `orbit memory import <bot>
+<file> [--untrusted] [--yes]`, Memory → Import…) is owner only and all or
+nothing:
+
+- Every line is validated with zod (`MemoryExportLine`); lines longer than
+  64 000 characters are refused before parsing, fields over the memory
+  limits are refused, an export from a newer version is refused, at most
+  10 000 memories per import, and a 16 MiB request limit for this route
+  only (every other route keeps 1 MiB). Any invalid line refuses the whole
+  file; a dry run (`dryRun: true`, the CLI without `--yes`, the App's
+  preview) lists the problems and the counts without writing.
+- Text goes through the same redaction and control stripping as any
+  memory write; ids are minted anew; provenance is kept. A memory with
+  taint stays untrusted. `--untrusted` (the App's "Mark everything
+  untrusted") adds the source `import` to every memory. An untrusted memory
+  is never pinned. Timestamps from the future are clamped to now.
+- **A line that claims to be trusted (even `source: owner`) is accepted as
+  trusted only because the owner chose to import the file.** The CLI and
+  the App say so in the preview, with the number of such lines, and point
+  to `--untrusted`; trusted memories can be offered to Runs.
+- The per-Bot bound is enforced before anything is written: the import must
+  fit next to the memories the bound never drops (owner facts, feedback,
+  pinned); room is made by dropping the Bot's oldest unpinned notes and
+  summaries (untrusted first), never other imported memories.
+- The audit log records `memory.imported` with counts, the new ids, whether
+  trust was forced and the ids dropped, never memory text. Imports are not
+  part of a Run, so there is no `memory.written` event; the audit record is
+  the visible trace.
+
+**Retention.** `memory.maxPerBot` (config, 10–10 000, default 1000) bounds
+every Bot; `memory.retentionDays` (config, null = keep, the default) expires
+unpinned Bot notes and run summaries older than that; a Bot's
+`memory.retentionDays` overrides it (null keeps that Bot's memory). Owner
+facts and notes, feedback and pinned memories are never expired. orbitd
+sweeps at start and once a day, and on demand (`POST /v1/memory/sweep`,
+`orbit memory sweep`); the sweep also trims a Bot that is over a lowered
+`maxPerBot`. Each sweep that removes something is audited
+(`memory.expired`, ids only).

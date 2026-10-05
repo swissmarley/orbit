@@ -4,11 +4,15 @@ import {
   BotProposal,
   BotSpec,
   CreateMemoryBody,
+  ImportMemoryBody,
+  MEMORY_LIMITS,
   DriverKind,
   FeedbackBody,
   Memory,
   MemoryHit,
+  MemoryImportResult,
   MemoryKind,
+  MemorySweepResult,
   PluginStatus,
   PrincipalRole,
   RunEvent,
@@ -133,17 +137,58 @@ export const AuditRecord = z.object({
   data: z.record(z.string(), z.unknown()),
   prevHash: z.string(),
   hash: z.string(),
+  /** HMAC-SHA256 of `hash` under the audit key; null for records written before the key existed. */
+  mac: z.string().nullable(),
 });
 
+/** Which part of the chain is keyed (ADR-007, M8). */
+const AuditKeying = {
+  /** Records written before the audit key existed (not tampering). */
+  unkeyed: z.int(),
+  lastUnkeyedSeq: z.int().nullable(),
+  keyedSince: z.object({ seq: z.int(), ts: z.string() }).nullable(),
+};
+
 export const AuditVerify = z.union([
-  z.object({ ok: z.literal(true), count: z.int() }),
+  z.object({ ok: z.literal(true), count: z.int(), ...AuditKeying }),
   z.object({
     ok: z.literal(false),
     count: z.int(),
     firstBadSeq: z.int(),
     reason: z.string(),
+    ...AuditKeying,
   }),
 ]);
+
+export const AuditStatus = z.object({
+  /** An audit key is loaded, so new records are keyed. */
+  keyed: z.boolean(),
+  count: z.int(),
+  head: z.object({ seq: z.int(), hash: z.string(), ts: z.string() }).nullable(),
+  ...AuditKeying,
+});
+
+const hex64 = z.string().regex(/^[0-9a-f]{64}$/, 'a 64-character hex string');
+
+/** A signed head of the audit chain, for the owner to keep outside ORBIT_HOME. */
+export const AuditCheckpoint = z.object({
+  kind: z.literal('orbit-audit-checkpoint'),
+  v: z.literal(1),
+  seq: z.int().min(1),
+  hash: hex64,
+  ts: z.string().max(64),
+  count: z.int().min(1),
+  mac: hex64,
+});
+
+export const AuditCheckpointVerify = z.object({
+  /** The chain verifies and still contains the checkpoint, signed by this audit key. */
+  ok: z.boolean(),
+  reason: z.string().nullable(),
+  chain: AuditVerify,
+  /** Records appended after the checkpoint. */
+  since: z.int(),
+});
 
 export const SecretMeta = z.object({
   name: z.string(),
@@ -495,6 +540,7 @@ export const ListMemoryQuery = z.object({
   kind: MemoryKind.optional(),
   limit: limitQuery(500),
 });
+export const ExportMemoryQuery = z.object({ bot: z.string().optional() });
 export const EventsQuery = z.object({
   run: z.string().optional(),
   bot: z.string().optional(),
@@ -524,6 +570,8 @@ export interface RouteDef {
   /** JSON response schema; omitted for streams (`stream` says which). */
   response?: z.ZodType;
   stream?: 'sse' | 'jsonl';
+  /** Request body limit when it must exceed the default 1 MiB (imports). */
+  maxBodyBytes?: number;
 }
 
 const ok = z.object({ ok: z.literal(true) });
@@ -796,6 +844,29 @@ export const routes = {
     tag: 'audit',
     stream: 'jsonl',
   },
+  auditStatus: {
+    method: 'GET',
+    role: 'owner',
+    path: '/v1/audit/status',
+    summary: 'Whether the audit chain is keyed, since when, and its head (no hashing)',
+    tag: 'audit',
+    response: AuditStatus,
+  },
+  auditCheckpoint: {
+    method: 'POST',
+    path: '/v1/audit/checkpoint',
+    summary: 'Append a checkpoint record and return it signed with the audit key',
+    tag: 'audit',
+    response: AuditCheckpoint,
+  },
+  verifyAuditCheckpoint: {
+    method: 'POST',
+    path: '/v1/audit/checkpoint/verify',
+    summary: 'Check that the audit chain still contains a checkpoint you kept',
+    tag: 'audit',
+    body: AuditCheckpoint,
+    response: AuditCheckpointVerify,
+  },
   listSecrets: {
     method: 'GET',
     role: 'owner',
@@ -865,6 +936,35 @@ export const routes = {
     body: CreateMemoryBody,
     status: 201,
     response: Memory,
+  },
+  // Before getMemory: `/v1/memory/{memory}` would match `export` too.
+  exportMemory: {
+    method: 'GET',
+    role: 'owner',
+    path: '/v1/memory/export',
+    summary:
+      "A Bot's memories (or every Bot's) as JSON Lines with provenance (versioned header first)",
+    tag: 'memory',
+    query: ExportMemoryQuery,
+    stream: 'jsonl',
+  },
+  importMemory: {
+    method: 'POST',
+    path: '/v1/bots/{bot}/memory/import',
+    summary:
+      'Import an export into a Bot (validated, redacted, bounded; provenance kept; `dryRun` previews counts and trust)',
+    tag: 'memory',
+    body: ImportMemoryBody,
+    maxBodyBytes: MEMORY_LIMITS.importBytes,
+    response: MemoryImportResult,
+  },
+  sweepMemory: {
+    method: 'POST',
+    path: '/v1/memory/sweep',
+    summary:
+      'Apply memory retention now (orbitd also does it daily): expire old unpinned Bot notes and summaries, trim to the bound',
+    tag: 'memory',
+    response: MemorySweepResult,
   },
   getMemory: {
     method: 'GET',

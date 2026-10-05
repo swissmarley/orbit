@@ -360,13 +360,25 @@ export function createApp(opts: AppOptions): Hono {
     );
   });
 
-  app.use(
-    '*',
+  const limitTo = (maxSize: number) =>
     bodyLimit({
-      maxSize: MAX_BODY_BYTES,
+      maxSize,
       onError: (c) => c.json(errorBody('payload_too_large', 'Request body too large'), 413),
-    }),
-  );
+    });
+  const defaultLimit = limitTo(MAX_BODY_BYTES);
+  // Routes that take more (memory import) get their own limit, everything else 1 MiB.
+  const largeBodies = (Object.values(routes) as RouteDef[])
+    .filter((d) => d.maxBodyBytes !== undefined)
+    .map((d) => ({
+      method: d.method,
+      path: new RegExp(`^${d.path.replace(/\{[^}]+\}/g, '[^/]+')}$`),
+      limit: limitTo(d.maxBodyBytes ?? MAX_BODY_BYTES),
+    }));
+  const limitBody: MiddlewareHandler = (c, next) => {
+    const large = largeBodies.find((l) => l.method === c.req.method && l.path.test(c.req.path));
+    return (large?.limit ?? defaultLimit)(c, next);
+  };
+  app.use('*', limitBody);
 
   app.get('/openapi.json', (c) => c.json(buildOpenApi()));
 
@@ -677,6 +689,10 @@ export function createApp(opts: AppOptions): Hono {
       return service.auditTail(q.action, q.limit ?? 50);
     },
     verifyAudit: () => service.audit.verify(),
+    auditStatus: () => service.audit.status(),
+    auditCheckpoint: () => service.audit.checkpoint('owner'),
+    verifyAuditCheckpoint: ({ body }) =>
+      service.audit.verifyCheckpoint(body as z.output<typeof routes.verifyAuditCheckpoint.body>),
     exportAudit: (_i, c) => {
       const lines: string[] = [];
       service.audit.exportJsonl((line) => lines.push(line));
@@ -706,6 +722,13 @@ export function createApp(opts: AppOptions): Hono {
     createMemory: ({ params, body }) =>
       service.createMemory(param(params, 'bot'), body as z.output<typeof routes.createMemory.body>),
     getMemory: ({ params }) => service.memory.get(param(params, 'memory')),
+    exportMemory: ({ query }, c) =>
+      c.body(service.exportMemory((query as z.output<typeof routes.exportMemory.query>).bot), 200, {
+        'content-type': 'application/x-ndjson; charset=utf-8',
+      }),
+    importMemory: ({ params, body }) =>
+      service.importMemory(param(params, 'bot'), body as z.output<typeof routes.importMemory.body>),
+    sweepMemory: () => service.sweepMemory(service.actor()),
     updateMemory: ({ params, body }) =>
       service.updateMemory(
         param(params, 'memory'),

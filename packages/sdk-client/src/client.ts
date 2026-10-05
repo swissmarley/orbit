@@ -263,6 +263,14 @@ export class OrbitClient {
     update: (memory: string, body: RouteBody<'updateMemory'>) =>
       this.call('updateMemory', { params: { memory }, body }),
     remove: (memory: string) => this.call('deleteMemory', { params: { memory } }),
+    /** One Bot's memories (or every Bot's) as JSON Lines with provenance. */
+    export: async (bot?: string): Promise<string> =>
+      (await this.send(routes.exportMemory, { query: bot ? { bot } : {} }, false)).text(),
+    /** Import an export into a Bot; `dryRun` previews counts and trust without writing. */
+    import: (bot: string, body: RouteBody<'importMemory'>) =>
+      this.call('importMemory', { params: { bot }, body }),
+    /** Apply retention now (orbitd also sweeps daily). */
+    sweep: () => this.call('sweepMemory'),
     /** Workspace files written while untrusted content was in a Run. */
     taint: (bot: string) => this.call('botTaint', { params: { bot } }),
     clearTaint: (bot: string) => this.call('clearBotTaint', { params: { bot } }),
@@ -318,6 +326,12 @@ export class OrbitClient {
   readonly audit = {
     list: (q: RouteQuery<'listAudit'> = {}) => this.call('listAudit', { query: q }),
     verify: () => this.call('verifyAudit'),
+    /** Keyed since when, unkeyed records from before the upgrade, the head (cheap). */
+    status: () => this.call('auditStatus'),
+    /** Append a checkpoint record; keep the signed JSON outside ORBIT_HOME. */
+    checkpoint: () => this.call('auditCheckpoint'),
+    verifyCheckpoint: (checkpoint: RouteBody<'verifyAuditCheckpoint'>) =>
+      this.call('verifyAuditCheckpoint', { body: checkpoint }),
     /** The whole log as JSON Lines. */
     export: async (): Promise<string> => (await this.send(routes.exportAudit, {}, false)).text(),
   };

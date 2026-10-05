@@ -1,4 +1,11 @@
-import type { Bot, BotSpecInput, Memory, PluginStatus, RunState } from '@orbit/core/browser';
+import type {
+  Bot,
+  BotSpecInput,
+  Memory,
+  MemoryImportResult,
+  PluginStatus,
+  RunState,
+} from '@orbit/core/browser';
 import type { Approval, RouteBody } from '@orbit/sdk-client/browser';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
@@ -382,6 +389,24 @@ export function useActions() {
             : {}),
         });
         return saved;
+      },
+
+      /** Import an export into a Bot (after the owner saw the preview). */
+      async importMemory(
+        bot: Bot,
+        body: Omit<RouteBody<'importMemory'>, 'dryRun'>,
+      ): Promise<MemoryImportResult> {
+        const r = await c.memory
+          .import(bot.id, { ...body, dryRun: false })
+          .catch(fail('Could not import the memories'));
+        void refresh(keys.memory, keys.audit);
+        toast.success(`Imported ${r.imported.length} into ${bot.spec.name}`, {
+          description:
+            r.untrusted > 0
+              ? `${r.untrusted} untrusted: never offered to Runs automatically.`
+              : 'Trusted memories may be offered to new Runs.',
+        });
+        return r;
       },
 
       async deleteMemory(m: Memory): Promise<void> {

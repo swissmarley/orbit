@@ -5,7 +5,7 @@ import { botCreate, botList } from './commands/bot';
 import { doctor } from './commands/doctor';
 import { loginHelp } from './commands/login-help';
 import { approvalShow, approvalsList, approve, deny } from './commands/approvals';
-import { auditExport, auditList, auditVerify } from './commands/audit';
+import { auditCheckpoint, auditExport, auditList, auditVerify } from './commands/audit';
 import { killSwitch, pauseBot, pauseRun, stopRun } from './commands/controls';
 import { shell } from './commands/shell';
 import { daemonStart, daemonStatus, daemonStop } from './commands/daemon';
@@ -14,13 +14,16 @@ import {
   memoryAdd,
   memoryEdit,
   memoryList,
+  memoryExport,
+  memoryImport,
   memoryRm,
+  memorySweep,
   memoryShow,
   treeCmd,
   triageCmd,
 } from './commands/memory';
 import { rulesAdd, rulesList, rulesRevoke } from './commands/rules';
-import { completion } from './commands/completion';
+import { completeNames, completion } from './commands/completion';
 import {
   botLogs,
   logs,
@@ -73,11 +76,12 @@ export async function main(argv: string[], io: Io): Promise<number> {
   program
     .command('tui', { isDefault: false })
     .description('Full-screen terminal UI: Bots, live timeline, approvals (also `orbit` alone)')
-    .action(async () => {
+    .option('--mouse', 'click to select, wheel to scroll (M toggles it in the TUI)')
+    .action(async (o: { mouse?: boolean }) => {
       // Ink's colour library ignores NO_COLOR: decide before it loads.
       if (!io.color) process.env.FORCE_COLOR = '0';
       const { runTui } = await import('./tui');
-      await set(runTui(context()));
+      await set(runTui(context(), { mouse: o.mouse === true }));
     });
 
   program
@@ -318,9 +322,16 @@ export async function main(argv: string[], io: Io): Promise<number> {
     );
   audit
     .command('verify')
-    .description('Check the hash chain')
+    .description('Check the hash chain and its MACs (and a checkpoint you kept)')
+    .option('--checkpoint <file>', 'also confirm the log still contains this checkpoint')
     .option('--json', 'machine-readable output')
-    .action((o: { json?: boolean }) => set(auditVerify(context(), o)));
+    .action((o: { json?: boolean; checkpoint?: string }) => set(auditVerify(context(), o)));
+  audit
+    .command('checkpoint')
+    .description('Record a signed checkpoint of the chain to keep outside ORBIT_HOME')
+    .option('-o, --out <file>', 'write the checkpoint to a file (mode 0600)')
+    .option('--json', 'machine-readable output')
+    .action((o: { out?: string; json?: boolean }) => set(auditCheckpoint(context(), o)));
   audit
     .command('export')
     .description('Export as JSONL')
@@ -364,18 +375,18 @@ export async function main(argv: string[], io: Io): Promise<number> {
   plugin
     .command('enable')
     .description('Start it once to list its tools, then offer it to the Bots that list it')
-    .argument('<id>')
+    .argument('<id>', 'plugin id')
     .option('--json', 'machine-readable output')
     .action((id: string, o: { json?: boolean }) => set(pluginEnable(context(), id, o)));
   plugin
     .command('disable')
-    .argument('<id>')
+    .argument('<id>', 'plugin id')
     .option('--json', 'machine-readable output')
     .action((id: string, o: { json?: boolean }) => set(pluginDisable(context(), id, o)));
   plugin
     .command('check')
     .description('Start it once and list its tools (does not enable it)')
-    .argument('<id>')
+    .argument('<id>', 'plugin id')
     .option('--json', 'machine-readable output')
     .action((id: string, o: { json?: boolean }) => set(pluginCheck(context(), id, o)));
   plugin
@@ -389,13 +400,13 @@ export async function main(argv: string[], io: Io): Promise<number> {
   plugin
     .command('rm')
     .description('Forget a plugin you added, and its secrets')
-    .argument('<id>')
+    .argument('<id>', 'plugin id')
     .option('--json', 'machine-readable output')
     .action((id: string, o: { json?: boolean }) => set(pluginRemove(context(), id, o)));
   plugin
     .command('secret')
     .description("Store one of the plugin's secrets (value from --value-file or stdin, never argv)")
-    .argument('<id>')
+    .argument('<id>', 'plugin id')
     .argument('<name>', 'the secret name the plugin declares, e.g. GITHUB_TOKEN')
     .option('--value-file <path>', 'read the value from a file (default: stdin)')
     .option('--remove', 'remove it instead')
@@ -407,7 +418,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
   plugin
     .command('setting')
     .description('Set a non-secret plugin setting (e.g. FS_ROOTS, BROWSER_ALLOWED_DOMAINS)')
-    .argument('<id>')
+    .argument('<id>', 'plugin id')
     .argument('<name>')
     .argument('[value]')
     .option('--clear', 'clear it')
@@ -522,6 +533,29 @@ export async function main(argv: string[], io: Io): Promise<number> {
     .argument('<id>', 'memory id')
     .option('--json', 'machine-readable output')
     .action((id: string, o: { json?: boolean }) => set(memoryRm(context(), id, o)));
+  memory
+    .command('export')
+    .description('Export memories with provenance as JSON Lines (one Bot, or all)')
+    .option('-b, --bot <bot>', 'only this Bot')
+    .option('-o, --out <file>', 'write to a file (mode 0600) instead of stdout')
+    .option('--json', 'machine-readable output')
+    .action((o: Parameters<typeof memoryExport>[1]) => set(memoryExport(context(), o)));
+  memory
+    .command('import')
+    .description('Import an export into a Bot: previews counts and trust, imports with --yes')
+    .argument('<bot>', 'bot name or id')
+    .argument('<file>', 'a file `orbit memory export` wrote')
+    .option('--untrusted', 'mark every imported memory untrusted')
+    .option('-y, --yes', 'import after the preview')
+    .option('--json', 'machine-readable output')
+    .action((b: string, f: string, o: Parameters<typeof memoryImport>[3]) =>
+      set(memoryImport(context(), b, f, o)),
+    );
+  memory
+    .command('sweep')
+    .description('Apply memory retention now (orbitd does it daily)')
+    .option('--json', 'machine-readable output')
+    .action((o: { json?: boolean }) => set(memorySweep(context(), o)));
 
   program
     .command('feedback')
@@ -552,6 +586,13 @@ export async function main(argv: string[], io: Io): Promise<number> {
     .description('Shell completion script: orbit completion bash|zsh|fish')
     .argument('<shell>', 'bash, zsh or fish')
     .action((shell: string) => set(completion(io, program, shell)));
+  // Called by the completion scripts: names from a running orbitd, never started for it.
+  program
+    .command('__complete', { hidden: true })
+    .argument('[kind]')
+    .allowExcessArguments()
+    .allowUnknownOption()
+    .action((kind: string | undefined) => set(completeNames(io, kind)));
 
   try {
     // `orbit` alone in a terminal opens the TUI; elsewhere it prints help.

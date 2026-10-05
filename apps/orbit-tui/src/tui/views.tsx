@@ -35,11 +35,11 @@ import {
   selectedMemory,
   treeRows,
 } from './model';
+import { DENY_TITLE, approvalsWindow, botsWindow, tabLabels } from './layout';
 
 export type Paint = ReturnType<typeof painter>;
 
-/** Narrower than this, the TUI shows one pane at a time with a tab bar. */
-export const NARROW_COLUMNS = 100;
+export { DENY_TITLE, NARROW_COLUMNS, promptHeight } from './layout';
 
 /** Terminal colour for each tone of the shared status vocabulary (16 basic colours). */
 export const TONE_COLOR: Record<Tone, string> = {
@@ -172,12 +172,12 @@ export function BotsPane(props: {
   const pendingByBot = new Map<string, number>();
   for (const a of data.approvals) pendingByBot.set(a.botId, (pendingByBot.get(a.botId) ?? 0) + 1);
   const runs = runsOf(data, bot?.id);
-  const listRows = Math.max(1, Math.min(data.bots.length, Math.floor((props.height - 3) / 2)));
   const at = bot ? data.bots.indexOf(bot) : 0;
-  const first = Math.max(0, Math.min(at - listRows + 1, data.bots.length - listRows));
+  const window = botsWindow(props.height, data.bots.length, at);
+  const { listRows, first } = window;
   // Focused: the selected Bot's terminal-only action (a take-over; the footer lists the keys).
   const actions = props.focused && bot !== undefined;
-  const runRows = Math.max(0, props.height - 5 - listRows - (actions ? 1 : 0));
+  const runRows = Math.max(0, window.runRows - (actions ? 1 : 0));
   return (
     <Pane id="bots" focused={props.focused} width={props.width} height={props.height}>
       {!data.loaded ? (
@@ -304,10 +304,10 @@ export function ApprovalsPane(props: {
 }) {
   const { data, ui, paint } = props;
   const approval = selectedApproval(data, ui);
-  const listRows = Math.min(data.approvals.length, Math.max(1, Math.floor((props.height - 3) / 3)));
-  const first = Math.max(
-    0,
-    Math.min(ui.approvalIndex - listRows + 1, data.approvals.length - listRows),
+  const { listRows, first } = approvalsWindow(
+    props.height,
+    data.approvals.length,
+    ui.approvalIndex,
   );
   const detail = approval ? cardLines(approval, paint, 'truncate') : [];
   const room = Math.max(0, props.height - 5 - listRows - (props.focused ? 1 : 0));
@@ -482,10 +482,6 @@ export function HelpOverlay(props: { width: number; height: number; scroll: numb
 }
 
 /** Rows a confirm bar or prompt needs at this width (border + wrapped text). */
-export function promptHeight(text: string, width: number): number {
-  return 2 + Math.max(1, Math.ceil(text.length / Math.max(10, width - 4)));
-}
-
 export function ConfirmBar({ message, width }: { message: string; width: number }) {
   return (
     <Box borderStyle="round" borderColor="yellow" paddingX={1} width={width}>
@@ -495,8 +491,6 @@ export function ConfirmBar({ message, width }: { message: string; width: number 
     </Box>
   );
 }
-
-export const DENY_TITLE = 'Deny — reason the Bot will see (Enter sends, Esc cancels):';
 
 export function DenyPrompt({ text, width }: { text: string; width: number }) {
   return (
@@ -513,9 +507,9 @@ export function DenyPrompt({ text, width }: { text: string; width: number }) {
 export function TabBar({ focus, pending }: { focus: PaneId; pending: number }) {
   return (
     <Text wrap="truncate">
-      {(['bots', 'timeline', 'approvals'] as const).map((p, i) => (
-        <Text key={p} {...(p === focus ? { inverse: true, bold: true } : { color: 'gray' })}>
-          {` ${p === focus ? '▶' : ''}${i + 1} ${TITLES[p]}${p === 'approvals' && pending ? ` (${pending})` : ''} `}
+      {tabLabels(focus, pending).map((t) => (
+        <Text key={t.pane} {...(t.focused ? { inverse: true, bold: true } : { color: 'gray' })}>
+          {t.label}
         </Text>
       ))}
     </Text>

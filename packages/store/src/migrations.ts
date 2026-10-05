@@ -275,6 +275,17 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX webhook_deliveries_received_idx ON webhook_deliveries (received_at);
     `,
   },
+  {
+    id: 6,
+    name: 'audit-mac',
+    sql: `
+      -- Keyed audit chain (ADR-007, M8): HMAC-SHA256 of each record's hash under the
+      -- audit key (OS keychain or <ORBIT_HOME>/audit.key, never this database).
+      -- NULL for records written before the upgrade. ADD COLUMN keeps the
+      -- append-only triggers in place.
+      ALTER TABLE audit ADD COLUMN mac TEXT;
+    `,
+  },
 ];
 
 /** When migration `id` was applied to this database, or null. */

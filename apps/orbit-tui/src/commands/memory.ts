@@ -1,16 +1,19 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import {
+  ExitCode,
   MEMORY_KIND_WORD,
   MEMORY_SOURCE_WORD,
   type Memory,
   OrbitError,
   RUN_STATUS,
   type RunState,
+  errorMessage,
   formatCost,
   formatTokens,
   formatWhen,
   memoryTrust,
 } from '@orbit/core';
+import type { OrbitClient } from '@orbit/sdk-client';
 import type { Context } from '../context';
 import { painter } from '../io';
 import { scrubControls } from '../render';
@@ -140,6 +143,101 @@ export async function memoryEdit(
 export async function memoryRm(ctx: Context, id: string, o: { json?: boolean }): Promise<number> {
   await (await ctx.client()).memory.remove(id);
   ctx.io.out(o.json ? JSON.stringify({ ok: true, id }) : `Deleted ${id}`);
+  return 0;
+}
+
+export async function memoryExport(
+  ctx: Context,
+  o: { bot?: string; out?: string; json?: boolean },
+): Promise<number> {
+  const text = await (await ctx.client()).memory.export(o.bot);
+  const count = Math.max(0, text.split('\n').filter((l) => l.trim() !== '').length - 1);
+  if (!o.out) {
+    // JSON Lines already: --json changes nothing on stdout.
+    ctx.io.out(text.trimEnd());
+    return 0;
+  }
+  writeFileSync(o.out, text, { mode: 0o600 });
+  if (o.json) ctx.io.out(JSON.stringify({ out: o.out, count }));
+  else {
+    ctx.io.out(
+      `${painter(ctx.io)('green', '✔')} Exported ${count} memor${count === 1 ? 'y' : 'ies'} to ${o.out}`,
+    );
+  }
+  return 0;
+}
+
+type ImportResult = Awaited<ReturnType<OrbitClient['memory']['import']>>;
+
+/** What an import does, in words (shown before and after it runs). */
+function importSummary(r: ImportResult, untrusted: boolean): string[] {
+  const lines = [
+    `${r.total} memor${r.total === 1 ? 'y' : 'ies'}: ${r.trusted} trusted, ${r.untrusted} untrusted${untrusted ? ' (all marked untrusted by --untrusted)' : ''}`,
+  ];
+  if (r.claimsOwner > 0) {
+    lines.push(
+      `${r.claimsOwner} claim${r.claimsOwner === 1 ? 's' : ''} to be written by you; they are trusted only because you chose to import this file, and trusted memories are offered to Runs. Use --untrusted if you did not write it.`,
+    );
+  }
+  if (r.evicts > 0) {
+    lines.push(
+      `${r.evicts} of the Bot's oldest notes and summaries will be dropped to stay within memory.maxPerBot.`,
+    );
+  }
+  return lines;
+}
+
+export async function memoryImport(
+  ctx: Context,
+  botRef: string,
+  file: string,
+  o: { untrusted?: boolean; yes?: boolean; json?: boolean },
+): Promise<number> {
+  let jsonl: string;
+  try {
+    jsonl = readFileSync(file, 'utf8');
+  } catch (err) {
+    throw new OrbitError('invalid_input', `Cannot read ${file}: ${errorMessage(err)}`);
+  }
+  const client = await ctx.client();
+  const untrusted = o.untrusted === true;
+  const p = painter(ctx.io);
+  const preview = await client.memory.import(botRef, { jsonl, untrusted, dryRun: true });
+  if (preview.errors.length > 0 || !o.yes) {
+    if (o.json) ctx.io.out(JSON.stringify(preview));
+    else {
+      for (const e of preview.errors) {
+        ctx.io.out(p('red', `✘ line ${e.line}: ${scrubControls(e.message)}`));
+      }
+      if (preview.errors.length === 0) {
+        for (const l of importSummary(preview, untrusted)) ctx.io.out(l);
+      }
+    }
+    if (preview.errors.length > 0) {
+      ctx.io.err('Nothing was imported: fix the lines above.');
+      return ExitCode.usage;
+    }
+    ctx.io.err(`Nothing imported yet. Re-run with --yes to import into ${botRef}.`);
+    return ExitCode.usage;
+  }
+  const done = await client.memory.import(botRef, { jsonl, untrusted, dryRun: false });
+  if (o.json) ctx.io.out(JSON.stringify(done));
+  else {
+    ctx.io.out(`${p('green', '✔')} Imported ${done.imported.length} into ${botRef}`);
+    for (const l of importSummary(done, untrusted)) ctx.io.out(p('dim', l));
+  }
+  return 0;
+}
+
+export async function memorySweep(ctx: Context, o: { json?: boolean }): Promise<number> {
+  const r = await (await ctx.client()).memory.sweep();
+  if (o.json) {
+    ctx.io.out(JSON.stringify(r));
+    return 0;
+  }
+  ctx.io.out(
+    `${painter(ctx.io)('green', '✔')} Expired ${r.expired}, trimmed ${r.trimmed} (keep ${r.retentionDays === null ? 'forever' : `${r.retentionDays} days`}, at most ${r.maxPerBot} per Bot; your facts, feedback and pinned memories never expire)`,
+  );
   return 0;
 }
 

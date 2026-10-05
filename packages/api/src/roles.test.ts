@@ -61,6 +61,9 @@ const EXPECTED: Record<RouteName, PrincipalRole | 'public'> = {
   listAudit: 'owner',
   exportAudit: 'owner',
   listSecrets: 'owner',
+  auditStatus: 'owner',
+  // Memory text leaves Orbit in an export.
+  exportMemory: 'owner',
   // Everything else changes what Orbit is or may do.
   stopDaemon: 'owner',
   createLoginTicket: 'owner',
@@ -71,6 +74,10 @@ const EXPECTED: Record<RouteName, PrincipalRole | 'public'> = {
   // Take-over is bearer-token only on top of this (the server's owner).
   startTakeover: 'owner',
   endTakeover: 'owner',
+  auditCheckpoint: 'owner',
+  verifyAuditCheckpoint: 'owner',
+  importMemory: 'owner',
+  sweepMemory: 'owner',
   createRule: 'owner',
   revokeRule: 'owner',
   setSecret: 'owner',

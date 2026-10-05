@@ -1,5 +1,6 @@
-import { writeFileSync } from 'node:fs';
-import { ExitCode, formatWhen } from '@orbit/core';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { ExitCode, OrbitError, errorMessage, formatWhen } from '@orbit/core';
+import type { OrbitClient } from '@orbit/sdk-client';
 import type { Context } from '../context';
 import { painter } from '../io';
 import { scrubControls } from '../render';
@@ -28,18 +29,92 @@ export async function auditList(
   return 0;
 }
 
-export async function auditVerify(ctx: Context, o: { json?: boolean }): Promise<number> {
+type Verify = Awaited<ReturnType<OrbitClient['audit']['verify']>>;
+type Checkpoint = Parameters<OrbitClient['audit']['verifyCheckpoint']>[0];
+
+/** "keyed since #12 (…); 11 older records unkeyed (up to #11)". */
+function keyingText(r: Verify): string {
+  const parts = [
+    r.keyedSince
+      ? `keyed since #${r.keyedSince.seq} (${formatWhen(r.keyedSince.ts)})`
+      : 'not keyed',
+  ];
+  if (r.unkeyed > 0) {
+    parts.push(
+      `${r.unkeyed} older record${r.unkeyed === 1 ? '' : 's'} unkeyed (up to #${r.lastUnkeyedSeq ?? 0})`,
+    );
+  }
+  return parts.join('; ');
+}
+
+/** The checkpoint file as JSON; orbitd validates its shape (zod) and its MAC. */
+function readCheckpoint(file: string): Checkpoint {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(file, 'utf8')) as unknown;
+  } catch (err) {
+    throw new OrbitError(
+      'invalid_input',
+      `Cannot read the checkpoint ${file}: ${errorMessage(err)}`,
+      {
+        hint: 'Use the JSON file `orbit audit checkpoint --out <file>` wrote.',
+      },
+    );
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new OrbitError('invalid_input', `${file} is not an Orbit audit checkpoint`, {
+      hint: 'Use the JSON file `orbit audit checkpoint --out <file>` wrote.',
+    });
+  }
+  return parsed as Checkpoint;
+}
+
+export async function auditVerify(
+  ctx: Context,
+  o: { json?: boolean; checkpoint?: string },
+): Promise<number> {
+  const p = painter(ctx.io);
+  if (o.checkpoint) {
+    const checkpoint = readCheckpoint(o.checkpoint);
+    const res = await (await ctx.client()).audit.verifyCheckpoint(checkpoint);
+    if (o.json) ctx.io.out(JSON.stringify(res));
+    else {
+      ctx.io.out(
+        res.ok
+          ? p(
+              'green',
+              `✔ Audit chain intact and still contains checkpoint #${checkpoint.seq} (${res.since} records since; ${keyingText(res.chain)})`,
+            )
+          : p('red', `✘ Checkpoint check failed: ${scrubControls(res.reason ?? 'unknown')}`),
+      );
+    }
+    return res.ok ? ExitCode.ok : ExitCode.error;
+  }
   const result = await (await ctx.client()).audit.verify();
   if (o.json) ctx.io.out(JSON.stringify(result));
   else {
-    const p = painter(ctx.io);
     ctx.io.out(
       result.ok
-        ? p('green', `✔ Audit chain intact (${result.count} records)`)
+        ? p('green', `✔ Audit chain intact (${result.count} records; ${keyingText(result)})`)
         : p('red', `✘ Audit chain broken at #${result.firstBadSeq}: ${result.reason}`),
     );
   }
   return result.ok ? ExitCode.ok : ExitCode.error;
+}
+
+export async function auditCheckpoint(
+  ctx: Context,
+  o: { out?: string; json?: boolean },
+): Promise<number> {
+  const cp = await (await ctx.client()).audit.checkpoint();
+  const text = `${JSON.stringify(cp, null, 2)}\n`;
+  if (o.out) writeFileSync(o.out, text, { mode: 0o600 });
+  if (o.json) ctx.io.out(JSON.stringify(cp));
+  else if (!o.out) ctx.io.out(text.trimEnd());
+  ctx.io.err(
+    `Checkpoint at #${cp.seq} (${cp.count} records, ${formatWhen(cp.ts)})${o.out ? ` written to ${o.out}` : ''}. Keep it outside ORBIT_HOME and check it later with \`orbit audit verify --checkpoint <file>\`.`,
+  );
+  return 0;
 }
 
 export async function auditExport(ctx: Context, o: { out?: string }): Promise<number> {

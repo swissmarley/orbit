@@ -5,6 +5,7 @@
  */
 export * from './context';
 export * from './memory-store';
+export * from './portable';
 export * from './summarizer';
 export * from './triage-ledger';
 export * from './workspace-taint';

@@ -7,11 +7,15 @@ import {
   type Command,
   type Data,
   INITIAL_UI,
+  type KeyResult,
   type Ui,
   onKey,
+  onMouse,
   reconcile,
   selectedRun,
 } from './model';
+import { screenLayout } from './layout';
+import type { MouseEvent } from './mouse';
 import { scrubControls } from '../render';
 import {
   ApprovalsPane,
@@ -22,15 +26,12 @@ import {
   TreeOverlay,
   IntegrationsOverlay,
   ConfirmBar,
-  DENY_TITLE,
   DenyPrompt,
   HelpOverlay,
-  NARROW_COLUMNS,
   type Paint,
   StatusBar,
   TabBar,
   TimelinePane,
-  promptHeight,
   timelineLines,
 } from './views';
 
@@ -106,6 +107,7 @@ export async function perform(
     case 'loadTree':
     case 'loadIntegrations':
     case 'refresh':
+    case 'mouse':
     case 'quit':
       return '';
   }
@@ -118,9 +120,21 @@ export interface AppProps {
   size?: { columns: number; rows: number };
   /** Coalescing delay for list refetches after events. */
   refreshDelayMs?: number;
+  /** Mouse input and reporting (a TTY); without it M says the mouse is unavailable. */
+  mouse?: MouseControl;
 }
 
-export function App({ client, paint, size, refreshDelayMs }: AppProps) {
+/** What the App needs from the terminal's mouse (see terminal-mouse.ts). */
+export interface MouseControl {
+  /** Mouse events in screen cells; returns an unsubscribe. */
+  subscribe(fn: (e: MouseEvent) => void): () => void;
+  /** Turn reporting on or off; false when it cannot be turned on here. */
+  set(on: boolean): boolean;
+  /** Reporting is on (e.g. orbit tui --mouse). */
+  readonly enabled: boolean;
+}
+
+export function App({ client, paint, size, refreshDelayMs, mouse }: AppProps) {
   const { exit } = useApp();
   const terminal = useWindowSize();
   const columns = size?.columns ?? terminal.columns;
@@ -130,7 +144,7 @@ export function App({ client, paint, size, refreshDelayMs }: AppProps) {
     [client, refreshDelayMs],
   );
   const [data, setData] = useState<Data>(feed.snapshot());
-  const [ui, setUi] = useState<Ui>(INITIAL_UI);
+  const [ui, setUi] = useState<Ui>(() => ({ ...INITIAL_UI, mouse: mouse?.enabled === true }));
   const uiRef = useRef(ui);
   uiRef.current = ui;
 
@@ -157,11 +171,26 @@ export function App({ client, paint, size, refreshDelayMs }: AppProps) {
   const toast = (text: string, tone: 'info' | 'error' = 'info') =>
     setUi((u) => ({ ...u, toast: text ? { text: scrubControls(text), tone } : null }));
 
-  useInput((input, key) => {
-    const result = onKey(uiRef.current, data, input, key);
+  const handle = (result: KeyResult) => {
     setUi(result.ui);
     const command = result.command;
     if (!command) return;
+    if (command.kind === 'mouse') {
+      const ok = mouse?.set(command.on) === true;
+      setUi((u) => ({
+        ...u,
+        mouse: ok ? command.on : false,
+        toast: ok
+          ? {
+              text: command.on
+                ? 'mouse on — click selects, the wheel scrolls; M turns it off'
+                : 'mouse off',
+              tone: 'info',
+            }
+          : { text: 'The mouse needs an interactive terminal', tone: 'error' },
+      }));
+      return;
+    }
     if (command.kind === 'quit') {
       exit();
       return;
@@ -197,21 +226,23 @@ export function App({ client, paint, size, refreshDelayMs }: AppProps) {
         return feed.refresh();
       })
       .catch((err: unknown) => toast(errorMessage(err), 'error'));
-  });
+  };
+  useInput((input, key) => handle(onKey(uiRef.current, data, input, key)));
 
-  const narrow = columns < NARROW_COLUMNS;
   const overlay = ui.overlay;
-  const footer =
-    overlay?.kind === 'confirm'
-      ? promptHeight(`${overlay.message} [y/N]`, columns)
-      : overlay?.kind === 'deny'
-        ? promptHeight(DENY_TITLE, columns) +
-          Math.ceil((overlay.text.length + 3) / Math.max(10, columns - 4))
-        : 1;
-  const bodyHeight = Math.max(3, rows - 1 - footer);
-  const paneHeight = Math.max(3, bodyHeight - (narrow ? 1 : 0));
-  const sideWidth = Math.max(24, Math.floor(columns * 0.26));
-  const rightWidth = Math.max(30, Math.floor(columns * 0.34));
+  const layout = screenLayout(columns, rows, overlay, ui.focus);
+  const { narrow, footer, bodyHeight, paneHeight, sideWidth, rightWidth } = layout;
+  // Clicks and the wheel go through the same pure model as keys, over this layout.
+  const mouseRef = useRef({ data, layout, handle });
+  mouseRef.current = { data, layout, handle };
+  useEffect(
+    () =>
+      mouse?.subscribe((e) => {
+        const { data: d, layout: l, handle: h } = mouseRef.current;
+        if (uiRef.current.mouse) h(onMouse(uiRef.current, d, e, l));
+      }),
+    [mouse],
+  );
   const memoryShown =
     overlay?.kind === 'memory'
       ? overlay

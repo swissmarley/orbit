@@ -105,15 +105,15 @@ describe('AuditLog chain', () => {
       expect(r.hash).toBe(expected);
     }
     expect(log.list({ limit: 10 })).toEqual(recs);
-    expect(log.verify()).toEqual({ ok: true, count: 5 });
+    expect(log.verify()).toMatchObject({ ok: true, count: 5 });
   });
 
   it('verifies an empty log and defaults subject/data', () => {
-    expect(log.verify()).toEqual({ ok: true, count: 0 });
+    expect(log.verify()).toMatchObject({ ok: true, count: 0 });
     const r = log.append({ actor: 'system', action: 'daemon.started' });
     expect(r.subject).toBeNull();
     expect(r.data).toEqual({});
-    expect(log.verify()).toEqual({ ok: true, count: 1 });
+    expect(log.verify()).toMatchObject({ ok: true, count: 1 });
   });
 
   it('stores what it hashes: JSON-normalized data round-trips identically', () => {
@@ -131,7 +131,7 @@ describe('AuditLog chain', () => {
     expect(() => log.append({ actor: 'owner', action: 'x', data: { n: 1n } })).toThrow(
       expect.objectContaining({ code: 'invalid_input' }) as Error,
     );
-    expect(log.verify()).toEqual({ ok: true, count: 0 });
+    expect(log.verify()).toMatchObject({ ok: true, count: 0 });
   });
 });
 
@@ -156,7 +156,7 @@ describe('AuditLog redaction', () => {
     expect(all).toContain('[REDACTED:anthropic-key]');
     expect(JSON.stringify(r)).not.toContain(PLANTED);
     // the redacted form is what was hashed, so the chain still verifies
-    expect(log.verify()).toEqual({ ok: true, count: 1 });
+    expect(log.verify()).toMatchObject({ ok: true, count: 1 });
   });
 });
 
@@ -167,7 +167,7 @@ describe('AuditLog append-only triggers', () => {
       /append-only/,
     );
     expect(() => db.sqlite.prepare('DELETE FROM audit WHERE seq = 2').run()).toThrow(/append-only/);
-    expect(log.verify()).toEqual({ ok: true, count: 2 });
+    expect(log.verify()).toMatchObject({ ok: true, count: 2 });
   });
 });
 
@@ -184,7 +184,7 @@ describe('AuditLog tamper detection', () => {
     seed(5);
     dropTriggers();
     db.sqlite.exec(`UPDATE audit SET ${set} WHERE seq = 2`);
-    expect(log.verify()).toEqual({
+    expect(log.verify()).toMatchObject({
       ok: false,
       count: 1,
       firstBadSeq: 2,
@@ -264,12 +264,12 @@ describe('AuditLog tamper detection', () => {
   it('cannot detect deletion of the last record from the chain alone, but count drops', () => {
     seed(5);
     const head = log.verify();
-    expect(head).toEqual({ ok: true, count: 5 });
+    expect(head).toMatchObject({ ok: true, count: 5 });
     dropTriggers();
     db.sqlite.exec('DELETE FROM audit WHERE seq = 5');
     // Documented limitation: tail truncation leaves a valid shorter chain.
     // Callers detect it by comparing count against an externally stored head.
-    expect(log.verify()).toEqual({ ok: true, count: 4 });
+    expect(log.verify()).toMatchObject({ ok: true, count: 4 });
   });
 
   it('detects a tail deletion once another record is appended (seq gap)', () => {
@@ -338,7 +338,7 @@ describe('AuditLog list and export', () => {
     expect(parsed.map((r) => r.seq)).toEqual(Array.from({ length: n }, (_, i) => i + 1));
     expect(parsed.slice(0, 1000)).toEqual(log.list({ limit: 1000 }));
     for (let i = 1; i < parsed.length; i++) expect(parsed[i]!.prevHash).toBe(parsed[i - 1]!.hash);
-    expect(log.verify()).toEqual({ ok: true, count: n });
+    expect(log.verify()).toMatchObject({ ok: true, count: n });
   });
 
   it('exports zero lines for an empty log', () => {
@@ -354,7 +354,7 @@ describe('AuditLog performance', () => {
     for (let i = 0; i < 1000; i++) {
       log.append({ actor: 'bot:bot_1', action: 'tool.call', subject: 'run_1', data: { i } });
     }
-    expect(log.verify()).toEqual({ ok: true, count: 1000 });
+    expect(log.verify()).toMatchObject({ ok: true, count: 1000 });
     expect(performance.now() - start).toBeLessThan(2000);
   });
 });
