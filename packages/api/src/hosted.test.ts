@@ -466,7 +466,9 @@ describe('hosted mode: roles and actors (ADR-015)', () => {
     expect(started.status).toBe(202);
     const run = (await started.json()) as RunState;
     await t.service.queue.idle();
-    const ownerOnly = await t.as(operator, 'PUT', '/v1/secrets/team_token', { value: 'team token value 42' });
+    const ownerOnly = await t.as(operator, 'PUT', '/v1/secrets/team_token', {
+      value: 'team token value 42',
+    });
     expect(ownerOnly.status).toBe(403);
     expect(await ownerOnly.json()).toMatchObject({
       error: { message: 'This needs the owner role; Bob is an operator' },
@@ -479,6 +481,16 @@ describe('hosted mode: roles and actors (ADR-015)', () => {
     expect((await t.as(viewer, 'POST', `/v1/approvals/${approval!.id}/approve`, {})).status).toBe(
       403,
     );
+    // "Always" would write a standing rule: that is the owner's, not the operator's.
+    const always = await t.as(operator, 'POST', `/v1/approvals/${approval!.id}/approve`, {
+      always: { scope: 'global', expiresAt: null },
+    });
+    expect(always.status).toBe(403);
+    expect(((await always.json()) as { error: { message: string } }).error.message).toMatch(
+      /standing rule, which needs the owner role; Bob is an operator/,
+    );
+    expect(t.service.rules.list({ includeInactive: true })).toEqual([]);
+    expect(t.service.approvals.require(approval!.id).status).toBe('pending');
     const decided = await t.as(operator, 'POST', `/v1/approvals/${approval!.id}/approve`, {});
     expect(decided.status).toBe(200);
     expect(((await decided.json()) as { approval: Approval }).approval.decision?.by).toBe('bob');
@@ -487,7 +499,9 @@ describe('hosted mode: roles and actors (ADR-015)', () => {
     expect(audit.find((r) => r.action === 'approval.decided')?.actor).toBe('bob');
 
     // The owner may do owner things, recorded as Ada; the token as `owner`.
-    expect((await t.as(owner, 'PUT', '/v1/secrets/team_token', { value: 'team token value 42' })).status).toBe(200);
+    expect(
+      (await t.as(owner, 'PUT', '/v1/secrets/team_token', { value: 'team token value 42' })).status,
+    ).toBe(200);
     expect((await t.as(t.bearer, 'DELETE', '/v1/secrets/team_token')).status).toBe(200);
     const secrets = t.service
       .auditTail(undefined, 500)

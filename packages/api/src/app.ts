@@ -628,8 +628,19 @@ export function createApp(opts: AppOptions): Hono {
       });
     },
     getApproval: ({ params }) => service.approvals.require(param(params, 'approval')),
-    approve: ({ params, body }) =>
-      service.approve(param(params, 'approval'), body as z.output<typeof routes.approve.body>),
+    approve: ({ params, body }, c) => {
+      const b = body as z.output<typeof routes.approve.body>;
+      // "Always" writes a standing rule, and rules are the owner's (ADR-015).
+      const p = requirePrincipal(c);
+      if (b.always && !roleAtLeast(p.role, 'owner')) {
+        throw new OrbitError(
+          'forbidden',
+          `Approving "always" creates a standing rule, which needs the owner role; ${p.name} is ${p.role === 'operator' ? 'an' : 'a'} ${p.role}`,
+          { hint: 'Approve this once, or ask an owner to add a rule.' },
+        );
+      }
+      return service.approve(param(params, 'approval'), b);
+    },
     deny: ({ params, body }) =>
       service.deny(param(params, 'approval'), body as z.output<typeof routes.deny.body>),
     listRules: ({ query }) =>
