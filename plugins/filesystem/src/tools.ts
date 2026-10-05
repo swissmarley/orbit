@@ -11,6 +11,7 @@ import {
   readlinkSync,
   realpathSync,
   statSync,
+  unlinkSync,
   writeSync,
 } from 'node:fs';
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -161,6 +162,12 @@ export function openChecked(
   const flags =
     (mode === 'read' ? constants.O_RDONLY : constants.O_WRONLY | constants.O_CREAT) |
     constants.O_NOFOLLOW;
+  let existed = true;
+  try {
+    lstatSync(real);
+  } catch {
+    existed = false;
+  }
   let fd: number;
   try {
     fd = openSync(real, flags, 0o644);
@@ -171,6 +178,14 @@ export function openChecked(
     assertOpenedAllowed(ctx, fd, real, path);
     return { fd, real };
   } catch (err) {
+    // A refused write leaves nothing behind: remove the empty file it created.
+    if (mode === 'write' && !existed) {
+      try {
+        unlinkSync(openedPath(fd) ?? real);
+      } catch {
+        // Already gone.
+      }
+    }
     closeSync(fd);
     throw err;
   }

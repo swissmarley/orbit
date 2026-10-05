@@ -630,7 +630,11 @@ Demo Bot **Inbox Triage** (scheduled, drafts replies, requests approval).
   now allowed only for read-like names; everything else floors at EXTERNAL.
   LOW: padded secrets are also redacted in their trimmed form, the Filesystem
   plugin opens with `O_NOFOLLOW` and re-checks what it opened, GitHub body
-  hashes are kept for good. Hard constraints PASS.
+  hashes are kept for good. Hard constraints PASS. Verified by the reviewer
+  (its proof-of-concept re-run: the filter never ran): the gate may close.
+  Afterwards a refused Filesystem write also removes the empty file it
+  created, and the App tests unmount before dismissing toasts (a toast timer
+  could fire after jsdom was gone).
 - UI review: HIGH: the Policies table shows a rule's `inputMatch`, CLI plugin
   output scrubs every manifest field, Integrations offers "Set up" (focusing
   the first missing field) instead of an Enable that would fail, missing
@@ -724,4 +728,5 @@ milestone that will pick them up. Shipped code paths contain no TODO stubs.
 | Plugin processes run as the owner's user without an OS sandbox (Orbit's policy decides every call; env and secrets are allowlisted)                                                       | M7   | M8                                                   | needs a per-plugin container or sandbox profile                                                                                                            |
 | Browser plugin: DNS answers are not checked (an allowed name resolving to a private address is reachable)                                                                                 | M7   | M8                                                   | needs a resolver check in the filter proxy                                                                                                                 |
 | Installing plugins from a remote catalog or npm (today: reference plugins and local folders)                                                                                              | M7   | M8                                                   | packaging milestone; local folders keep the manifest reviewable                                                                                            |
+| Plugin tier floor: a read verb followed by an unknown action word (`get_rm`, `view_eval`) floors at READ, as `classifyTool` does                                                          | M7   | M8                                                   | contrived names; the M8 injection corpus hardens the verb lists for both                                                                                   |
 | Webhooks from other machines need a tunnel the owner runs (orbitd binds loopback only)                                                                                                    | M7   | M8 (hosted mode, TLS)                                | a bearer-free endpoint must not leave the machine without TLS                                                                                              |

@@ -49,8 +49,10 @@ for (const [prop, value] of [
 }
 
 afterEach(() => {
+  // Unmount first: a mounted Toaster answers dismiss() with exit timers that can
+  // fire after jsdom is gone ("window is not defined").
+  cleanup();
   // sonner keeps toasts in module state: start every test without old ones.
   toast.dismiss();
-  cleanup();
   localStorage.clear();
 });
