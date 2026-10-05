@@ -310,3 +310,74 @@ describe('resume scheduling and older projections', () => {
     });
   });
 });
+
+describe('pause and interruption (ADR-016)', () => {
+  const running = () => replayRun(happy.slice(0, 4))!;
+  const paused = (
+    seq: number,
+    data: Partial<Extract<RunEventBody, { type: 'run.paused' }>['data']>,
+  ) =>
+    envelope(seq, {
+      type: 'run.paused',
+      data: {
+        reason: 'owner',
+        by: 'owner',
+        sessionId: 's1',
+        interruptedTurn: false,
+        toolUseId: null,
+        toolName: null,
+        autoResume: false,
+        detail: null,
+        activeMs: 0,
+        ...data,
+      },
+    });
+
+  it('a pause request is open until the segment ends; a paused Run is not ended', () => {
+    let s = foldRun(
+      running(),
+      envelope(5, { type: 'run.pause_requested', data: { by: 'owner', now: false } }),
+    );
+    expect(s.pauseRequested).toMatchObject({ by: 'owner', now: false });
+    s = foldRun(s, paused(6, { toolUseId: 't2', toolName: 'Bash' }));
+    expect(s.status).toBe('paused');
+    expect(s.endedAt).toBeNull();
+    expect(s.pauseRequested).toBeNull();
+    expect(s.pause).toMatchObject({ reason: 'owner', toolName: 'Bash', autoResume: false });
+    s = foldRun(
+      s,
+      envelope(7, { type: 'run.resumed', data: { reason: 'pause', sessionId: 's1' } }),
+    );
+    expect(s.status).toBe('running');
+    expect(s.pause).toBeNull();
+  });
+
+  it('a lapsed request closes; a request on a Run that is not running is ignored', () => {
+    let s = foldRun(
+      running(),
+      envelope(5, { type: 'run.pause_requested', data: { by: 'owner', now: false } }),
+    );
+    s = foldRun(s, envelope(6, { type: 'run.pause_lapsed', data: { by: 'owner' } }));
+    expect(s.pauseRequested).toBeNull();
+    const done = replayRun(happy)!;
+    expect(
+      foldRun(done, envelope(8, { type: 'run.pause_requested', data: { by: 'owner', now: true } }))
+        .pauseRequested,
+    ).toBeNull();
+  });
+
+  it('interruptions are counted and unreported active time is added to the wall clock', () => {
+    let s = foldRun(running(), paused(5, { reason: 'interrupted', by: 'system', activeMs: 1500 }));
+    expect(s.interruptions).toBe(1);
+    expect(s.totals.activeMs).toBe(1500);
+    s = foldRun(
+      s,
+      envelope(6, { type: 'run.resumed', data: { reason: 'interrupted', sessionId: 's1' } }),
+    );
+    s = foldRun(s, paused(7, { reason: 'interrupted', by: 'system', autoResume: true }));
+    expect(s.interruptions).toBe(2);
+    expect(s.pause?.autoResume).toBe(true);
+    s = foldRun(s, envelope(8, { type: 'run.cancelled', data: { reason: 'x', sessionId: 's1' } }));
+    expect(s.pause).toBeNull();
+  });
+});

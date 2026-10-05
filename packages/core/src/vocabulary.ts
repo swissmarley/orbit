@@ -1,5 +1,6 @@
 import type { RunStatus, Tier } from './enums';
 import type { TriggerSpec } from './bot';
+import type { RunPause } from './projection';
 
 /**
  * One status vocabulary for every client (TUI, CLI, App): a symbol, a word
@@ -38,7 +39,12 @@ export const RUN_STATUS: Readonly<Record<RunStatus, StatusWord>> = {
     tone: 'warning',
     meaning: 'paused by a usage limit; resumes after the reset',
   },
-  paused: { mark: '⏸', label: 'paused', tone: 'warning', meaning: 'paused' },
+  paused: {
+    mark: '⏸',
+    label: 'paused',
+    tone: 'warning',
+    meaning: 'paused by you, or because orbitd stopped under it; continues when you resume it',
+  },
   completed: { mark: '✔', label: 'done', tone: 'success', meaning: 'finished successfully' },
   failed: { mark: '✘', label: 'failed', tone: 'danger', meaning: 'ended with an error' },
   cancelled: {
@@ -111,12 +117,39 @@ export const STATUS_LEGEND: readonly { mark: string; means: string }[] = [
   { mark: RUN_STATUS.waiting_approval.mark, means: 'waiting for your approval' },
   { mark: RUN_STATUS.delegating.mark, means: 'waiting for a delegated Bot' },
   { mark: RUN_STATUS.rate_limited.mark, means: 'usage limit — resumes later' },
-  { mark: BOT_PAUSED.mark, means: 'Bot paused' },
+  { mark: BOT_PAUSED.mark, means: 'paused (a Run, or a whole Bot)' },
   { mark: RUN_STATUS.completed.mark, means: 'done' },
   { mark: RUN_STATUS.failed.mark, means: 'failed' },
   { mark: RUN_STATUS.cancelled.mark, means: 'cancelled' },
   { mark: RUN_STATUS.queued.mark, means: 'queued' },
 ];
+
+/** Automatic retries of a Run that orbitd stopped under, before it waits for you (ADR-016). */
+export const INTERRUPT_RETRY_LIMIT = 2;
+
+/**
+ * Why a paused Run is paused, in one line every client shows next to
+ * `RUN_STATUS.paused` ("Paused by owner before Bash ran"). Tool names come
+ * from the engine: clients scrub the line like other engine text.
+ */
+export function pauseReason(p: RunPause): string {
+  if (p.reason === 'owner') {
+    if (p.interruptedTurn) return `Paused by ${p.by}, who interrupted the last turn.`;
+    return p.toolName
+      ? `Paused by ${p.by} before ${p.toolName} ran.`
+      : `Paused by ${p.by} at a tool call.`;
+  }
+  if (p.autoResume) return 'Interrupted when orbitd stopped; it resumes by itself.';
+  return `Interrupted when orbitd stopped and needs you: ${p.detail ?? 'Orbit could not tell whether it is safe to continue'}.`;
+}
+
+/** What the owner can do about a paused Run, in words (CLI, TUI and App add their own controls). */
+export function pauseNextStep(p: RunPause): string {
+  if (p.reason === 'interrupted' && p.autoResume) return 'Nothing to do: it is queued to resume.';
+  if (p.reason === 'interrupted')
+    return 'Check the outcome yourself, then resume it (it is told to verify first) or stop it.';
+  return 'Resume it to continue, or stop it.';
+}
 
 // ── times: always local, with a relative hint ──────────────────────────────
 
