@@ -133,7 +133,7 @@ describe('Settings → Integrations', () => {
         url.endsWith('/catalog.json')
           ? new Response(JSON.stringify(catalog))
           : url.endsWith('/orbit-plugin-clock/-/orbit-plugin-clock-1.0.0.tgz')
-            ? new Response(pkg)
+            ? new Response(new Uint8Array(pkg))
             : new Response('', { status: 404 }),
       );
     };
