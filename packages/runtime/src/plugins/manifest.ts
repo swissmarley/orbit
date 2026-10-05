@@ -96,6 +96,10 @@ export interface PluginEnvInput {
   /** Vault lookup (by the full vault name). */
   secret: (vaultName: string) => string | undefined;
   workspace: string | null;
+  /** Worktree Bots: the owner's repository and the Bot's branch (git runs only there). */
+  git?: { repo: string; branch: string } | undefined;
+  /** Paths the plugin must refuse on the Bot's behalf (credential stores, Orbit's data). */
+  deniedPaths?: readonly string[];
 }
 
 /**
@@ -120,7 +124,13 @@ export function buildPluginEnv(input: PluginEnvInput): Record<string, string> {
     const v = input.secret(pluginSecretKey(manifest.id, s.name));
     if (v !== undefined && isAllowedPluginVar(s.name)) extra[s.name] = v;
   }
+  // Orbit's own context, under names no manifest may declare (ORBIT_*).
   if (input.workspace) extra.ORBIT_WORKSPACE = input.workspace;
+  if (input.git) {
+    extra.ORBIT_GIT_REPO = input.git.repo;
+    extra.ORBIT_GIT_BRANCH = input.git.branch;
+  }
+  if (input.deniedPaths?.length) extra.ORBIT_DENIED_PATHS = JSON.stringify(input.deniedPaths);
   return buildChildEnv('tool', input.source, extra);
 }
 

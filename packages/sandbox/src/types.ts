@@ -24,6 +24,12 @@ export interface Workspace {
   engineSandboxSettings: Record<string, unknown> | null;
   /** Docker only: how the engine is run inside the container. */
   docker: { container: string; workdir: string } | null;
+  /**
+   * Worktree only: the owner's repository and the Bot's own branch. Plugins
+   * that run git (ADR-014) use exactly these, never what the Bot-writable
+   * `.git` file in the workspace says.
+   */
+  git?: { repo: string; branch: string };
 }
 
 export interface SandboxSupport {

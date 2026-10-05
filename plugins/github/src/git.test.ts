@@ -106,6 +106,8 @@ beforeEach(() => {
       PATH: `${bin}${delimiter}${PATH}`,
       HOME: home,
       GITHUB_TOKEN: TOKEN,
+      ORBIT_GIT_REPO: repo,
+      ORBIT_GIT_BRANCH: 'orbit/test',
       GIT_AUTHOR_NAME: 'Test Bot',
       GIT_AUTHOR_EMAIL: 'test-bot@example.test',
       // Inherited git variables are dropped, never honoured.
@@ -116,6 +118,8 @@ beforeEach(() => {
 afterEach(() => rmSync(base, { recursive: true, force: true }));
 
 const head = (cwd: string) => git(cwd, 'rev-parse', 'HEAD');
+const push = (extra: Record<string, unknown> = {}) =>
+  call('git_push', { branch: 'orbit/test', head: head(wt), ...extra });
 
 describe('github plugin: git in the workspace', { timeout: 30_000 }, () => {
   it('commits on the Bot branch as the configured author, and never runs hooks', async () => {
@@ -140,7 +144,10 @@ describe('github plugin: git in the workspace', { timeout: 30_000 }, () => {
   });
 
   it('falls back to the default identity when no author is configured', async () => {
-    ctx = { workspace: wt, env: { PATH, HOME: home } };
+    ctx = {
+      workspace: wt,
+      env: { PATH, HOME: home, ORBIT_GIT_REPO: repo, ORBIT_GIT_BRANCH: 'orbit/test' },
+    };
     writeFileSync(join(wt, 'b.txt'), 'b\n');
     expect((await call('git_commit', { message: 'b' })).isError).toBe(false);
     expect(git(wt, 'log', '-1', '--format=%an <%ae>')).toBe('Orbit Bot <orbit-bot@localhost>');
@@ -192,58 +199,94 @@ describe('github plugin: git in the workspace', { timeout: 30_000 }, () => {
     expect(pathProblem('docs/..hidden/x')).toBeNull();
   });
 
-  it('commits and pushes only on orbit/* branches, and only inside a work tree', async () => {
-    const feature = join(base, 'feature');
-    git(repo, 'worktree', 'add', '-q', '-b', 'feature', feature);
-    ctx = { ...ctx, workspace: feature };
-    writeFileSync(join(feature, 'm.txt'), 'm\n');
-    for (const tool of ['git_commit', 'git_push']) {
-      expect(await call(tool, { message: 'm' })).toMatchObject({
+  it("commits and pushes only on the Bot's own branch, in the worktree Orbit named", async () => {
+    writeFileSync(join(wt, 'm.txt'), 'm\n');
+    // Another branch in the Bot's worktree (e.g. another Bot's): refused.
+    git(wt, 'checkout', '-q', '-b', 'orbit/other');
+    for (const r of [await call('git_commit', { message: 'm' }), await push()]) {
+      expect(r).toMatchObject({
         isError: true,
-        text: matching(/on branch "feature"; .*orbit\/<bot> branch/),
+        text: matching(/on branch "orbit\/other"; .*only on the Bot's own branch orbit\/test/),
       });
     }
     git(wt, 'checkout', '-q', '--detach');
-    ctx = { ...ctx, workspace: wt };
     expect(await call('git_commit', { message: 'm' })).toMatchObject({
       isError: true,
       text: matching(/detached/),
     });
+    git(wt, 'checkout', '-q', 'orbit/test');
+
+    // Orbit names no repository (not a worktree Bot): every git tool refuses.
+    const noRepo = { ...ctx.env };
+    delete noRepo.ORBIT_GIT_REPO;
+    ctx = { ...ctx, env: noRepo };
+    for (const tool of ['git_commit', 'git_status', 'git_log', 'git_diff']) {
+      expect(await call(tool, { message: 'm' })).toMatchObject({
+        isError: true,
+        text: matching(/only for worktree Bots/),
+      });
+    }
+    ctx = { ...ctx, env: { ...noRepo, ORBIT_GIT_REPO: repo, ORBIT_GIT_BRANCH: 'main' } };
+    expect(await call('git_status')).toMatchObject({
+      isError: true,
+      text: matching(/unexpected branch/),
+    });
+
+    // A folder that is not a worktree of the named repository.
     const plain = join(base, 'plain');
     mkdirSync(plain);
-    ctx = { ...ctx, workspace: plain };
-    for (const tool of ['git_commit', 'git_push', 'git_status', 'git_log']) {
+    ctx = { ...ctx, workspace: plain, env: { ...ctx.env, ORBIT_GIT_BRANCH: 'orbit/test' } };
+    for (const tool of ['git_commit', 'git_status', 'git_log']) {
       expect(await call(tool, { message: 'm' })).toMatchObject({
         isError: true,
-        text: 'The workspace is not inside a git work tree',
+        text: matching(/not a git worktree of the Bot's repository/),
       });
     }
+    // The main checkout (its .git inside the folder, Bot-writable there) is not a Bot worktree.
+    ctx = { ...ctx, workspace: repo };
+    expect(await call('git_status')).toMatchObject({
+      isError: true,
+      text: matching(/only for worktree Bots/),
+    });
   });
 
-  it('refuses a workspace that keeps its own .git (Bot-writable config) or sits inside another repo', async () => {
-    // The main checkout's .git is inside its folder: its config is Bot-writable there.
-    git(repo, 'checkout', '-q', '-b', 'orbit/own-git');
-    ctx = { ...ctx, workspace: repo };
-    writeFileSync(join(repo, 'm.txt'), 'm\n');
-    for (const tool of ['git_commit', 'git_push', 'git_status', 'git_diff', 'git_log']) {
-      expect(await call(tool, { message: 'm' })).toMatchObject({
-        isError: true,
-        text: matching(/keeps its own \.git/),
-      });
-    }
-    const nested = join(repo, 'sub');
-    mkdirSync(nested);
-    ctx = { ...ctx, workspace: nested };
-    expect(await call('git_status', {})).toMatchObject({
-      isError: true,
-      text: matching(/not the top of a git work tree/),
+  it('ignores a rewritten .git file: git never reads a repository or config the Bot wrote (review H1)', async () => {
+    // The Bot points its workspace's .git at a repository of its own whose
+    // config runs a program through a clean filter.
+    const evil = join(base, 'evil.git');
+    git(base, 'init', '-q', '--bare', evil);
+    const marker = join(base, 'filter-ran');
+    const program = join(base, 'filter.sh');
+    writeFileSync(program, `#!/bin/sh\ntouch "${marker}"\ncat\n`);
+    chmodSync(program, 0o755);
+    writeFileSync(
+      join(evil, 'config'),
+      `${readFileSync(join(evil, 'config'), 'utf8')}[core]\n\tbare = false\n[filter "x"]\n\tclean = ${program}\n`,
+    );
+    writeFileSync(join(wt, '.git'), `gitdir: ${evil}\n`);
+    writeFileSync(join(wt, '.gitattributes'), '* filter=x\n');
+    writeFileSync(join(wt, 'a.txt'), 'a\n');
+    // Positive control: plain git in the workspace now follows the Bot's .git.
+    git(wt, 'add', '-A');
+    expect(existsSync(marker)).toBe(true);
+    rmSync(marker);
+
+    const r = await call('git_commit', { message: 'through the real worktree' });
+    expect(r).toMatchObject({
+      isError: false,
+      text: matching(/^Committed [0-9a-f]+ on orbit\/test/),
     });
+    expect(existsSync(marker)).toBe(false);
+    // The commit landed on the Bot's branch in the owner's repository.
+    expect(git(repo, 'log', '-1', '--format=%s', 'orbit/test')).toBe('through the real worktree');
+    expect((await call('git_status')).text).toMatch(/^## orbit\/test/);
+    expect(existsSync(marker)).toBe(false);
   });
 
   it('pushes the Bot branch to the remote, without hooks and without forcing', async () => {
     writeFileSync(join(wt, 'a.txt'), 'a\n');
     await call('git_commit', { message: 'a' });
-    const r = await call('git_push');
+    const r = await push();
     expect(r).toMatchObject({
       isError: false,
       text: matching(/^Pushed orbit\/test \([0-9a-f]+\) to origin\./),
@@ -251,22 +294,38 @@ describe('github plugin: git in the workspace', { timeout: 30_000 }, () => {
     expect(git(bare, 'rev-parse', 'refs/heads/orbit/test')).toBe(head(wt));
     expect(existsSync(join(base, 'pre-push-ran'))).toBe(false);
     const argv = readFileSync(argvLog, 'utf8').split('\n');
-    expect(argv).toContain('HEAD:refs/heads/orbit/test');
+    expect(argv).toContain(`${head(wt)}:refs/heads/orbit/test`);
     expect(argv.some((a) => /^-f$|^--force/.test(a) || a.startsWith('+'))).toBe(false);
 
-    expect(await call('git_push', { remote: 'nope' })).toMatchObject({
+    expect(await push({ remote: 'nope' })).toMatchObject({
       isError: true,
       text: 'There is no remote named "nope" in this repository',
     });
     for (const remote of ['-x', '--mirror', 'a b', '..', 'origin/x']) {
-      expect(await call('git_push', { remote })).toMatchObject({ isError: true });
+      expect(await push({ remote })).toMatchObject({ isError: true });
     }
+    // The approval names the branch and the commit: anything else pushes nothing (review M4).
+    writeFileSync(join(wt, 'b.txt'), 'b\n');
+    const approved = head(wt);
+    await call('git_commit', { message: 'b' });
+    expect(await push({ head: approved })).toMatchObject({
+      isError: true,
+      text: matching(/not [0-9a-f]+: the branch changed after this push was approved/),
+    });
+    expect(await push({ branch: 'orbit/other' })).toMatchObject({
+      isError: true,
+      text: matching(/Only the Bot's own branch orbit\/test can be pushed/),
+    });
+    for (const h of ['HEAD', 'abc', 'main']) {
+      expect(await push({ head: h })).toMatchObject({ isError: true });
+    }
+    expect(git(bare, 'rev-parse', 'refs/heads/orbit/test')).toBe(approved);
   });
 
   it('fails clearly when the remote branch has diverged, and leaves it alone', async () => {
     writeFileSync(join(wt, 'a.txt'), 'a\n');
     await call('git_commit', { message: 'a' });
-    expect((await call('git_push')).isError).toBe(false);
+    expect((await push()).isError).toBe(false);
 
     const other = join(base, 'other');
     git(base, 'clone', '-q', '-b', 'orbit/test', bare, other);
@@ -278,7 +337,7 @@ describe('github plugin: git in the workspace', { timeout: 30_000 }, () => {
 
     writeFileSync(join(wt, 'mine.txt'), 'mine\n');
     await call('git_commit', { message: 'mine' });
-    expect(await call('git_push')).toMatchObject({
+    expect(await push()).toMatchObject({
       isError: true,
       text: matching(/rejected.*non-fast-forward.*never force-pushes/),
     });
@@ -291,7 +350,7 @@ describe('github plugin: git in the workspace', { timeout: 30_000 }, () => {
     git(repo, 'config', `url.${bare}.insteadOf`, 'https://github.com/acme/widgets.git');
     writeFileSync(join(wt, 'a.txt'), 'a\n');
     await call('git_commit', { message: 'a' });
-    expect((await call('git_push')).isError).toBe(false);
+    expect((await push()).isError).toBe(false);
     expect(git(bare, 'rev-parse', 'refs/heads/orbit/test')).toBe(head(wt));
 
     const argv = readFileSync(argvLog, 'utf8');

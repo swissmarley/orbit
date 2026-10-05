@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { type IncomingHttpHeaders, type Server, createServer } from 'node:http';
 import { type AddressInfo } from 'node:net';
@@ -258,24 +257,11 @@ describe('github plugin: REST calls', () => {
     expect(seen.every((s) => s.headers.authorization === `Bearer ${TOKEN}`)).toBe(true);
   });
 
-  it("opens a pull request from the workspace's branch into the default branch", async () => {
+  it("opens a pull request from the Bot's own branch into the default branch", async () => {
     const dir = mkdtempSync(join(tmpdir(), 'orbit-gh-pr-'));
     try {
-      const env = {
-        PATH: process.env.PATH ?? '',
-        HOME: dir,
-        GIT_AUTHOR_NAME: 'T',
-        GIT_AUTHOR_EMAIL: 't@x',
-        GIT_COMMITTER_NAME: 'T',
-        GIT_COMMITTER_EMAIL: 't@x',
-      };
-      const repo = join(dir, 'repo');
-      execFileSync('git', ['init', '-q', '-b', 'trunk', repo], { env });
-      execFileSync('git', ['-C', repo, 'commit', '-q', '--allow-empty', '-m', 'init'], { env });
-      // A worktree Bot: its .git lives in the owner's repository, outside the workspace.
-      const wt = join(dir, 'wt');
-      execFileSync('git', ['-C', repo, 'worktree', 'add', '-q', '-b', 'orbit/demo', wt], { env });
-      ctx = { ...ctx, workspace: wt };
+      // Orbit names a worktree Bot's own branch; the workspace's .git is never read.
+      ctx = { ...ctx, workspace: dir, env: { ...ctx.env, ORBIT_GIT_BRANCH: 'orbit/demo' } };
       routes['GET /repos/acme/widgets'] = () => ({ body: { default_branch: 'trunk' } });
       routes['POST /repos/acme/widgets/pulls'] = () => ({
         status: 201,

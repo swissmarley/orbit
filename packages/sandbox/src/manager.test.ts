@@ -289,6 +289,8 @@ describe('SandboxManager — worktree (commands)', () => {
       ['git', '-C', repo, 'worktree', 'add', '-B', 'orbit/bot_test1', ws.path],
     ]);
     expect(ws.kind).toBe('worktree');
+    // Plugins that run git get these from Orbit, never from the workspace's .git (M7 H1).
+    expect(ws.git).toEqual({ repo, branch: 'orbit/bot_test1' });
   });
 
   it('reattaches an existing Bot branch without resetting it', async () => {

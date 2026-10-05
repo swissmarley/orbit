@@ -60,6 +60,65 @@ describe('filesystem plugin', () => {
     });
   });
 
+  it('refuses credential stores, Orbit data and hidden files even inside a root (review H2)', async () => {
+    const home = join(base, 'home');
+    const orbitHome = join(home, 'orbit');
+    const ws = join(orbitHome, 'workspaces', 'bot_1');
+    mkdirSync(join(home, '.ssh'), { recursive: true });
+    mkdirSync(join(home, 'cloud'), { recursive: true });
+    mkdirSync(ws, { recursive: true });
+    writeFileSync(join(home, '.ssh', 'id_ed25519'), 'PRIVATE KEY');
+    writeFileSync(join(home, 'cloud', 'credentials'), 'aws secret');
+    writeFileSync(join(orbitHome, 'orbit.db'), 'database');
+    writeFileSync(join(ws, 'draft.md'), 'the Bot’s own file');
+    writeFileSync(join(home, '.env'), 'TOKEN=x');
+    writeFileSync(join(home, 'plan.md'), 'plain notes');
+    // The owner shares their whole home folder.
+    ctx = {
+      workspace: ws,
+      env: {
+        FS_ROOTS: home,
+        ORBIT_WORKSPACE: ws,
+        ORBIT_DENIED_PATHS: JSON.stringify([join(home, '.ssh'), join(home, 'cloud'), orbitHome]),
+      },
+    };
+    expect((await call('read_file', { path: 'plan.md' })).text).toBe('plain notes');
+    expect((await call('read_file', { path: 'orbit/workspaces/bot_1/draft.md' })).isError).toBe(
+      false,
+    );
+    for (const path of [
+      '.ssh/id_ed25519',
+      join(home, '.ssh', 'id_ed25519'),
+      'cloud/credentials',
+      'orbit/orbit.db',
+      '.env',
+      '/proc/self/environ',
+    ]) {
+      expect(await call('read_file', { path }), path).toMatchObject({ isError: true });
+    }
+    // A link in a shared folder pointing at a denied file is followed, then refused.
+    symlinkSync(join(home, 'cloud', 'credentials'), join(home, 'creds.txt'));
+    expect(await call('read_file', { path: 'creds.txt' })).toMatchObject({
+      isError: true,
+      text: matching(/credentials or Orbit data/),
+    });
+    expect(await call('write_file', { path: 'orbit/orbit.db', content: 'x' })).toMatchObject({
+      isError: true,
+    });
+    expect(readFileSync(join(orbitHome, 'orbit.db'), 'utf8')).toBe('database');
+    const found = (await call('search_files', { query: 'secret', limit: 100 })).text;
+    expect(found).toBe('No matches.');
+    expect((await call('search_files', { query: 'database' })).text).toBe('No matches.');
+    // Positive control: the same search finds plain files.
+    expect((await call('search_files', { query: 'plain' })).text).toContain('plan.md');
+
+    ctx = { ...ctx, env: { ...ctx.env, ORBIT_DENIED_PATHS: 'not json' } };
+    expect(await call('read_file', { path: 'plan.md' })).toMatchObject({
+      isError: true,
+      text: matching(/nothing is reachable/),
+    });
+  });
+
   it('writes inside the folders, creating sub-folders only when asked', async () => {
     expect(await call('write_file', { path: 'new/a.md', content: 'hello' })).toMatchObject({
       isError: true,

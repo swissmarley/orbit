@@ -12,7 +12,7 @@ import {
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { type Bot, type DriverKind, OrbitError, slugify } from '@orbit/core';
-import { engineSandboxSettings } from './engine-sandbox';
+import { engineSandboxSettings, pluginDeniedPaths } from './engine-sandbox';
 import { detectSandboxSupport } from './support';
 import type {
   CommandResult,
@@ -214,6 +214,20 @@ export class SandboxManager {
     return `${CONTAINER_PREFIX}${safeBotId(bot)}`;
   }
 
+  /** A worktree Bot's own branch: commits and pushes happen only there. */
+  static botBranch(bot: Bot): string {
+    return `orbit/${safeBotId(bot)}`;
+  }
+
+  /** Paths plugin processes refuse on a Bot's behalf (see pluginDeniedPaths). */
+  pluginDeniedPaths(): string[] {
+    return pluginDeniedPaths({
+      home: this.home,
+      orbitHome: realOrSelf(this.orbitHome),
+      extraDenied: this.extraDenied,
+    });
+  }
+
   /** Host path of a Bot's workspace (whether or not it exists yet), keyed by Bot id. */
   workspacePath(bot: Bot): string {
     return join(realOrSelf(this.orbitHome), 'workspaces', safeBotId(bot));
@@ -269,9 +283,12 @@ export class SandboxManager {
     switch (sb.kind) {
       case 'docker':
         return this.prepareDocker(bot, path);
-      case 'worktree':
-        await this.prepareWorktree(bot, path, resolve(sb.repo ?? ''));
-        return this.hostWorkspace(bot, 'worktree', path);
+      case 'worktree': {
+        const repo = resolve(sb.repo ?? '');
+        await this.prepareWorktree(bot, path, repo);
+        const ws = await this.hostWorkspace(bot, 'worktree', path);
+        return { ...ws, git: { repo: realOrSelf(repo), branch: SandboxManager.botBranch(bot) } };
+      }
       case 'directory':
         ensurePrivateDir(path);
         return this.hostWorkspace(bot, 'directory', path);
@@ -499,7 +516,7 @@ export class SandboxManager {
     }
     ensurePrivateDir(path);
 
-    const branch = `orbit/${safeBotId(bot)}`;
+    const branch = SandboxManager.botBranch(bot);
     const exists = await this.git(repo, [
       'rev-parse',
       '--verify',

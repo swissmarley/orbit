@@ -199,6 +199,8 @@ describe('plugin environment (ADR-014)', () => {
       settings: {},
       secret: (n) => vault.get(n),
       workspace: '/ws',
+      git: { repo: '/src/widgets', branch: 'orbit/bot_1' },
+      deniedPaths: ['/home/owner/.ssh', '/orbit-home'],
     });
     expect(env).toMatchObject({
       PATH: ENV.PATH,
@@ -206,6 +208,10 @@ describe('plugin environment (ADR-014)', () => {
       FAKE_API_URL: ENV.FAKE_API_URL,
       FAKE_TOKEN: 'fake-token-1234',
       ORBIT_WORKSPACE: '/ws',
+      // Orbit's own context for worktree git and path checks (review H1/H2).
+      ORBIT_GIT_REPO: '/src/widgets',
+      ORBIT_GIT_BRANCH: 'orbit/bot_1',
+      ORBIT_DENIED_PATHS: JSON.stringify(['/home/owner/.ssh', '/orbit-home']),
     });
     for (const k of [
       'ANTHROPIC_API_KEY',

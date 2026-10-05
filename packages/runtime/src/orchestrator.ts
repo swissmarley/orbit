@@ -62,6 +62,8 @@ export interface PreparedWorkspace {
   engineSandbox: Record<string, unknown> | null;
   /** SDK engine spawner (docker exec); undefined = run locally. */
   spawnEngine?: unknown;
+  /** Worktree Bots: the owner's repository and the Bot's own branch (for plugins that run git). */
+  git?: { repo: string; branch: string };
 }
 
 export type WorkspaceProvider = (bot: Bot, driver: DriverKind) => Promise<PreparedWorkspace>;
@@ -983,7 +985,7 @@ export class Orchestrator {
       prior.depth,
       prior.memoryWrites,
       driver.kind,
-      ws.path,
+      ws,
       taint,
       addTaint,
     );
@@ -1399,7 +1401,7 @@ export class Orchestrator {
     depth: number,
     memoryWrites: number,
     driver: DriverKind,
-    workspace: string,
+    ws: PreparedWorkspace,
     taint: Set<string>,
     addTaint: (sources: readonly string[]) => void,
   ): {
@@ -1428,7 +1430,7 @@ export class Orchestrator {
     const http = (path: string) => (base ? { url: `${base}${path}`, token: session.token } : null);
     const plugins =
       wantsPlugins && registry && pluginSegments
-        ? pluginSegments.open(registry, bot, workspace, session)
+        ? pluginSegments.open(registry, bot, ws.path, session, ws.git)
         : null;
     return {
       session,

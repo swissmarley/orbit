@@ -1,4 +1,5 @@
 import { mkdirSync, readdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -12,6 +13,7 @@ import {
   pluginToolName,
 } from '@orbit/core';
 import { type AuditSink, type ToolTierOverride, effectivePluginTier } from '@orbit/policy';
+import { pluginDeniedPaths } from '@orbit/sandbox';
 import type { OrbitDb } from '@orbit/store';
 import type { Env } from '../env';
 import { HttpMcpClient, type McpClient, type McpToolDef, StdioMcpClient } from './client';
@@ -74,6 +76,8 @@ export interface ClientSpec {
   /** cwd of a stdio server: the Bot's workspace, or the plugin's scratch dir for checks. */
   cwd: string;
   workspace: string | null;
+  /** Worktree Bots: the owner's repository and the Bot's own branch. */
+  git?: { repo: string; branch: string } | undefined;
 }
 
 export interface PluginRegistryDeps {
@@ -90,6 +94,8 @@ export interface PluginRegistryDeps {
   redact?: (s: string) => string;
   audit?: AuditSink;
   paths?: { node: string; tsx: string };
+  /** Paths plugins refuse on a Bot's behalf; default: credential stores and $ORBIT_HOME. */
+  deniedPaths?: readonly string[];
   /** Tests: a fake server instead of a process. */
   clientFactory?: (spec: ClientSpec, defaultClient: () => McpClient) => McpClient;
 }
@@ -608,6 +614,17 @@ export class PluginRegistry {
     };
   }
 
+  private deniedPaths(): readonly string[] {
+    return (
+      this.deps.deniedPaths ??
+      pluginDeniedPaths({
+        home: this.deps.env.HOME ?? homedir(),
+        orbitHome: this.deps.home,
+        extraDenied: this.deps.env.CLAUDE_CONFIG_DIR ? [this.deps.env.CLAUDE_CONFIG_DIR] : [],
+      })
+    );
+  }
+
   /** A client for a plugin server: a child process with the plugin's own env, or HTTP. */
   client(spec: ClientSpec): McpClient {
     const secret = (name: string) => this.deps.vault.get(name);
@@ -629,6 +646,8 @@ export class PluginRegistry {
           settings: this.settingsOf(this.row(manifest.id)),
           secret,
           workspace: spec.workspace,
+          git: spec.git,
+          deniedPaths: this.deniedPaths(),
         }),
         ...(this.deps.redact ? { redact: this.deps.redact } : {}),
       });

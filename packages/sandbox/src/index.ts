@@ -21,8 +21,10 @@ export {
   type DetectOptions,
 } from './support';
 export {
+  DENIED_ABSOLUTE_PATHS,
   DENIED_HOME_PATHS,
   engineSandboxSettings,
+  pluginDeniedPaths,
   isWithin,
   type EngineSandboxOptions,
 } from './engine-sandbox';

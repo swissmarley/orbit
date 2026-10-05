@@ -26,6 +26,28 @@ export const DENIED_HOME_PATHS: readonly string[] = [
 /** Absolute paths never readable from the sandbox (process environments of other processes). */
 export const DENIED_ABSOLUTE_PATHS: readonly string[] = ['/proc', '/sys'];
 
+/**
+ * Paths a plugin process must refuse to touch on the Bot's behalf (ADR-014):
+ * the same credential stores the engine sandbox denies, other processes'
+ * environments, and Orbit's own data directory (database, vault, other Bots'
+ * workspaces) — the Bot's own workspace inside it is the one exception, which
+ * the plugin applies itself.
+ */
+export function pluginDeniedPaths(opts: {
+  home: string;
+  orbitHome: string;
+  extraDenied?: readonly string[];
+}): string[] {
+  return [
+    ...new Set([
+      ...DENIED_HOME_PATHS.map((p) => join(resolve(opts.home), p)),
+      ...DENIED_ABSOLUTE_PATHS,
+      ...(opts.extraDenied ?? []).map((p) => resolve(p)),
+      resolve(opts.orbitHome),
+    ]),
+  ];
+}
+
 export interface EngineSandboxOptions {
   /** The Bot's workspace: the only writable path. */
   workspace: string;

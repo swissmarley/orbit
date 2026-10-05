@@ -58,7 +58,7 @@ list the plugin can use it.
 - **Hooks never run.** Every git command gets `core.hooksPath=/dev/null`
   (commits and pushes also pass `--no-verify`), so nothing the Bot wrote into
   the repository executes. `commit.gpgSign=false`, `core.fsmonitor=false` and
-  `protocol.ext.allow=never` are set too, and git never prompts
+  `protocol.ext.allow=never` and `log.showSignature=false` are set too, and git never prompts
   (`GIT_TERMINAL_PROMPT=0`).
 - **Configuration only through the environment.** git runs through
   `execFile` (never a shell). Its configuration is passed only as
@@ -70,10 +70,17 @@ list the plugin can use it.
   `GIT_CONFIG_*`. git scopes that header to github.com itself, so a rewritten
   remote URL never carries it elsewhere. The raw token is never on a command
   line, never in git's environment, and is scrubbed from every result and error.
-- **Only the Bot's own branch.** `git_commit` and `git_push` refuse unless the
-  workspace is a git work tree on a branch starting with `orbit/`. `git_push`
-  pushes exactly `HEAD:refs/heads/<that branch>` and never forces: a diverged
-  remote gives a clear error instead.
+- **Only the repository and branch Orbit names.** Orbit passes a worktree
+  Bot's repository and branch (`ORBIT_GIT_REPO`, `ORBIT_GIT_BRANCH`). git runs
+  with an explicit `GIT_DIR` (the worktree's entry in that repository, found by
+  its back-pointer to the workspace) and `GIT_WORK_TREE`, so the workspace's
+  own `.git` file, which the Bot can rewrite, is never read. Other Bots' kinds
+  of workspace get no git tools. `git_commit` and `git_push` refuse unless the
+  worktree is checked out on exactly the Bot's own `orbit/<bot>` branch.
+- **The approval names what is pushed.** `git_push` takes the branch and the
+  commit sha, so the approval card shows both; it pushes exactly
+  `<sha>:refs/heads/<branch>` and refuses if the branch moved since. It never
+  forces: a diverged remote gives a clear error instead.
 - **Paths are checked.** Paths must be relative, without `..` segments, a
   leading `-` or `:`, or NUL characters, and are taken literally
   (`GIT_LITERAL_PATHSPECS=1`).

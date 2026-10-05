@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
-import { existsSync, realpathSync } from 'node:fs';
-import { sep } from 'node:path';
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { dirname, join, resolve, sep } from 'node:path';
 import { ToolError, type ToolContext, defineTool } from '@orbit/plugin-kit';
 import { z } from 'zod';
 
@@ -20,12 +20,11 @@ export const BASE_GIT_CONFIG: GitConfig = [
   ['commit.gpgSign', 'false'],
   ['core.fsmonitor', 'false'],
   ['protocol.ext.allow', 'never'],
+  ['log.showSignature', 'false'],
 ];
 
 export const DEFAULT_AUTHOR_NAME = 'Orbit Bot';
 export const DEFAULT_AUTHOR_EMAIL = 'orbit-bot@localhost';
-/** The Bot's own branches; commits and pushes happen only there. */
-export const BOT_BRANCH_PREFIX = 'orbit/';
 
 // eslint-disable-next-line no-control-regex -- removing control characters is the point
 const CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g;
@@ -136,25 +135,55 @@ export interface GitResult {
 
 const MAX_BUFFER = 8 * 1024 * 1024;
 
-/** Run git (never a shell) in the workspace. */
+/**
+ * The Bot's repository as Orbit named it: the worktree's administrative
+ * directory inside the owner's repository (`<repo>/.git/worktrees/<name>`),
+ * the workspace as the work tree, and the Bot's own branch.
+ */
+export interface BotRepo {
+  gitDir: string;
+  workTree: string;
+  branch: string;
+}
+
+interface RunOptions {
+  config?: GitConfig;
+  timeoutMs?: number;
+  /** Run against the Bot's repository (explicit GIT_DIR / GIT_WORK_TREE). */
+  repo?: BotRepo;
+  /** Otherwise: the directory git runs in. */
+  cwd?: string;
+}
+
+/**
+ * Run git (never a shell). Against a BotRepo, git gets GIT_DIR and
+ * GIT_WORK_TREE explicitly, so the `.git` file in the workspace (which the Bot
+ * can rewrite to point at a repository and configuration of its own) is never
+ * consulted.
+ */
 export function runGit(
   ctx: ToolContext,
   args: readonly string[],
-  config: GitConfig = [],
-  timeoutMs = 60_000,
+  opts: RunOptions = {},
 ): Promise<GitResult> {
-  if (!existsSync(ctx.workspace)) {
+  const cwd = opts.repo?.workTree ?? opts.cwd ?? ctx.workspace;
+  if (!existsSync(cwd)) {
     return Promise.reject(new ToolError('The workspace folder does not exist'));
+  }
+  const env = gitEnv(ctx, opts.config ?? []);
+  if (opts.repo) {
+    env.GIT_DIR = opts.repo.gitDir;
+    env.GIT_WORK_TREE = opts.repo.workTree;
   }
   return new Promise((resolve, reject) => {
     execFile(
       'git',
       args,
       {
-        cwd: ctx.workspace,
-        env: gitEnv(ctx, config),
+        cwd,
+        env,
         maxBuffer: MAX_BUFFER,
-        timeout: timeoutMs,
+        timeout: opts.timeoutMs ?? 60_000,
         encoding: 'utf8',
         windowsHide: true,
       },
@@ -194,67 +223,98 @@ export function gitMessage(r: GitResult, ctx: ToolContext): string {
   return text.split('\n').slice(-12).join('\n').slice(0, 2000);
 }
 
-/**
- * The workspace must be the top of a git work tree whose repository lives
- * outside it (a worktree Bot: `.git` is in the owner's repository). A `.git`
- * inside the workspace is Bot-writable, so its config (filter drivers,
- * textconv, fsmonitor…) could run commands through git: refused. A workspace
- * that is merely somewhere below another repository is refused too.
- */
-export async function requireWorkTree(ctx: ToolContext): Promise<void> {
-  const r = await runGit(ctx, [
-    'rev-parse',
-    '--path-format=absolute',
-    '--show-toplevel',
-    '--git-common-dir',
-  ]);
-  const [top = '', common = ''] = r.stdout.trim().split('\n');
-  if (r.code !== 0 || !top || !common) {
-    throw new ToolError('The workspace is not inside a git work tree');
-  }
-  const real = (p: string) => {
-    try {
-      return realpathSync(p);
-    } catch {
-      return p;
-    }
-  };
-  const ws = real(ctx.workspace);
-  if (real(top) !== ws) {
-    throw new ToolError(
-      "The workspace is not the top of a git work tree; give the Bot a worktree sandbox (sandbox.kind 'worktree')",
-    );
-  }
-  const repo = real(common);
-  if (repo === ws || repo.startsWith(ws.endsWith(sep) ? ws : ws + sep)) {
-    throw new ToolError(
-      "This workspace keeps its own .git, which the Bot can edit; git runs only for worktree Bots (sandbox.kind 'worktree'), whose repository lives outside the workspace",
-    );
+const BOT_BRANCH = /^orbit\/[a-z0-9_]{1,64}$/;
+
+function real(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
   }
 }
 
+function within(child: string, parent: string): boolean {
+  return child === parent || child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
+}
+
+const NOT_WORKTREE =
+  "git runs only for worktree Bots (sandbox.kind 'worktree'), whose repository Orbit names";
+
+/**
+ * The Bot's repository, from what Orbit passed (ORBIT_GIT_REPO,
+ * ORBIT_GIT_BRANCH) — never from the workspace's `.git` file. The worktree's
+ * administrative directory is found in the owner's repository by its
+ * `gitdir` back-pointer to this workspace (ADR-014; M7 safety review H1).
+ */
+export async function botRepo(ctx: ToolContext): Promise<BotRepo> {
+  const repoPath = ctx.env.ORBIT_GIT_REPO?.trim();
+  const branch = ctx.env.ORBIT_GIT_BRANCH?.trim();
+  if (!repoPath || !branch) throw new ToolError(NOT_WORKTREE);
+  if (!BOT_BRANCH.test(branch)) {
+    throw new ToolError(`Orbit named an unexpected branch for this Bot: "${cleanText(branch)}"`);
+  }
+  if (!existsSync(ctx.workspace)) throw new ToolError('The workspace folder does not exist');
+  const ws = real(ctx.workspace);
+  const repo = real(repoPath);
+  if (within(repo, ws)) {
+    throw new ToolError(NOT_WORKTREE);
+  }
+  const r = await runGit(ctx, ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
+    cwd: repo,
+  });
+  const common = r.stdout.trim();
+  if (r.code !== 0 || !common) {
+    throw new ToolError(`The Bot's repository (${cleanText(repoPath)}) is not a git repository`);
+  }
+  const commonDir = real(common);
+  if (within(commonDir, ws)) throw new ToolError(NOT_WORKTREE);
+  const worktrees = join(commonDir, 'worktrees');
+  let names: string[];
+  try {
+    names = readdirSync(worktrees);
+  } catch {
+    names = [];
+  }
+  const gitDir = names
+    .map((n) => join(worktrees, n))
+    .find((dir) => {
+      try {
+        const target = readFileSync(join(dir, 'gitdir'), 'utf8').trim();
+        return target !== '' && real(dirname(resolve(dir, target))) === ws;
+      } catch {
+        return false;
+      }
+    });
+  if (!gitDir) {
+    throw new ToolError(
+      `The workspace is not a git worktree of the Bot's repository (${cleanText(repoPath)})`,
+    );
+  }
+  return { gitDir, workTree: ws, branch };
+}
+
 /** The checked-out branch, or null when HEAD is detached. */
-export async function currentBranch(ctx: ToolContext): Promise<string | null> {
-  const r = await runGit(ctx, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+export async function currentBranch(ctx: ToolContext, repo: BotRepo): Promise<string | null> {
+  const r = await runGit(ctx, ['symbolic-ref', '--quiet', '--short', 'HEAD'], { repo });
   const b = r.stdout.trim();
   return r.code === 0 && b ? b : null;
 }
 
-/** The Bot's own branch (`orbit/…`), or a clear refusal. */
-export async function requireBotBranch(ctx: ToolContext): Promise<string> {
-  await requireWorkTree(ctx);
-  const branch = await currentBranch(ctx);
+/** The Bot's repository, checked out on exactly the Bot's own branch, or a clear refusal. */
+export async function requireBotBranch(ctx: ToolContext): Promise<BotRepo> {
+  const repo = await botRepo(ctx);
+  const branch = await currentBranch(ctx, repo);
   if (!branch) {
     throw new ToolError(
-      `HEAD is detached; commits and pushes happen only on the Bot's own ${BOT_BRANCH_PREFIX}<bot> branch`,
+      `HEAD is detached; commits and pushes happen only on the Bot's own branch ${repo.branch}`,
     );
   }
-  if (!branch.startsWith(BOT_BRANCH_PREFIX) || branch.length <= BOT_BRANCH_PREFIX.length) {
+  if (branch !== repo.branch) {
     throw new ToolError(
-      `The workspace is on branch "${cleanText(branch)}"; this plugin commits and pushes only on the Bot's own ${BOT_BRANCH_PREFIX}<bot> branch`,
+      `The workspace is on branch "${cleanText(branch)}"; this plugin commits and pushes only on the Bot's own branch ${repo.branch}`,
     );
   }
-  return branch;
+  return repo;
 }
 
 /** Why a path the Bot named is refused, or null when it is a safe relative path. */
@@ -287,6 +347,8 @@ function cap(text: string, max: number, hint: string): string {
     : `${text.slice(0, max)}\n… (truncated at ${max} characters; ${hint})`;
 }
 
+const Sha = z.string().regex(/^[0-9a-f]{7,40}$/, 'a commit sha (7 to 40 lowercase hex characters)');
+
 export const gitTools = [
   defineTool({
     name: 'git_status',
@@ -294,8 +356,10 @@ export const gitTools = [
       "Show the workspace's git status: the current branch, staged, unstaged and untracked files.",
     input: z.object({}),
     run: async (_args, ctx) => {
-      await requireWorkTree(ctx);
-      const r = await runGit(ctx, ['status', '--short', '--branch', '--untracked-files=all']);
+      const repo = await botRepo(ctx);
+      const r = await runGit(ctx, ['status', '--short', '--branch', '--untracked-files=all'], {
+        repo,
+      });
       if (r.code !== 0) throw new ToolError(`git status failed:\n${gitMessage(r, ctx)}`);
       const lines = cleanText(r.stdout).trimEnd().split('\n');
       const body =
@@ -312,12 +376,14 @@ export const gitTools = [
       maxChars: z.int().min(1000).max(50_000).default(30_000),
     }),
     run: async ({ paths, maxChars }, ctx) => {
-      await requireWorkTree(ctx);
+      const repo = await botRepo(ctx);
       const spec = ['--', ...(paths ?? [])];
       const diffArgs = ['diff', '--no-color', '--no-ext-diff', '--no-textconv'];
-      const staged = await runGit(ctx, [...diffArgs, '--cached', ...spec]);
-      const unstaged = await runGit(ctx, [...diffArgs, ...spec]);
-      const untracked = await runGit(ctx, ['ls-files', '--others', '--exclude-standard', ...spec]);
+      const staged = await runGit(ctx, [...diffArgs, '--cached', ...spec], { repo });
+      const unstaged = await runGit(ctx, [...diffArgs, ...spec], { repo });
+      const untracked = await runGit(ctx, ['ls-files', '--others', '--exclude-standard', ...spec], {
+        repo,
+      });
       for (const r of [staged, unstaged, untracked]) {
         if (r.code !== 0) throw new ToolError(`git diff failed:\n${gitMessage(r, ctx)}`);
       }
@@ -336,15 +402,20 @@ export const gitTools = [
     description: 'Show the last commits on the current branch (short sha, date, author, subject).',
     input: z.object({ limit: z.int().min(1).max(100).default(10) }),
     run: async ({ limit }, ctx) => {
-      await requireWorkTree(ctx);
-      const r = await runGit(ctx, [
-        'log',
-        `--max-count=${limit}`,
-        '--no-color',
-        '--date=short',
-        '--format=%h%x09%ad%x09%an%x09%s',
-        '--',
-      ]);
+      const repo = await botRepo(ctx);
+      const r = await runGit(
+        ctx,
+        [
+          'log',
+          `--max-count=${limit}`,
+          '--no-color',
+          '--no-show-signature',
+          '--date=short',
+          '--format=%h%x09%ad%x09%an%x09%s',
+          '--',
+        ],
+        { repo },
+      );
       if (r.code !== 0) {
         if (/does not have any commits|bad default revision/.test(r.stderr))
           return 'No commits yet.';
@@ -373,22 +444,29 @@ export const gitTools = [
       paths: z.array(RelPath).min(1).max(500).optional(),
     }),
     run: async ({ message, paths }, ctx) => {
-      const branch = await requireBotBranch(ctx);
-      const add = await runGit(ctx, ['add', '-A', '--', ...(paths ?? [])]);
+      const repo = await requireBotBranch(ctx);
+      const { branch } = repo;
+      const add = await runGit(ctx, ['add', '-A', '--', ...(paths ?? [])], { repo });
       if (add.code !== 0) throw new ToolError(`git add failed:\n${gitMessage(add, ctx)}`);
-      const staged = await runGit(ctx, ['diff', '--cached', '--quiet', '--no-ext-diff']);
+      const staged = await runGit(ctx, ['diff', '--cached', '--quiet', '--no-ext-diff'], { repo });
       if (staged.code === 0) {
         return `Nothing to commit on ${branch}: no changes${paths ? ' in the given paths' : ''}.`;
       }
       if (staged.code !== 1) throw new ToolError(`git diff failed:\n${gitMessage(staged, ctx)}`);
-      const commit = await runGit(ctx, ['commit', '--no-verify', '--quiet', '-m', message]);
+      const commit = await runGit(ctx, ['commit', '--no-verify', '--quiet', '-m', message], {
+        repo,
+      });
       if (commit.code !== 0) {
         if (/nothing (added )?to commit/.test(commit.stdout + commit.stderr)) {
           return `Nothing to commit on ${branch}.`;
         }
         throw new ToolError(`git commit failed:\n${gitMessage(commit, ctx)}`);
       }
-      const head = await runGit(ctx, ['log', '-1', '--format=%h%x09%s', '--shortstat', 'HEAD']);
+      const head = await runGit(
+        ctx,
+        ['log', '-1', '--no-show-signature', '--format=%h%x09%s', '--shortstat', 'HEAD'],
+        { repo },
+      );
       const [first = '', ...rest] = cleanText(head.stdout).trim().split('\n');
       const [sha = '', subject = ''] = first.split('\t');
       const stat = rest.join(' ').trim();
@@ -398,11 +476,31 @@ export const gitTools = [
   defineTool({
     name: 'git_push',
     description:
-      "Push the Bot's own orbit/<bot> branch to a remote (default origin). Never forces and never pushes another branch.",
-    input: z.object({ remote: RemoteName.default('origin') }),
-    run: async ({ remote }, ctx) => {
-      const branch = await requireBotBranch(ctx);
-      const url = await runGit(ctx, ['config', '--get', `remote.${remote}.url`]);
+      "Push the Bot's own orbit/<bot> branch to a remote (default origin). Name the branch and the commit being pushed (its sha from git_log) so your owner approves exactly that. Never forces and never pushes another branch.",
+    input: z.object({
+      branch: z.string().max(100).describe("The Bot's own branch (orbit/<bot>)"),
+      head: Sha.describe('The commit at the tip of the branch, as git_log shows it'),
+      remote: RemoteName.default('origin'),
+    }),
+    run: async ({ branch: named, head, remote }, ctx) => {
+      const repo = await requireBotBranch(ctx);
+      const { branch } = repo;
+      if (named !== branch) {
+        throw new ToolError(
+          `Only the Bot's own branch ${branch} can be pushed (the call named "${cleanText(named)}")`,
+        );
+      }
+      const tip = await runGit(ctx, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], {
+        repo,
+      });
+      const sha = tip.stdout.trim();
+      if (tip.code !== 0 || !sha) throw new ToolError(`${branch} has no commits to push`);
+      if (!sha.startsWith(head)) {
+        throw new ToolError(
+          `${branch} is at ${sha.slice(0, 12)}, not ${head}: the branch changed after this push was approved. Nothing was pushed.`,
+        );
+      }
+      const url = await runGit(ctx, ['config', '--get', `remote.${remote}.url`], { repo });
       if (url.code !== 0 || !url.stdout.trim()) {
         throw new ToolError(`There is no remote named "${remote}" in this repository`);
       }
@@ -410,9 +508,8 @@ export const gitTools = [
       const auth = pushAuthConfig(url.stdout.trim(), token);
       const r = await runGit(
         ctx,
-        ['push', '--no-verify', '--porcelain', remote, `HEAD:refs/heads/${branch}`],
-        auth,
-        120_000,
+        ['push', '--no-verify', '--porcelain', remote, `${sha}:refs/heads/${branch}`],
+        { repo, config: auth, timeoutMs: 120_000 },
       );
       if (r.code !== 0) {
         const text = r.stdout + r.stderr;
@@ -423,13 +520,12 @@ export const gitTools = [
         }
         throw new ToolError(`git push to ${remote} failed:\n${gitMessage(r, ctx)}`);
       }
-      const sha = await runGit(ctx, ['rev-parse', '--short', 'HEAD']);
       const remoteNote = cleanText(scrubSecret(r.stderr, token))
         .split('\n')
         .filter((l) => l.startsWith('remote:') && l.replace('remote:', '').trim())
         .join('\n')
         .slice(0, 1000);
-      return `Pushed ${branch} (${sha.stdout.trim()}) to ${remote}.${remoteNote ? `\n${remoteNote}` : ''}`;
+      return `Pushed ${branch} (${sha.slice(0, 12)}) to ${remote}.${remoteNote ? `\n${remoteNote}` : ''}`;
     },
   }),
 ];

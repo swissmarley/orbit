@@ -28,6 +28,7 @@ export function sandboxWorkspaces(manager: SandboxManager, env: Env): WorkspaceP
       path: ws.path,
       shellContained: ws.shellContained,
       engineSandbox: ws.engineSandboxSettings,
+      ...(ws.git ? { git: ws.git } : {}),
       ...(ws.docker ? { spawnEngine: manager.engineSpawner(ws, engineEnv) } : {}),
     };
   };

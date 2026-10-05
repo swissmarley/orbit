@@ -36,6 +36,59 @@ export function roots(ctx: ToolContext): string[] {
 const inside = (root: string, p: string) =>
   p === root || p.startsWith(root.endsWith(sep) ? root : root + sep);
 
+/** Never reachable, whatever FS_ROOTS says: other processes' environments and kernel state. */
+const ALWAYS_DENIED = ['/proc', '/sys'];
+
+function canonical(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
+  }
+}
+
+/**
+ * Paths Orbit forbids (ORBIT_DENIED_PATHS: credential stores, Orbit's own
+ * data directory), canonical. Unreadable or malformed means refuse everything
+ * rather than guess (ADR-014; M7 safety review H2).
+ */
+export function deniedPaths(ctx: ToolContext): string[] {
+  const raw = ctx.env.ORBIT_DENIED_PATHS;
+  let listed: unknown = [];
+  if (raw !== undefined && raw !== '') {
+    try {
+      listed = JSON.parse(raw);
+    } catch {
+      throw new ToolError('Orbit passed an unreadable list of denied paths; nothing is reachable');
+    }
+    if (!Array.isArray(listed) || !listed.every((p) => typeof p === 'string' && isAbsolute(p))) {
+      throw new ToolError('Orbit passed an unreadable list of denied paths; nothing is reachable');
+    }
+  }
+  return [...ALWAYS_DENIED, ...(listed as string[])].map(canonical);
+}
+
+/**
+ * Why a canonical path is refused even inside a root, or null: a denied path
+ * (except the Bot's own workspace, which may sit inside Orbit's data
+ * directory), or a hidden file or folder below the root (`.ssh`, `.env`,
+ * `.git`…), where credentials and configuration live.
+ */
+export function deniedReason(ctx: ToolContext, real: string, root: string): string | null {
+  const workspace = canonical(ctx.env.ORBIT_WORKSPACE ?? ctx.workspace);
+  if (!inside(workspace, real) && deniedPaths(ctx).some((d) => inside(d, real))) {
+    return 'is in a location Orbit never lets plugins touch (credentials or Orbit data)';
+  }
+  if (
+    relative(root, real)
+      .split(sep)
+      .some((part) => part.startsWith('.') && part !== '.')
+  ) {
+    return 'is a hidden file or inside a hidden folder';
+  }
+  return null;
+}
+
 /**
  * Resolve a path the Bot named to a canonical path inside one of the roots.
  * Symlinks are followed before the check, so a link cannot lead outside.
@@ -69,9 +122,12 @@ export function resolveInside(ctx: ToolContext, path: string, forWrite = false):
       throw new ToolError(`${path} does not exist`);
     }
   }
-  if (!all.some((r) => inside(r, real))) {
+  const root = all.find((r) => inside(r, real));
+  if (root === undefined) {
     throw new ToolError(`${path} is outside the folders this plugin may use`);
   }
+  const why = deniedReason(ctx, real, root);
+  if (why) throw new ToolError(`${path} ${why}`);
   return real;
 }
 
@@ -121,12 +177,15 @@ export const tools = [
       const start = resolveInside(ctx, path);
       const q = query.toLowerCase();
       const hits: string[] = [];
+      const root = roots(ctx).find((r) => inside(r, start)) ?? start;
       const walk = (dir: string, depth: number) => {
         if (hits.length >= limit || depth > 8) return;
+        if (deniedReason(ctx, dir, root)) return;
         for (const e of readdirSync(dir, { withFileTypes: true })) {
           if (hits.length >= limit) return;
           if (e.name.startsWith('.') || e.isSymbolicLink()) continue;
           const p = join(dir, e.name);
+          if (deniedReason(ctx, p, root)) continue;
           if (e.isDirectory()) walk(p, depth + 1);
           else if (e.isFile()) {
             if (e.name.toLowerCase().includes(q)) {
@@ -165,7 +224,10 @@ export const tools = [
         // Create only below an existing folder that is inside a root.
         let existing = dirname(abs);
         while (!safeExists(existing)) existing = dirname(existing);
-        resolveInside(ctx, join(existing, '.orbit-probe'), true);
+        const real = join(resolveInside(ctx, existing), relative(existing, dirname(abs)));
+        const root = roots(ctx).find((r) => inside(r, real));
+        const why = root === undefined ? 'is outside the folders' : deniedReason(ctx, real, root);
+        if (why) throw new ToolError(`${path} ${why}`);
         mkdirSync(dirname(abs), { recursive: true });
       }
       const file = resolveInside(ctx, path, true);

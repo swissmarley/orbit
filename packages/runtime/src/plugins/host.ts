@@ -29,6 +29,8 @@ export class PluginSegment {
     bot: Bot,
     private readonly workspace: string,
     private readonly session: OrbitRunSession,
+    /** Worktree Bots: the owner's repository and the Bot's own branch. */
+    private readonly git?: { repo: string; branch: string },
   ) {
     for (const id of bot.spec.plugins) {
       const r = registry.ready(id);
@@ -71,6 +73,7 @@ export class PluginSegment {
         dir: plugin.dir,
         cwd: this.workspace,
         workspace: this.workspace,
+        git: this.git,
       });
       this.clients.set(plugin.manifest.id, client);
     }
@@ -97,8 +100,14 @@ export class PluginSegment {
 export class PluginSegments {
   private readonly byRun = new Map<string, PluginSegment>();
 
-  open(registry: PluginRegistry, bot: Bot, workspace: string, session: OrbitRunSession) {
-    const seg = new PluginSegment(registry, bot, workspace, session);
+  open(
+    registry: PluginRegistry,
+    bot: Bot,
+    workspace: string,
+    session: OrbitRunSession,
+    git?: { repo: string; branch: string },
+  ) {
+    const seg = new PluginSegment(registry, bot, workspace, session, git);
     this.byRun.set(session.runId, seg);
     return seg;
   }

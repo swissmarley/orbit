@@ -1,6 +1,6 @@
 import { ToolError, type ToolContext, api, defineTool } from '@orbit/plugin-kit';
 import { z } from 'zod';
-import { cleanText, currentBranch, githubToken, requireWorkTree, scrubSecret } from './git';
+import { cleanText, githubToken, scrubSecret } from './git';
 
 /**
  * GitHub issues and pull requests over the REST API (through the kit's
@@ -412,13 +412,13 @@ export const githubTools = [
   defineTool({
     name: 'create_pull_request',
     description:
-      "Open a pull request (your owner approves it first). head defaults to the workspace's current branch, base to the repository's default branch.",
+      "Open a pull request (your owner approves it first). head defaults to the Bot's own orbit/<bot> branch, base to the repository's default branch.",
     input: z.object({
       repo: RepoArg,
       title: z.string().trim().min(1).max(256),
       body: z.string().max(60_000).optional(),
       head: BranchArg.optional().describe(
-        "Branch with the changes; defaults to the workspace's current branch",
+        "Branch with the changes; defaults to the Bot's own orbit/<bot> branch",
       ),
       base: BranchArg.optional().describe(
         "Branch to merge into; defaults to the repository's default branch",
@@ -429,12 +429,10 @@ export const githubTools = [
       const r = repoOf(ctx, repo);
       let headRef = head;
       if (headRef === undefined) {
-        await requireWorkTree(ctx).catch(() => {
-          throw new ToolError('Name the head branch: the workspace is not a git work tree');
-        });
-        const branch = await currentBranch(ctx);
-        if (!branch) throw new ToolError('Name the head branch: HEAD is detached in the workspace');
-        headRef = branch;
+        // The Bot's own branch, as Orbit named it (never read from the workspace's .git).
+        const own = ctx.env.ORBIT_GIT_BRANCH?.trim();
+        if (!own) throw new ToolError('Name the head branch: this Bot has no worktree branch');
+        headRef = own;
       }
       let baseRef = base;
       if (baseRef === undefined) {
