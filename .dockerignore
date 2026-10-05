@@ -1,0 +1,20 @@
+# Build context of docker/orbitd.Dockerfile: sources only. Never send local
+# state or secrets (.env holds ANTHROPIC_API_KEY) to the Docker daemon.
+.env
+.env.*
+.git
+.github
+.claude
+.orbit
+**/node_modules
+**/dist
+**/coverage
+**/storybook-static
+**/playwright-report
+**/test-results
+**/.vite
+apps/orbit-desktop/src-tauri/target
+apps/orbit-desktop/src-tauri/gen
+packaging/npm/LICENSE
+*.tgz
+*.log
