@@ -88,7 +88,7 @@ export function browserTools(session: BrowserSession): Tool[] {
     const blocked = session.takeBlocked();
     await page.goto('about:blank').catch(() => undefined);
     throw new ToolError(
-      `Blocked: ${from} led to ${blocked.slice(0, 5).join(', ') || at.slice(0, 200)}, which is not in the allowed domains`,
+      `Blocked: ${from} led to ${blocked.slice(0, 5).join(', ') || at.slice(0, 200)}, which the browser may not reach (outside the allowed domains, or a refused address)`,
     );
   };
 
@@ -116,7 +116,7 @@ export function browserTools(session: BrowserSession): Tool[] {
           const blocked = session.takeBlocked();
           if (blocked.length) {
             throw new ToolError(
-              `Blocked: opening ${target.hostname} led to ${blocked.slice(0, 5).join(', ')}, which is not in the allowed domains`,
+              `Blocked: opening ${target.hostname} led to ${blocked.slice(0, 5).join(', ')}, which the browser may not reach (outside the allowed domains, or a refused address)`,
             );
           }
           throw failure(err);

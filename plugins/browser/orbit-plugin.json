@@ -49,7 +49,7 @@
     },
     {
       "name": "BROWSER_ALLOW_PRIVATE_ADDRESSES",
-      "description": "Set to 'true' to let allowed names resolve to private, loopback or link-local addresses (an intranet site). Off by default: such answers are refused, and cloud metadata addresses always are. An IP address you list exactly is always reachable.",
+      "description": "Set to 'true' to let allowed names resolve to private, loopback or link-local addresses (an intranet site). Off by default: such answers are refused; cloud metadata addresses are refused even then. An IP address you list exactly is always reachable.",
       "default": "false"
     }
   ],

@@ -5,8 +5,9 @@ import {
   type Page,
   chromium,
 } from 'playwright-core';
-import { type Allowlist, requestVerdict } from './allowlist';
-import { type FilterProxy, startFilterProxy } from './filter-proxy';
+import { addressRefusal, allowsPrivate } from './address';
+import { type Allowlist, isIpLiteral, requestVerdict } from './allowlist';
+import { type FilterProxy, type Resolver, startFilterProxy } from './filter-proxy';
 
 type Env = Readonly<Record<string, string | undefined>>;
 
@@ -31,10 +32,18 @@ export function proxyFromEnv(env: Env): { server: string; bypass?: string } | un
 }
 
 /**
+ * Chromium may resolve no name itself: every request goes to the filter
+ * proxy (a loopback IP literal), which resolves and checks names (ADR-019).
+ */
+export const HOST_RESOLVER_RULES = 'MAP * ~NOTFOUND , EXCLUDE 127.0.0.1';
+
+/**
  * How Chromium is launched: headless, with the plugin's own environment
  * (Orbit built it from an allowlist) passed explicitly, all traffic (loopback
- * included) sent through the filter proxy on `proxyPort`, WebRTC kept off
- * non-proxied UDP, and Chromium's sandbox on unless running as root.
+ * included) sent through the filter proxy on `proxyPort`, no name resolution
+ * of its own (no DNS prefetch, every name mapped to "not found"), no QUIC,
+ * no background requests, WebRTC kept off non-proxied UDP, and Chromium's
+ * sandbox on unless running as root (never `--no-sandbox` otherwise).
  */
 export function launchOptions(env: Env, proxyPort: number): LaunchOptions {
   const childEnv: Record<string, string> = {};
@@ -46,6 +55,9 @@ export function launchOptions(env: Env, proxyPort: number): LaunchOptions {
       '--proxy-bypass-list=<-loopback>',
       '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
       '--dns-prefetch-disable',
+      `--host-resolver-rules=${HOST_RESOLVER_RULES}`,
+      '--disable-quic',
+      '--disable-background-networking',
     ],
     env: childEnv,
     // Playwright adds --no-sandbox unless this is true; Chromium refuses its sandbox as root.
@@ -75,6 +87,9 @@ export class BrowserSession {
   private starting: Promise<BrowserContext> | undefined;
   private allow: Allowlist | undefined;
   private readonly blockedHosts = new Set<string>();
+
+  /** Tests: a resolver instead of the system's. */
+  constructor(private readonly resolve?: Resolver) {}
 
   /** The current page, opening a blank one if there is none. */
   async page(env: Env, allow: Allowlist): Promise<Page> {
@@ -114,16 +129,28 @@ export class BrowserSession {
     await proxy?.close();
   }
 
-  private block(host: string): void {
-    if (this.blockedHosts.size < 100) this.blockedHosts.add(host || '(no host)');
+  private block(host: string, reason?: string): void {
+    const label = `${host || '(no host)'}${reason ? ` (refused: ${reason})` : ''}`;
+    if (this.blockedHosts.size < 100) this.blockedHosts.add(label);
+  }
+
+  /** May the browser connect to `address`? IP literals the owner listed, else public ones only. */
+  addressRefusal(address: string, env: Env): string | null {
+    const listed = new Set([...(this.allow?.exact ?? [])].filter(isIpLiteral));
+    return addressRefusal(address, {
+      listed,
+      allowPrivate: allowsPrivate(env.BROWSER_ALLOW_PRIVATE_ADDRESSES),
+    });
   }
 
   private async start(env: Env): Promise<BrowserContext> {
     try {
       this.proxy = await startFilterProxy({
         allowed: (url) => this.allows(url),
-        onBlocked: (host) => this.block(host),
+        addressAllowed: (address) => this.addressRefusal(address, env),
+        onBlocked: (host, reason) => this.block(host, reason),
         upstream: proxyFromEnv(env),
+        ...(this.resolve ? { resolve: this.resolve } : {}),
       });
       const browser = await chromium.launch(launchOptions(env, this.proxy.port));
       this.browser = browser;

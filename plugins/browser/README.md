@@ -23,10 +23,11 @@ then wait for your approval. `click` and `fill` always ask you.
 
 ## Settings
 
-| Setting                   | Required | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| ------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `BROWSER_ALLOWED_DOMAINS` | yes      | Comma-separated host names. `example.com` allows exactly that host; `*.example.com` allows its subdomains at any depth (not `example.com` itself; list both if you want both). IP addresses are allowed only when listed exactly; a wildcard never covers one. Case, a trailing dot and the port do not matter; international names may be written either way (`bücher.de` or `xn--bcher-kva.de`). An entry with a scheme, port, path, a bare `*` or a wildcard over a single label (`*.com`) is refused. |
-| `BROWSER_EXECUTABLE`      | no       | Path to a Chromium binary. Default: Playwright's own Chromium (headless shell).                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Setting                           | Required | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| --------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BROWSER_ALLOWED_DOMAINS`         | yes      | Comma-separated host names. `example.com` allows exactly that host; `*.example.com` allows its subdomains at any depth (not `example.com` itself; list both if you want both). IP addresses are allowed only when listed exactly; a wildcard never covers one. Case, a trailing dot and the port do not matter; international names may be written either way (`bücher.de` or `xn--bcher-kva.de`). An entry with a scheme, port, path, a bare `*` or a wildcard over a single label (`*.com`) is refused. |
+| `BROWSER_EXECUTABLE`              | no       | Path to a Chromium binary. Default: Playwright's own Chromium (headless shell).                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `BROWSER_ALLOW_PRIVATE_ADDRESSES` | no       | `true` lets allowed names resolve to private, loopback, link-local, CGNAT or unique-local addresses (an intranet site). Default `false`: such answers are refused. Cloud metadata, unspecified, multicast and reserved addresses are refused even then. An IP address you list exactly in `BROWSER_ALLOWED_DOMAINS` is always reachable.                                                                                                                                                                  |
 
 Environment passed through from orbitd: `PLAYWRIGHT_BROWSERS_PATH` (where
 Playwright's browsers are installed). No secrets.
@@ -55,6 +56,19 @@ Then list `browser` in a Bot's `plugins`.
   it catches what Playwright's routing does not see, such as redirect
   targets. An owner proxy in the environment (`HTTPS_PROXY`, `NO_PROXY`) is
   chained behind it.
+- **Checked DNS answers (ADR-019).** The proxy resolves every allowed name
+  itself, once, and refuses it if any answer is private, loopback,
+  link-local, CGNAT (100.64/10), unique-local (fc00::/7), multicast,
+  reserved, unspecified, a cloud metadata address (169.254.169.254,
+  fd00:ec2::254) or an IPv4-mapped, NAT64 or 6to4 form of one, unless you
+  listed that exact address or set `BROWSER_ALLOW_PRIVATE_ADDRESSES`. It then
+  connects to exactly the addresses it checked, so a second, different DNS
+  answer (rebinding) never reaches the connection. Chromium resolves no name
+  itself: every name maps to "not found" (`--host-resolver-rules`), DNS
+  prefetch, QUIC and background requests are off, and all traffic goes to the
+  proxy. Through an owner proxy (`HTTPS_PROXY`), that proxy resolves for
+  itself: Orbit still refuses a private answer it sees locally, and passes on
+  names it cannot resolve locally.
 - **Web pages only.** `open_page` takes http and https URLs only (no
   `file:`, `data:`, `javascript:`, `chrome:`, `about:` or `view-source:`), and
   refuses URLs with a user name or password; pages cannot load other
@@ -78,10 +92,18 @@ Then list `browser` in a Bot's `plugins`.
 - **Untrusted output.** Page text, titles and links are data, never
   instructions; the tool descriptions say so and Orbit taints the Run.
 
-Known limits: DNS answers are not checked (an allowed name that resolves to a
-private address is reachable), and page JavaScript runs, so a page on an
-allowed domain can send what it sees (including what `fill` typed) back to
-its own site; approve `fill` only for sites you trust with that value.
+- **In an OS sandbox** (ADR-019, `plugins.sandbox`): on Linux the plugin and
+  its Chromium run under bubblewrap with the network but without your home
+  folder, Orbit's data or the Bot's workspace; Chromium keeps its own sandbox
+  inside (it needs unprivileged user namespaces, as above). The sandbox shows
+  Playwright's browsers from `PLAYWRIGHT_BROWSERS_PATH`, the folder of
+  `BROWSER_EXECUTABLE`, or Playwright's default cache. macOS `sandbox-exec`
+  profiles do not nest, so there the Browser runs without an OS sandbox
+  (`auto`) or not at all (`required`).
+
+Known limit: page JavaScript runs, so a page on an allowed domain can send
+what it sees (including what `fill` typed) back to its own site; approve
+`fill` only for sites you trust with that value.
 
 ## Development
 

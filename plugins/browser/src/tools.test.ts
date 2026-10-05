@@ -26,7 +26,7 @@ const html = (res: ServerResponse, body: string, title = 'Test page') => {
   res.end(`<!doctype html><html><head><title>${title}</title></head><body>${body}</body></html>`);
 };
 
-const ctxFor = (domains: string): ToolContext => ({
+const ctxFor = (domains: string, extra: Record<string, string> = {}): ToolContext => ({
   workspace: tmpdir(),
   // What Orbit would pass: an allowlisted env, no proxies (so the browser gets the drop-all proxy).
   env: {
@@ -34,6 +34,7 @@ const ctxFor = (domains: string): ToolContext => ({
     PATH: process.env.PATH,
     HOME: process.env.HOME,
     PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH,
+    ...extra,
   },
 });
 
@@ -213,7 +214,8 @@ describe.skipIf(!chromiumAvailable)('browser tools in headless Chromium', () => 
 
   it('control: when the other origin is allowed, the leaky page does reach it', async () => {
     try {
-      const both = ctxFor('127.0.0.1, localhost');
+      // localhost is a loopback name: the owner allows private addresses for it (ADR-019).
+      const both = ctxFor('127.0.0.1, localhost', { BROWSER_ALLOW_PRIVATE_ADDRESSES: 'true' });
       expect((await call(tools, both, 'open_page', { url: url('/leaky') })).isError).toBe(false);
       await waitFor('fetch-done');
       await waitFor('worker-done');
@@ -268,6 +270,42 @@ describe.skipIf(!chromiumAvailable)('browser tools in headless Chromium', () => 
       expect(seen).toEqual([]);
     } finally {
       await session.close();
+    }
+  }, 60_000);
+
+  it('refuses an allowed name that resolves to a loopback address (DNS check, ADR-019)', async () => {
+    try {
+      const r = await call(tools, ctxFor('localhost'), 'open_page', {
+        url: `http://localhost:${other.port}/secret`,
+      });
+      fails(r, /Blocked: opening localhost led to localhost \(refused: .* is a loopback address\)/);
+      expect(seen).toEqual([]);
+    } finally {
+      await session.close();
+    }
+  }, 60_000);
+
+  it('resolves names only in the proxy: Chromium never looks one up itself', async () => {
+    // site.example exists only in the proxy's resolver; Chromium maps every name to "not found".
+    const dnsSession = new BrowserSession((host) =>
+      Promise.resolve(host === 'site.example' ? [{ address: '127.0.0.1', family: 4 }] : []),
+    );
+    const dnsTools = browserTools(dnsSession);
+    try {
+      const allowed = ctxFor('site.example', { BROWSER_ALLOW_PRIVATE_ADDRESSES: 'true' });
+      const r = await call(dnsTools, allowed, 'open_page', {
+        url: `http://site.example:${site.port}/`,
+      });
+      expect(r.isError).toBe(false);
+      expect(r.text).toContain('Allowed page text');
+      // Without the owner's yes, the same answer is refused.
+      await dnsSession.close();
+      const refused = await call(dnsTools, ctxFor('site.example'), 'open_page', {
+        url: `http://site.example:${site.port}/`,
+      });
+      fails(refused, /refused: 127\.0\.0\.1 is a loopback address/);
+    } finally {
+      await dnsSession.close();
     }
   }, 60_000);
 
