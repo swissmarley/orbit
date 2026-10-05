@@ -14,21 +14,33 @@ import {
   Play,
   Plus,
   Settings,
+  SquareTerminal,
   Sun,
   SunMoon,
+  Upload,
 } from 'lucide-react';
 import { useEffect } from 'react';
+import type { RouteName } from '@orbit/sdk-client/browser';
 import { useActions } from '../lib/actions';
+import { importMemoryIntent } from '../lib/intents';
+import { useRole } from '../lib/role';
 import { useBots, useKill, usePendingApprovals, useRuns } from '../lib/queries';
 import { otherModalOpen } from '../lib/modal';
 import { createStore, useStore } from '../lib/store';
 import { setTheme } from '../lib/theme';
+import { textMark } from '../lib/tone';
 import { confirmAction } from './confirm';
+import { takeoverStore } from './takeover';
 
 export const paletteStore = createStore(false);
 
-/** Every Settings tab, findable from the palette (M5 UI review). */
-export const SETTINGS_ENTRIES: readonly { tab: string; label: string; keywords: string }[] = [
+/** Every Settings tab, findable from the palette (M5 UI review); `route`: owner-only data. */
+export const SETTINGS_ENTRIES: readonly {
+  tab: string;
+  label: string;
+  keywords: string;
+  route?: RouteName;
+}[] = [
   { tab: 'general', label: 'General', keywords: 'theme appearance kill switch' },
   { tab: 'engine', label: 'Auth & engine', keywords: 'doctor driver api key subscription model' },
   {
@@ -38,8 +50,13 @@ export const SETTINGS_ENTRIES: readonly { tab: string; label: string; keywords: 
   },
   { tab: 'policies', label: 'Policies', keywords: 'rules allow deny tiers' },
   { tab: 'budgets', label: 'Budgets', keywords: 'limits cost tokens triage usage' },
-  { tab: 'secrets', label: 'Secrets', keywords: 'vault keys tokens' },
-  { tab: 'audit', label: 'Audit log', keywords: 'audit verify export history' },
+  { tab: 'secrets', label: 'Secrets', keywords: 'vault keys tokens', route: 'listSecrets' },
+  {
+    tab: 'audit',
+    label: 'Audit log',
+    keywords: 'audit verify export history',
+    route: 'listAudit',
+  },
 ];
 
 const item =
@@ -50,10 +67,11 @@ const group =
 /** Settings tabs, listed once the user types (so they never push "Needs you" down). */
 function SettingsGroup({ onSelect }: { onSelect: (tab: string) => void }) {
   const searching = useCommandState((s) => s.search.trim().length > 0);
+  const role = useRole();
   if (!searching) return null;
   return (
     <Command.Group heading="Settings" className={group}>
-      {SETTINGS_ENTRIES.map((s) => (
+      {SETTINGS_ENTRIES.filter((s) => !s.route || role.can(s.route)).map((s) => (
         <Command.Item
           key={s.tab}
           value={`Settings ${s.label} ${s.keywords}`}
@@ -77,6 +95,7 @@ export function CommandPalette() {
   const runs = useRuns();
   const approvals = usePendingApprovals();
   const kill = useKill();
+  const role = useRole();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -170,18 +189,33 @@ export function CommandPalette() {
                 <BotIcon aria-hidden /> {scrubControls(b.spec.name)}
               </Command.Item>
             ))}
-            {bots.data.map((b) => (
-              <Command.Item
-                key={`run-${b.id}`}
-                value={`Run ${b.spec.name} now`}
-                keywords={['start']}
-                className={item}
-                disabled={b.pausedAt !== null}
-                onSelect={run(() => actions.runBot(b))}
-              >
-                <Play aria-hidden /> Run {scrubControls(b.spec.name)} now
-              </Command.Item>
-            ))}
+            {role.can('startRun')
+              ? bots.data.map((b) => (
+                  <Command.Item
+                    key={`run-${b.id}`}
+                    value={`Run ${b.spec.name} now`}
+                    keywords={['start']}
+                    className={item}
+                    disabled={b.pausedAt !== null}
+                    onSelect={run(() => actions.runBot(b))}
+                  >
+                    <Play aria-hidden /> Run {scrubControls(b.spec.name)} now
+                  </Command.Item>
+                ))
+              : null}
+            {role.can('startTakeover')
+              ? bots.data.map((b) => (
+                  <Command.Item
+                    key={`takeover-${b.id}`}
+                    value={`Take over ${b.spec.name} shell terminal workspace`}
+                    keywords={['shell', 'terminal']}
+                    className={item}
+                    onSelect={run(() => takeoverStore.set(b.id))}
+                  >
+                    <SquareTerminal aria-hidden /> Take over {scrubControls(b.spec.name)}…
+                  </Command.Item>
+                ))
+              : null}
           </Command.Group>
         ) : null}
         {runs.data && runs.data.length > 0 ? (
@@ -194,7 +228,7 @@ export function CommandPalette() {
                 className={item}
                 onSelect={run(() => navigate({ to: '/runs/$runId', params: { runId: r.runId } }))}
               >
-                <span aria-hidden>{RUN_STATUS[r.status].mark}</span> {botName(r.botId)}{' '}
+                <span aria-hidden>{textMark(RUN_STATUS[r.status].mark)}</span> {botName(r.botId)}{' '}
                 <span className="text-fg-muted">· {RUN_STATUS[r.status].label}</span>
                 <span className="ml-auto font-mono text-xs text-fg-subtle">
                   {r.runId.slice(-8)}
@@ -213,31 +247,45 @@ export function CommandPalette() {
           <Command.Item className={item} onSelect={run(() => setTheme('system'))}>
             <SunMoon aria-hidden /> Theme: follow the system
           </Command.Item>
-          <Command.Item
-            className={item}
-            keywords={['kill switch', 'stop everything', 'emergency']}
-            onSelect={run(async () => {
-              const engaged = kill.data?.engaged === true;
-              const ok = await confirmAction(
-                engaged
-                  ? {
-                      title: 'Release the kill switch?',
-                      body: 'Bots may run again.',
-                      confirm: 'Release',
-                    }
-                  : {
-                      title: 'Engage the global kill switch?',
-                      body: 'Every Run stops now and nothing new starts until you release it.',
-                      confirm: 'Stop everything',
-                      danger: true,
-                    },
-              );
-              if (ok) await actions.setKill(!engaged);
-            })}
-          >
-            <Octagon aria-hidden />{' '}
-            {kill.data?.engaged ? 'Release the kill switch' : 'Kill switch — stop everything'}
-          </Command.Item>
+          {role.can('importMemory') ? (
+            <Command.Item
+              className={item}
+              keywords={['memory', 'import', 'upload', 'jsonl']}
+              onSelect={run(() => {
+                importMemoryIntent.set(true);
+                return navigate({ to: '/memory' });
+              })}
+            >
+              <Upload aria-hidden /> Import memories…
+            </Command.Item>
+          ) : null}
+          {role.can('setKill') ? (
+            <Command.Item
+              className={item}
+              keywords={['kill switch', 'stop everything', 'emergency']}
+              onSelect={run(async () => {
+                const engaged = kill.data?.engaged === true;
+                const ok = await confirmAction(
+                  engaged
+                    ? {
+                        title: 'Release the kill switch?',
+                        body: 'Bots may run again.',
+                        confirm: 'Release',
+                      }
+                    : {
+                        title: 'Engage the global kill switch?',
+                        body: 'Every Run stops now and nothing new starts until you release it.',
+                        confirm: 'Stop everything',
+                        danger: true,
+                      },
+                );
+                if (ok) await actions.setKill(!engaged);
+              })}
+            >
+              <Octagon aria-hidden />{' '}
+              {kill.data?.engaged ? 'Release the kill switch' : 'Kill switch — stop everything'}
+            </Command.Item>
+          ) : null}
           <Command.Item className={item} onSelect={run(() => actions.signOut())}>
             <LogOut aria-hidden /> Sign out
           </Command.Item>

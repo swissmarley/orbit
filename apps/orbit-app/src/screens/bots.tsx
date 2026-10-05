@@ -4,6 +4,7 @@ import { Link } from '@tanstack/react-router';
 import { Bot as BotIcon, LayoutGrid, List, Pause, Play, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { confirmAction } from '../components/confirm';
+import { IfRole, RoleGate } from '../components/role-gate';
 import { TakeOverButton } from '../components/takeover';
 import { RunSparkline } from '../components/sparkline';
 import { EmptyState, ErrorState, PageHeader } from '../components/states';
@@ -33,37 +34,41 @@ export function BotActions({ bot, compact = false }: { bot: Bot; compact?: boole
   const paused = bot.pausedAt !== null;
   return (
     <div className="flex items-center gap-1.5">
-      <Button
-        size={compact ? 'sm' : 'md'}
-        variant="secondary"
-        disabled={paused}
-        title={paused ? 'Resume the Bot to run it' : undefined}
-        aria-label={`Run ${name} now`}
-        onClick={() => void actions.runBot(bot).catch(() => undefined)}
-      >
-        <Play aria-hidden /> Run
-      </Button>
-      <Button
-        size={compact ? 'sm' : 'md'}
-        variant="ghost"
-        aria-label={paused ? `Resume ${name}` : `Pause ${name}`}
-        onClick={() =>
-          void (async () => {
-            if (!paused) {
-              const ok = await confirmAction({
-                title: `Pause ${name}?`,
-                body: 'Its Runs stop now and nothing new starts until you resume it.',
-                confirm: 'Pause',
-                danger: true,
-              });
-              if (!ok) return;
-            }
-            await actions.setBotPaused(bot, !paused);
-          })().catch(() => undefined)
-        }
-      >
-        {paused ? <Play aria-hidden /> : <Pause aria-hidden />} {paused ? 'Resume' : 'Pause'}
-      </Button>
+      <RoleGate route="startRun">
+        <Button
+          size={compact ? 'sm' : 'md'}
+          variant="secondary"
+          disabled={paused}
+          title={paused ? 'Resume the Bot to run it' : undefined}
+          aria-label={`Run ${name} now`}
+          onClick={() => void actions.runBot(bot).catch(() => undefined)}
+        >
+          <Play aria-hidden /> Run
+        </Button>
+      </RoleGate>
+      <RoleGate route={paused ? 'resumeBot' : 'pauseBot'}>
+        <Button
+          size={compact ? 'sm' : 'md'}
+          variant="ghost"
+          aria-label={paused ? `Resume ${name}` : `Pause ${name}`}
+          onClick={() =>
+            void (async () => {
+              if (!paused) {
+                const ok = await confirmAction({
+                  title: `Pause ${name}?`,
+                  body: 'Its Runs stop now and nothing new starts until you resume it.',
+                  confirm: 'Pause',
+                  danger: true,
+                });
+                if (!ok) return;
+              }
+              await actions.setBotPaused(bot, !paused);
+            })().catch(() => undefined)
+          }
+        >
+          {paused ? <Play aria-hidden /> : <Pause aria-hidden />} {paused ? 'Resume' : 'Pause'}
+        </Button>
+      </RoleGate>
       {compact ? null : <TakeOverButton bot={bot} />}
     </div>
   );
@@ -219,11 +224,13 @@ export function BotsScreen() {
                 <List aria-hidden /> List
               </Button>
             </div>
-            <Button variant="primary" asChild>
-              <Link to="/bots/new">
-                <Plus aria-hidden /> New Bot
-              </Link>
-            </Button>
+            <IfRole route="createBot">
+              <Button variant="primary" asChild>
+                <Link to="/bots/new">
+                  <Plus aria-hidden /> New Bot
+                </Link>
+              </Button>
+            </IfRole>
           </>
         }
       />

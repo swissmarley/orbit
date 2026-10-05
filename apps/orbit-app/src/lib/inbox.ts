@@ -146,6 +146,36 @@ export function onInboxKey(
   return { state };
 }
 
+/** What the signed-in principal may decide (hosted roles, ADR-015). */
+export interface InboxCan {
+  /** Approve, edit-then-approve and deny (operator). */
+  decide: boolean;
+  /** Always allow (owner). */
+  always: boolean;
+}
+
+/**
+ * A key's result, held back when it would start a decision the principal
+ * may not make: the state stays and a notice says why. Opening and reading
+ * cards stays open to everyone.
+ */
+export function gateInboxKey(
+  prev: InboxState,
+  r: { state: InboxState; command?: InboxCommand },
+  can: InboxCan,
+  why: { decide: string; always: string },
+): { state: InboxState; command?: InboxCommand } {
+  const mode = r.state.mode.kind;
+  const approving = r.command?.kind === 'approve' ? r.command : null;
+  if (!can.always && (mode === 'always' || approving?.always === true)) {
+    return { state: prev, command: { kind: 'notice', text: why.always } };
+  }
+  if (!can.decide && (mode === 'edit' || mode === 'deny' || mode === 'always' || approving)) {
+    return { state: prev, command: { kind: 'notice', text: why.decide } };
+  }
+  return r;
+}
+
 /** Bindings for the help sheet and the footer (single source). */
 export const INBOX_KEYS: readonly { keys: string; does: string }[] = [
   { keys: 'j k / ↓ ↑', does: 'move between cards' },

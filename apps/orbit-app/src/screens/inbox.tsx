@@ -1,9 +1,9 @@
 /** @jsxRuntime automatic @jsxImportSource react */
 import { scrubControls } from '@orbit/core/browser';
-import type { Approval } from '@orbit/sdk-client/browser';
+import { type Approval, roleFor } from '@orbit/sdk-client/browser';
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { CheckCircle2 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { ApprovalCard, type CardMode } from '../components/approval-card';
 import { EmptyState, ErrorState, ListSkeleton, PageHeader } from '../components/states';
@@ -19,11 +19,13 @@ import {
   INBOX_KEYS,
   INITIAL_INBOX,
   type InboxState,
+  gateInboxKey,
   onInboxKey,
   reconcileInbox,
   selected,
 } from '../lib/inbox';
 import { usePendingApprovals } from '../lib/queries';
+import { ALWAYS_ALLOW_ROLE, needsRoleText, useRole } from '../lib/role';
 
 /** A focused button or link that is not an Inbox row: its own keys win. */
 function isOtherControl(t: EventTarget | null): boolean {
@@ -51,6 +53,10 @@ export function InboxScreen() {
   const [state, setState] = useState<InboxState>(INITIAL_INBOX);
   const [busy, setBusy] = useState(false);
   const rows = useRef(new Map<string, HTMLLIElement>());
+  const role = useRole();
+  const canDecide = role.can('approve');
+  const canAlways = role.atLeast(ALWAYS_ALLOW_ROLE);
+  const can = useMemo(() => ({ decide: canDecide, always: canAlways }), [canDecide, canAlways]);
 
   // Selection follows the card's id as the list changes.
   useEffect(() => setState((s) => reconcileInbox(s, list)), [list]);
@@ -89,7 +95,15 @@ export function InboxScreen() {
       if (paletteStore.get() || helpStore.get() || confirmOpen()) return;
       // Enter and Space on a focused control (nav link, toast Undo, …) belong to it.
       if ((e.key === 'Enter' || e.key === ' ') && isOtherControl(e.target)) return;
-      const r = onInboxKey(state, list, { key: e.key, inField: isField(e.target) });
+      const r = gateInboxKey(
+        state,
+        onInboxKey(state, list, { key: e.key, inField: isField(e.target) }),
+        can,
+        {
+          decide: `${needsRoleText(roleFor('approve'))} to approve or deny`,
+          always: `${needsRoleText(ALWAYS_ALLOW_ROLE)} to always allow a tool`,
+        },
+      );
       if (r.state === state && !r.command) return;
       if (e.key !== 'Escape' || state.mode.kind !== 'list') e.preventDefault();
       setState(r.state);
@@ -103,7 +117,7 @@ export function InboxScreen() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [state, list, approve, busy]);
+  }, [state, list, approve, busy, can]);
 
   const current = selected(state, list);
   // Focus and selection are one thing (roving tabindex): j/k move focus too,

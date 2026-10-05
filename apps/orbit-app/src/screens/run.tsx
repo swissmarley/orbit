@@ -20,6 +20,8 @@ import { Link, useParams } from '@tanstack/react-router';
 import {
   ChevronLeft,
   ChevronRight,
+  CirclePause,
+  CirclePlay,
   Pause,
   ThumbsDown,
   ThumbsUp,
@@ -29,9 +31,13 @@ import {
   Square,
   StepBack,
   StepForward,
+  Zap,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { toast } from 'sonner';
+import { roleFor } from '@orbit/sdk-client/browser';
 import { confirmAction } from '../components/confirm';
+import { RoleGate } from '../components/role-gate';
 import { Meter } from '../components/sparkline';
 import { TakeOverButton } from '../components/takeover';
 import { ErrorState, ListSkeleton, PageHeader } from '../components/states';
@@ -42,8 +48,10 @@ import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Kbd } from '../components/ui/misc';
 import { cn } from '../lib/cn';
-import { TONE_TEXT } from '../lib/tone';
+import { TONE_TEXT, textMark } from '../lib/tone';
 import { useActions } from '../lib/actions';
+import { otherModalOpen } from '../lib/modal';
+import { needsRoleText, useRole } from '../lib/role';
 import { Textarea } from '../components/ui/input';
 import { type DelegationNode, delegationTree, treeSize } from '../lib/delegation';
 import {
@@ -58,8 +66,23 @@ import {
 import { type SubagentNode, buildTimeline, subagentTree } from '../lib/timeline';
 import { TrustBadge } from './memory';
 
+function isTyping(t: EventTarget | null): boolean {
+  return (
+    t instanceof HTMLElement &&
+    (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))
+  );
+}
+
+/**
+ * The Run's controls, always in one order so the row does not jump with its
+ * status: the Run's own ([Resume run | Pause run] [Pause now] [Stop], or
+ * [Run again] once it ended), then, after a divider, the Bot's ([Pause Bot]
+ * [Take over]). Each needs a role (hosted mode, ADR-015): it is disabled with
+ * the reason for a principal without it.
+ */
 function Controls({ run }: { run: RunState }) {
   const actions = useActions();
+  const role = useRole();
   const bot = useBot(run.botId);
   const live = !TERMINAL_RUN_STATUSES.includes(run.status);
   const resumable =
@@ -68,93 +91,132 @@ function Controls({ run }: { run: RunState }) {
     run.status === 'rate_limited';
   const running = run.status === 'running';
   const paused = (bot.data?.pausedAt ?? null) !== null;
+  const pauseRun = () => void actions.pauseRun(run.runId).catch(() => undefined);
+
+  // P pauses a running Run at its next tool call (listed in RUN_KEYS).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'P' || e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return;
+      if (isTyping(e.target) || otherModalOpen()) return;
+      e.preventDefault();
+      if (!role.can('pauseRun')) toast(`${needsRoleText(roleFor('pauseRun'))} to pause a Run`);
+      else if (!running) toast('Only a running Run can be paused');
+      else if (run.pauseRequested) toast('A pause is already requested');
+      else pauseRun();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
   return (
     <>
       {resumable ? (
-        <Button
-          variant="primary"
-          onClick={() => void actions.resumeRun(run.runId).catch(() => undefined)}
-        >
-          <Play aria-hidden /> Resume run
-        </Button>
-      ) : null}
-      {bot.data ? (
-        <Button
-          onClick={() =>
-            void (async () => {
-              if (!paused) {
-                const ok = await confirmAction({
-                  title: `Pause ${scrubControls(bot.data.spec.name)}?`,
-                  body: 'This Run and any others of the Bot stop; nothing new starts until you resume it.',
-                  confirm: 'Pause Bot',
-                  danger: true,
-                });
-                if (!ok) return;
-              }
-              await actions.setBotPaused(bot.data, !paused);
-            })().catch(() => undefined)
-          }
-        >
-          {paused ? <Play aria-hidden /> : <Pause aria-hidden />}{' '}
-          {paused ? 'Resume Bot' : 'Pause Bot'}
-        </Button>
+        <RoleGate route="resumeRun">
+          <Button
+            variant="primary"
+            onClick={() => void actions.resumeRun(run.runId).catch(() => undefined)}
+          >
+            <Play aria-hidden /> Resume run
+          </Button>
+        </RoleGate>
       ) : null}
       {running ? (
         <>
-          <Button
-            disabled={run.pauseRequested !== null}
-            title="Stops at the run's next tool call; resume it whenever you like"
-            onClick={() => void actions.pauseRun(run.runId).catch(() => undefined)}
+          <RoleGate
+            route="pauseRun"
+            hint="Stops at the run's next tool call; resume it whenever you like (P)"
           >
-            <Pause aria-hidden /> {run.pauseRequested ? 'Pause requested' : 'Pause run'}
-          </Button>
+            <Button disabled={run.pauseRequested !== null} onClick={pauseRun}>
+              <Pause aria-hidden /> {run.pauseRequested ? 'Pause requested' : 'Pause run'}
+            </Button>
+          </RoleGate>
+          <RoleGate route="pauseRun">
+            <Button
+              variant="ghost"
+              disabled={run.pauseRequested?.now === true}
+              onClick={() =>
+                void (async () => {
+                  const ok = await confirmAction({
+                    title: 'Pause this run now?',
+                    body: 'The engine stops mid-turn. When you resume, the Bot is told that a tool call without a result may or may not have happened.',
+                    confirm: 'Pause now',
+                  });
+                  if (ok) await actions.pauseRun(run.runId, true);
+                })().catch(() => undefined)
+              }
+            >
+              <Zap aria-hidden /> Pause now
+            </Button>
+          </RoleGate>
+        </>
+      ) : null}
+      {live ? (
+        <RoleGate route="stopRun">
           <Button
-            variant="ghost"
-            disabled={run.pauseRequested?.now === true}
+            variant="danger"
             onClick={() =>
               void (async () => {
                 const ok = await confirmAction({
-                  title: 'Pause this run now?',
-                  body: 'The engine stops mid-turn. When you resume, the Bot is told that a tool call without a result may or may not have happened.',
-                  confirm: 'Pause now',
+                  title: 'Stop this run?',
+                  body: 'The engine stops now; pending approvals are cancelled. This cannot be undone.',
+                  confirm: 'Stop run',
+                  danger: true,
                 });
-                if (ok) await actions.pauseRun(run.runId, true);
+                if (ok) await actions.stopRun(run.runId);
               })().catch(() => undefined)
             }
           >
-            Pause now
+            <Square aria-hidden /> Stop
           </Button>
-        </>
-      ) : null}
-      {bot.data ? <TakeOverButton bot={bot.data} /> : null}
-      {live ? (
-        <Button
-          variant="danger"
-          onClick={() =>
-            void (async () => {
-              const ok = await confirmAction({
-                title: 'Stop this run?',
-                body: 'The engine stops now; pending approvals are cancelled. This cannot be undone.',
-                confirm: 'Stop run',
-                danger: true,
-              });
-              if (ok) await actions.stopRun(run.runId);
-            })().catch(() => undefined)
-          }
-        >
-          <Square aria-hidden /> Stop
-        </Button>
+        </RoleGate>
       ) : bot.data ? (
-        <Button
-          disabled={paused}
-          onClick={() =>
-            void actions
-              .runBot(bot.data, run.prompt ? { prompt: run.prompt } : {})
-              .catch(() => undefined)
-          }
-        >
-          <RotateCcw aria-hidden /> Run again
-        </Button>
+        <RoleGate route="startRun">
+          <Button
+            disabled={paused}
+            onClick={() =>
+              void actions
+                .runBot(bot.data, run.prompt ? { prompt: run.prompt } : {})
+                .catch(() => undefined)
+            }
+          >
+            <RotateCcw aria-hidden /> Run again
+          </Button>
+        </RoleGate>
+      ) : null}
+      {bot.data ? (
+        <>
+          <span aria-hidden className="mx-1 h-6 w-px self-center bg-border" />
+          <RoleGate
+            route={paused ? 'resumeBot' : 'pauseBot'}
+            hint={
+              paused
+                ? 'The Bot may start Runs again'
+                : 'The whole Bot: this Run and its others stop, and no new Runs start'
+            }
+          >
+            <Button
+              variant="ghost"
+              onClick={() =>
+                void (async () => {
+                  if (!paused) {
+                    const ok = await confirmAction({
+                      title: `Pause ${scrubControls(bot.data.spec.name)}?`,
+                      body: 'This Run and any others of the Bot stop; nothing new starts until you resume it.',
+                      confirm: 'Pause Bot',
+                      danger: true,
+                    });
+                    if (!ok) return;
+                  }
+                  await actions.setBotPaused(bot.data, !paused);
+                })().catch(() => undefined)
+              }
+            >
+              {paused ? <CirclePlay aria-hidden /> : <CirclePause aria-hidden />}{' '}
+              {paused ? 'Resume Bot' : 'Pause Bot'}
+            </Button>
+          </RoleGate>
+          <TakeOverButton bot={bot.data} />
+        </>
       ) : null}
     </>
   );
@@ -260,7 +322,7 @@ function DelegationList({ node }: { node: DelegationNode }) {
     <li>
       <span className="flex flex-wrap items-center gap-1.5">
         <span className={cn('text-xs', TONE_TEXT[w.tone])} title={w.meaning}>
-          <span aria-hidden>{w.mark}</span> {w.label}
+          <span aria-hidden>{textMark(w.mark)}</span> {w.label}
         </span>
         {node.current ? (
           <span aria-current="page" className="font-medium text-fg">
@@ -614,7 +676,7 @@ export function RunScreen() {
           {r.resumeAt ? <Badge tone="info">↻ resumes {formatLocalTime(r.resumeAt)}</Badge> : null}
           {r.pauseRequested ? (
             <Badge tone="warning" title="Requested by you">
-              <span aria-hidden>{RUN_STATUS.paused.mark}</span>
+              <span aria-hidden>{textMark(RUN_STATUS.paused.mark)}</span>
               {r.pauseRequested.now ? 'pausing now' : 'pauses at its next tool call'}
             </Badge>
           ) : null}
@@ -657,8 +719,8 @@ export function RunScreen() {
           role="status"
           className="rounded-lg border border-warning/40 bg-warning-bg px-4 py-2 text-sm text-warning"
         >
-          <span aria-hidden>{RUN_STATUS.paused.mark}</span> {scrubControls(pauseReason(r.pause))}{' '}
-          {pauseNextStep(r.pause)}
+          <span aria-hidden>{textMark(RUN_STATUS.paused.mark)}</span>{' '}
+          {scrubControls(pauseReason(r.pause))} {pauseNextStep(r.pause)}
         </div>
       ) : null}
       {r.usageLimit ? (

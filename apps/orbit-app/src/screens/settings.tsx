@@ -13,7 +13,9 @@ import {
 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useId, useRef, useState } from 'react';
+import type { RouteName } from '@orbit/sdk-client/browser';
 import { confirmAction } from '../components/confirm';
+import { RoleGate } from '../components/role-gate';
 import { EmptyState, ErrorState, ListSkeleton, PageHeader } from '../components/states';
 import { Time } from '../components/status';
 import { Badge } from '../components/ui/badge';
@@ -24,6 +26,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { useActions } from '../lib/actions';
 import { MOD } from '../lib/platform';
 import { errorText, useClient } from '../lib/api';
+import { saveFile } from '../lib/download';
+import { useRole } from '../lib/role';
+import { TONE_TEXT } from '../lib/tone';
 import { helpStore } from '../components/keyboard-help';
 import { type AuditRef, auditAction, auditActor, auditRef } from '../lib/audit';
 import {
@@ -41,6 +46,27 @@ import { useStore } from '../lib/store';
 import { type ThemeChoice, setTheme, themeStore } from '../lib/theme';
 import { Kbd } from '../components/ui/misc';
 import { Integrations } from './integrations';
+
+const CHECK_MARK: Record<'success' | 'warning' | 'danger', string> = {
+  success: '✔',
+  warning: '⚠',
+  danger: '✘',
+};
+
+/** A doctor finding: ✔ / ⚠ / ✘ in its tone colour, then the words (never colour alone). */
+function Check({
+  tone,
+  children,
+}: {
+  tone: 'success' | 'warning' | 'danger';
+  children: React.ReactNode;
+}) {
+  return (
+    <span className={TONE_TEXT[tone]}>
+      <span aria-hidden>{CHECK_MARK[tone]}</span> <span className="text-fg">{children}</span>
+    </span>
+  );
+}
 
 function Row({ term, children }: { term: string; children: React.ReactNode }) {
   return (
@@ -87,29 +113,31 @@ function General() {
             the Bots.
           </p>
           <div>
-            <Button
-              variant={engaged ? 'secondary' : 'danger'}
-              onClick={() =>
-                void confirmAction(
-                  engaged
-                    ? {
-                        title: 'Release the kill switch?',
-                        body: 'Bots may run again.',
-                        confirm: 'Release',
-                      }
-                    : {
-                        title: 'Engage the global kill switch?',
-                        body: 'Every Run stops now and nothing new starts until you release it.',
-                        confirm: 'Stop everything',
-                        danger: true,
-                      },
-                )
-                  .then((ok) => (ok ? actions.setKill(!engaged) : undefined))
-                  .catch(() => undefined)
-              }
-            >
-              <Octagon aria-hidden /> {engaged ? 'Release the kill switch' : 'Stop everything'}
-            </Button>
+            <RoleGate route="setKill">
+              <Button
+                variant={engaged ? 'secondary' : 'danger'}
+                onClick={() =>
+                  void confirmAction(
+                    engaged
+                      ? {
+                          title: 'Release the kill switch?',
+                          body: 'Bots may run again.',
+                          confirm: 'Release',
+                        }
+                      : {
+                          title: 'Engage the global kill switch?',
+                          body: 'Every Run stops now and nothing new starts until you release it.',
+                          confirm: 'Stop everything',
+                          danger: true,
+                        },
+                  )
+                    .then((ok) => (ok ? actions.setKill(!engaged) : undefined))
+                    .catch(() => undefined)
+                }
+              >
+                <Octagon aria-hidden /> {engaged ? 'Release the kill switch' : 'Stop everything'}
+              </Button>
+            </RoleGate>
           </div>
         </CardContent>
       </Card>
@@ -228,16 +256,31 @@ function Engine() {
             </Row>
             <Row term="Home">{d.home}</Row>
             <Row term="Engine sandbox">
-              {d.sandbox.engineSandbox.available
-                ? 'available'
-                : `unavailable (missing ${d.sandbox.engineSandbox.missing.join(', ') || '?'})`}
+              {d.sandbox.engineSandbox.available ? (
+                <Check tone="success">available</Check>
+              ) : (
+                <Check tone="warning">
+                  unavailable (missing {d.sandbox.engineSandbox.missing.join(', ') || '?'})
+                </Check>
+              )}
             </Row>
             <Row term="Plugin sandbox">
-              {d.sandbox.plugins.mode === 'off'
-                ? 'off (plugins.sandbox): plugins run as your user'
-                : d.sandbox.plugins.available
-                  ? `${d.sandbox.plugins.engine ?? 'available'} (${d.sandbox.plugins.mode})`
-                  : `unavailable: ${d.sandbox.plugins.reason ?? '?'}${d.sandbox.plugins.mode === 'required' ? ' — plugins do not start' : ' — plugins run as your user'}`}
+              {d.sandbox.plugins.mode === 'off' ? (
+                <Check tone="warning">off (plugins.sandbox): plugins run as your user</Check>
+              ) : d.sandbox.plugins.available ? (
+                <Check tone="success">
+                  {d.sandbox.plugins.engine ?? 'available'}
+                  {d.sandbox.plugins.mode === 'required' ? ' · required for every plugin' : ''}
+                </Check>
+              ) : d.sandbox.plugins.mode === 'required' ? (
+                <Check tone="danger">
+                  unavailable: {d.sandbox.plugins.reason ?? '?'} — plugins do not start
+                </Check>
+              ) : (
+                <Check tone="warning">
+                  unavailable: {d.sandbox.plugins.reason ?? '?'} — plugins run as your user
+                </Check>
+              )}
             </Row>
             <Row term="Docker">
               {d.sandbox.docker.available
@@ -246,18 +289,33 @@ function Engine() {
             </Row>
             {d.engineKey ? (
               <Row term="Engine key">
-                {d.engineKey.delivery === 'proxied'
-                  ? 'proxied — the API key stays in orbitd (key proxy)'
-                  : "in the engine — Bedrock / Vertex credentials are in the engine's environment"}
-                {d.engineKey.subprocessScrub === false
-                  ? ' · subprocess scrub off (no bubblewrap)'
-                  : ''}
+                <Check
+                  tone={
+                    d.engineKey.delivery === 'proxied' && d.engineKey.subprocessScrub !== false
+                      ? 'success'
+                      : 'warning'
+                  }
+                >
+                  {d.engineKey.delivery === 'proxied'
+                    ? 'proxied — the API key stays in orbitd (key proxy)'
+                    : "in the engine — Bedrock / Vertex credentials are in the engine's environment"}
+                  {d.engineKey.subprocessScrub === false
+                    ? ' · subprocess scrub off (no bubblewrap)'
+                    : ''}
+                </Check>
               </Row>
             ) : null}
             <Row term="Docker Bots">
-              {d.sandbox.dockerSandbox.ready
-                ? 'ready — the API key stays on the host (key proxy)'
-                : `not ready — ${d.sandbox.dockerSandbox.detail}`}
+              {d.sandbox.dockerSandbox.ready ? (
+                <Check tone="success">ready — the API key stays on the host (key proxy)</Check>
+              ) : (
+                <Check tone="warning">
+                  not ready —{' '}
+                  {d.sandbox.docker.available
+                    ? scrubControls(d.sandbox.dockerSandbox.detail)
+                    : 'install or start Docker, then reopen this tab'}
+                </Check>
+              )}
             </Row>
             <Row term="Runtime">
               Node {d.node} · {d.platform}
@@ -348,9 +406,11 @@ function Policies() {
                 <option value="never">never</option>
               </Select>
             </Field>
-            <Button type="submit" variant="primary" disabled={!tool.trim()}>
-              <Plus aria-hidden /> Add
-            </Button>
+            <RoleGate route="createRule">
+              <Button type="submit" variant="primary" disabled={!tool.trim()}>
+                <Plus aria-hidden /> Add
+              </Button>
+            </RoleGate>
           </form>
           <p className="mt-2 text-xs text-fg-subtle">
             Allow rules never cover financial tools or <code>*</code>, and never auto-allow external
@@ -422,14 +482,16 @@ function Policies() {
                       {r.expiresAt ? <Time iso={r.expiresAt} /> : 'never'}
                     </td>
                     <td className="px-4 py-2 text-right">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        aria-label={`Revoke the rule for ${scrubControls(r.toolPattern)}${when ? ` when ${scrubControls(when)}` : ''}`}
-                        onClick={() => void actions.revokeRule(r).catch(() => undefined)}
-                      >
-                        <Trash2 aria-hidden /> Revoke
-                      </Button>
+                      <RoleGate route="revokeRule">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-label={`Revoke the rule for ${scrubControls(r.toolPattern)}${when ? ` when ${scrubControls(when)}` : ''}`}
+                          onClick={() => void actions.revokeRule(r).catch(() => undefined)}
+                        >
+                          <Trash2 aria-hidden /> Revoke
+                        </Button>
+                      </RoleGate>
                     </td>
                   </tr>
                 );
@@ -700,16 +762,6 @@ function AuditCell({ refOf }: { refOf: AuditRef | null }) {
   );
 }
 
-/** Save `text` as a file the browser downloads. */
-function saveFile(name: string, type: string, text: string): void {
-  const url = URL.createObjectURL(new Blob([text], { type }));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 /** "Keyed since …" and the records from before the upgrade (ADR-007, M8). */
 function AuditKeying() {
   const status = useAuditStatus();
@@ -790,10 +842,13 @@ function Audit() {
       const r = await client.audit.verifyCheckpoint(
         parsed as Parameters<typeof client.audit.verifyCheckpoint>[0],
       );
+      const seq = (parsed as { seq?: unknown }).seq;
+      const at = typeof seq === 'number' ? ` (record #${seq})` : '';
+      const name = scrubControls(file.name);
       setVerify(
         r.ok
-          ? `✔ The log still contains this checkpoint, signed by this audit key (${r.since} records since).`
-          : `✘ Checkpoint check failed: ${scrubControls(r.reason ?? 'unknown')}`,
+          ? `✔ ${name}${at}: the log still contains this checkpoint, signed by this audit key (${r.since} records since).`
+          : `✘ Checkpoint check failed for ${name}${at}: ${scrubControls(r.reason ?? 'unknown')}. Treat the log as altered: keep this file, export the JSONL and compare.`,
       );
     } catch (err) {
       setVerify(`✘ ${errorText(err)}`);
@@ -900,11 +955,22 @@ const TABS = [
   'audit',
 ] as const;
 
+/** Tabs whose data only the owner may read (the contract's roles): hidden from others. */
+const TAB_ROUTE: Partial<Record<(typeof TABS)[number], RouteName>> = {
+  secrets: 'listSecrets',
+  audit: 'listAudit',
+};
+
 export function SettingsScreen() {
   const search: { tab?: string | undefined } = useSearch({ strict: false });
   const navigate = useNavigate();
+  const role = useRole();
+  const shown = TABS.filter((t) => {
+    const route = TAB_ROUTE[t];
+    return route === undefined || role.can(route);
+  });
   const tab =
-    search.tab && (TABS as readonly string[]).includes(search.tab) ? search.tab : 'general';
+    search.tab && (shown as readonly string[]).includes(search.tab) ? search.tab : 'general';
   return (
     <div>
       <PageHeader
@@ -921,8 +987,8 @@ export function SettingsScreen() {
           <TabsTrigger value="integrations">Integrations</TabsTrigger>
           <TabsTrigger value="policies">Policies</TabsTrigger>
           <TabsTrigger value="budgets">Budgets</TabsTrigger>
-          <TabsTrigger value="secrets">Secrets</TabsTrigger>
-          <TabsTrigger value="audit">Audit</TabsTrigger>
+          {shown.includes('secrets') ? <TabsTrigger value="secrets">Secrets</TabsTrigger> : null}
+          {shown.includes('audit') ? <TabsTrigger value="audit">Audit</TabsTrigger> : null}
         </TabsList>
         <TabsContent value="general">
           <General />
@@ -939,12 +1005,16 @@ export function SettingsScreen() {
         <TabsContent value="budgets">
           <Budgets />
         </TabsContent>
-        <TabsContent value="secrets">
-          <Secrets />
-        </TabsContent>
-        <TabsContent value="audit">
-          <Audit />
-        </TabsContent>
+        {shown.includes('secrets') ? (
+          <TabsContent value="secrets">
+            <Secrets />
+          </TabsContent>
+        ) : null}
+        {shown.includes('audit') ? (
+          <TabsContent value="audit">
+            <Audit />
+          </TabsContent>
+        ) : null}
       </Tabs>
       <p className="mt-6 text-xs text-fg-subtle">
         Tip: <Kbd>{MOD}K</Kbd> finds any Bot, run or approval and runs commands.

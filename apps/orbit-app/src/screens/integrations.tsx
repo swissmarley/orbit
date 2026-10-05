@@ -28,6 +28,7 @@ import {
 import { useId, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { confirmAction } from '../components/confirm';
+import { IfRole, RoleGate } from '../components/role-gate';
 import { EmptyState, ErrorState, ListSkeleton } from '../components/states';
 import { TierBadge, Time } from '../components/status';
 import { Badge } from '../components/ui/badge';
@@ -182,28 +183,32 @@ function SecretRow({ plugin, s }: { plugin: PluginStatus; s: PluginStatus['secre
           <span aria-hidden>{s.set ? '✔' : s.required ? '◌' : '○'}</span>
           {s.set ? 'set' : s.required ? 'missing' : 'not set'}
         </Badge>
-        <Button type="submit" size="sm" disabled={!value} aria-label={`Store ${s.name}`}>
-          <KeyRound aria-hidden /> Store
-        </Button>
-        {s.set ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            aria-label={`Remove ${s.name} from ${plugin.name}`}
-            onClick={() =>
-              void confirmAction({
-                title: `Remove ${s.name}?`,
-                body: `${plugin.name} loses it; Runs that need it fail until you store it again.`,
-                confirm: 'Remove',
-                danger: true,
-              })
-                .then((ok) => (ok ? actions.removePluginSecret(plugin, s.name) : undefined))
-                .catch(() => undefined)
-            }
-          >
-            Remove
+        <RoleGate route="setPluginSecret">
+          <Button type="submit" size="sm" disabled={!value} aria-label={`Store ${s.name}`}>
+            <KeyRound aria-hidden /> Store
           </Button>
+        </RoleGate>
+        {s.set ? (
+          <RoleGate route="removePluginSecret">
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              aria-label={`Remove ${s.name} from ${plugin.name}`}
+              onClick={() =>
+                void confirmAction({
+                  title: `Remove ${s.name}?`,
+                  body: `${plugin.name} loses it; Runs that need it fail until you store it again.`,
+                  confirm: 'Remove',
+                  danger: true,
+                })
+                  .then((ok) => (ok ? actions.removePluginSecret(plugin, s.name) : undefined))
+                  .catch(() => undefined)
+              }
+            >
+              Remove
+            </Button>
+          </RoleGate>
         ) : null}
       </form>
       {s.description ? (
@@ -246,14 +251,16 @@ function SettingRow({ plugin, s }: { plugin: PluginStatus; s: PluginStatus['sett
             className="font-mono"
           />
         </Field>
-        <Button
-          type="submit"
-          size="sm"
-          disabled={value === (s.value ?? '')}
-          aria-label={`Save ${s.name}`}
-        >
-          Save
-        </Button>
+        <RoleGate route="setPluginSetting">
+          <Button
+            type="submit"
+            size="sm"
+            disabled={value === (s.value ?? '')}
+            aria-label={`Save ${s.name}`}
+          >
+            Save
+          </Button>
+        </RoleGate>
       </form>
       {s.description ? (
         <p id={`${id}-hint`} className="text-xs text-fg-subtle">
@@ -334,62 +341,77 @@ function PluginCard({ plugin: p }: { plugin: PluginStatus }) {
         </div>
         <div className="flex flex-wrap gap-2">
           {p.enabled ? (
-            <Button size="sm" onClick={disable} disabled={busy} aria-label={`Disable ${t(p.name)}`}>
-              <Power aria-hidden /> Disable
-            </Button>
+            <RoleGate route="disablePlugin">
+              <Button
+                size="sm"
+                onClick={disable}
+                disabled={busy}
+                aria-label={`Disable ${t(p.name)}`}
+              >
+                <Power aria-hidden /> Disable
+              </Button>
+            </RoleGate>
           ) : missing.length > 0 ? (
             // Enabling would fail until the required secrets and settings exist (UI review H3).
-            <Button
-              size="sm"
-              onClick={setUp}
-              aria-label={`Set up ${t(p.name)}: ${missing.join(', ')} missing`}
-              aria-describedby={noteId}
-            >
-              <Settings2 aria-hidden /> Set up
-            </Button>
+            <RoleGate route="setPluginSecret">
+              <Button
+                size="sm"
+                onClick={setUp}
+                aria-label={`Set up ${t(p.name)}: ${missing.join(', ')} missing`}
+                aria-describedby={noteId}
+              >
+                <Settings2 aria-hidden /> Set up
+              </Button>
+            </RoleGate>
           ) : (
-            <Button
-              size="sm"
-              variant="primary"
-              onClick={enable}
-              disabled={busy}
-              aria-label={`Enable ${t(p.name)}`}
-            >
-              <Power aria-hidden /> Enable
-            </Button>
+            <RoleGate route="enablePlugin">
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={enable}
+                disabled={busy}
+                aria-label={`Enable ${t(p.name)}`}
+              >
+                <Power aria-hidden /> Enable
+              </Button>
+            </RoleGate>
           )}
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => act(() => actions.checkPlugin(p))}
-            disabled={busy || missing.length > 0}
-            aria-label={`Check ${t(p.name)}: start it once and list its tools`}
-          >
-            <RefreshCw aria-hidden /> Check
-          </Button>
-          {p.builtIn ? null : (
+          <RoleGate route="checkPlugin">
             <Button
               size="sm"
               variant="ghost"
-              disabled={busy}
-              aria-label={`Remove ${t(p.name)}`}
-              onClick={() =>
-                act(async () => {
-                  const ok = await confirmAction({
-                    title: `Remove ${t(p.name)}?`,
-                    body:
-                      p.source.kind === 'npm'
-                        ? 'Orbit forgets it, deletes its installed files and its secrets.'
-                        : 'Orbit forgets it and its secrets; its folder stays where it is.',
-                    confirm: 'Remove',
-                    danger: true,
-                  });
-                  if (ok) await actions.removePlugin(p);
-                })
-              }
+              onClick={() => act(() => actions.checkPlugin(p))}
+              disabled={busy || missing.length > 0}
+              aria-label={`Check ${t(p.name)}: start it once and list its tools`}
             >
-              <Trash2 aria-hidden /> Remove
+              <RefreshCw aria-hidden /> Check
             </Button>
+          </RoleGate>
+          {p.builtIn ? null : (
+            <RoleGate route="removePlugin">
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy}
+                aria-label={`Remove ${t(p.name)}`}
+                onClick={() =>
+                  act(async () => {
+                    const ok = await confirmAction({
+                      title: `Remove ${t(p.name)}?`,
+                      body:
+                        p.source.kind === 'npm'
+                          ? 'Orbit forgets it, deletes its installed files and its secrets.'
+                          : 'Orbit forgets it and its secrets; its folder stays where it is.',
+                      confirm: 'Remove',
+                      danger: true,
+                    });
+                    if (ok) await actions.removePlugin(p);
+                  })
+                }
+              >
+                <Trash2 aria-hidden /> Remove
+              </Button>
+            </RoleGate>
           )}
         </div>
       </CardHeader>
@@ -528,28 +550,30 @@ function InboundRow({ trigger: tr }: { trigger: Inbound }) {
         <span className="min-w-0 break-words">{t(tr.description)}</span>
         {tr.detail ? <span className="text-xs text-fg-muted">({t(tr.detail)})</span> : null}
         {tr.kind === 'webhook' && webhookName ? (
-          <Button
-            size="sm"
-            className="ml-auto"
-            onClick={() =>
-              void (async () => {
-                if (tr.state !== 'needs_setup') {
-                  const ok = await confirmAction({
-                    title: 'Rotate the signing secret?',
-                    body: 'The old secret stops working at once; update the sender with the new one.',
-                    confirm: 'Rotate',
-                    danger: true,
-                  });
-                  if (!ok) return;
-                }
-                setMinted(await actions.mintWebhookSecret(tr.botId, webhookName));
-                requestAnimationFrame(() => copyButton.current?.focus());
-              })().catch(() => undefined)
-            }
-          >
-            <Webhook aria-hidden />{' '}
-            {tr.state === 'needs_setup' ? 'Create signing secret' : 'Rotate secret'}
-          </Button>
+          <RoleGate route="webhookSecret">
+            <Button
+              size="sm"
+              className="ml-auto"
+              onClick={() =>
+                void (async () => {
+                  if (tr.state !== 'needs_setup') {
+                    const ok = await confirmAction({
+                      title: 'Rotate the signing secret?',
+                      body: 'The old secret stops working at once; update the sender with the new one.',
+                      confirm: 'Rotate',
+                      danger: true,
+                    });
+                    if (!ok) return;
+                  }
+                  setMinted(await actions.mintWebhookSecret(tr.botId, webhookName));
+                  requestAnimationFrame(() => copyButton.current?.focus());
+                })().catch(() => undefined)
+              }
+            >
+              <Webhook aria-hidden />{' '}
+              {tr.state === 'needs_setup' ? 'Create signing secret' : 'Rotate secret'}
+            </Button>
+          </RoleGate>
         ) : null}
       </div>
       {address ? (
@@ -633,8 +657,14 @@ function InboundTriggers() {
   );
 }
 
+/**
+ * The plugin catalog (ADR-019). Reading it is a request to its host, so it
+ * is fetched only when the owner asks ("Browse catalog"), never by opening
+ * the tab.
+ */
 function InstallFromCatalog() {
-  const q = usePluginCatalog();
+  const [browsing, setBrowsing] = useState(false);
+  const q = usePluginCatalog(browsing);
   const actions = useActions();
   const [busy, setBusy] = useState<string | null>(null);
   const install = (id: string) => {
@@ -658,15 +688,33 @@ function InstallFromCatalog() {
         <h2 className="text-base font-semibold text-fg">Install from catalog</h2>
       </CardHeader>
       <CardContent>
-        {q.isPending ? (
+        {!browsing && q.data === undefined ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="min-w-0 flex-1 basis-64 text-sm text-fg-muted">
+              Plugins vetted for Orbit, each pinned to an exact version. Orbit asks the catalog’s
+              host (plugins.catalogUrl) only when you browse it.
+            </p>
+            <Button onClick={() => setBrowsing(true)}>
+              <Download aria-hidden /> Browse catalog
+            </Button>
+          </div>
+        ) : q.isPending ? (
           <ListSkeleton rows={2} />
         ) : q.isError ? (
           <ErrorState error={q.error} retry={() => void q.refetch()} />
         ) : q.data.error ? (
-          <p role="note" className="text-sm text-warning">
-            <AlertTriangle aria-hidden className="mr-1 inline size-4" />
-            {t(q.data.error)}
-          </p>
+          <div role="note" className="flex flex-col items-start gap-2 text-sm text-warning">
+            <p>
+              <AlertTriangle aria-hidden className="mr-1 inline size-4" />
+              {t(q.data.error)}
+            </p>
+            <p className="text-fg-muted">
+              Check the network, or set plugins.catalogUrl to a catalog you can reach.
+            </p>
+            <Button size="sm" onClick={() => void q.refetch()} disabled={q.isFetching}>
+              <RefreshCw aria-hidden /> {q.isFetching ? 'Retrying…' : 'Retry'}
+            </Button>
+          </div>
         ) : q.data.entries.length === 0 ? (
           <p className="text-sm text-fg-muted">
             The catalog lists no plugins yet. A package you trust can be installed from a terminal:{' '}
@@ -702,7 +750,7 @@ function InstallFromCatalog() {
                     aria-label={`Install ${t(e.name)}`}
                     onClick={() => install(e.id)}
                   >
-                    <Download aria-hidden /> Install
+                    <Download aria-hidden /> {busy === e.id ? 'Checking…' : 'Install'}
                   </Button>
                 )}
               </li>
@@ -786,9 +834,13 @@ export function Integrations() {
           ))}
         </div>
       )}
+      <IfRole route="installPlugin">
+        <InstallFromCatalog />
+      </IfRole>
       <InboundTriggers />
-      <InstallFromCatalog />
-      <AddPlugin />
+      <IfRole route="addPlugin">
+        <AddPlugin />
+      </IfRole>
     </div>
   );
 }

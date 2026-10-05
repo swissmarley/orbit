@@ -8,6 +8,7 @@ import {
   type Memory,
   type MemoryImportResult,
   type MemoryKind,
+  formatLocalDate,
   memoryTrust,
   scrubControls,
   slugify,
@@ -27,6 +28,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { confirmAction } from '../components/confirm';
+import { RoleGate } from '../components/role-gate';
 import { EmptyState, ErrorState, ListSkeleton, PageHeader } from '../components/states';
 import { Time } from '../components/status';
 import { Badge } from '../components/ui/badge';
@@ -38,7 +40,9 @@ import { Kbd } from '../components/ui/misc';
 import { useActions } from '../lib/actions';
 import { errorText, useClient } from '../lib/api';
 import { cn } from '../lib/cn';
-import { memoryListKey } from '../lib/memory-list';
+import { importMemoryIntent } from '../lib/intents';
+import { exportedBot, memoryListKey, readExportHeader } from '../lib/memory-list';
+import { useStore } from '../lib/store';
 import { useBots, useMemoryList } from '../lib/queries';
 
 const KINDS: { value: MemoryKind | ''; label: string }[] = [
@@ -388,68 +392,67 @@ function Detail({
           </dd>
         </dl>
         <div className="flex flex-wrap gap-2">
-          <Button onClick={() => setEditing(true)}>
-            <Pencil aria-hidden /> Edit
-          </Button>
+          <RoleGate route="updateMemory">
+            <Button onClick={() => setEditing(true)}>
+              <Pencil aria-hidden /> Edit
+            </Button>
+          </RoleGate>
           {untrusted ? (
+            <RoleGate route="updateMemory">
+              <Button
+                onClick={() =>
+                  void (async () => {
+                    const ok = await confirmAction({
+                      title: 'Mark this memory as trusted?',
+                      body: 'Do this only after reading it: trusted memories can be offered to Runs automatically. The audit log records it.',
+                      confirm: 'Mark trusted',
+                    });
+                    if (ok) await actions.updateMemory(m, { trusted: true });
+                    refocus();
+                  })().catch(() => undefined)
+                }
+              >
+                <ShieldCheck aria-hidden /> I reviewed it
+              </Button>
+            </RoleGate>
+          ) : (
+            <RoleGate route="updateMemory">
+              <Button
+                onClick={() =>
+                  void actions.updateMemory(m, { pinned: !m.pinned }).catch(() => undefined)
+                }
+              >
+                {m.pinned ? <PinOff aria-hidden /> : <Pin aria-hidden />}{' '}
+                {m.pinned ? 'Unpin' : 'Pin'}
+              </Button>
+            </RoleGate>
+          )}
+          <RoleGate route="deleteMemory">
             <Button
+              variant="danger"
               onClick={() =>
                 void (async () => {
                   const ok = await confirmAction({
-                    title: 'Mark this memory as trusted?',
-                    body: 'Do this only after reading it: trusted memories can be offered to Runs automatically. The audit log records it.',
-                    confirm: 'Mark trusted',
+                    title: 'Delete this memory?',
+                    body: 'The Bot forgets it and its markdown file is removed. This cannot be undone.',
+                    confirm: 'Delete',
+                    danger: true,
                   });
-                  if (ok) await actions.updateMemory(m, { trusted: true });
-                  refocus();
+                  if (ok) {
+                    await actions.deleteMemory(m);
+                    refocus();
+                  }
                 })().catch(() => undefined)
               }
             >
-              <ShieldCheck aria-hidden /> I reviewed it
+              <Trash2 aria-hidden /> Delete
             </Button>
-          ) : (
-            <Button
-              onClick={() =>
-                void actions.updateMemory(m, { pinned: !m.pinned }).catch(() => undefined)
-              }
-            >
-              {m.pinned ? <PinOff aria-hidden /> : <Pin aria-hidden />} {m.pinned ? 'Unpin' : 'Pin'}
-            </Button>
-          )}
-          <Button
-            variant="danger"
-            onClick={() =>
-              void (async () => {
-                const ok = await confirmAction({
-                  title: 'Delete this memory?',
-                  body: 'The Bot forgets it and its markdown file is removed. This cannot be undone.',
-                  confirm: 'Delete',
-                  danger: true,
-                });
-                if (ok) {
-                  await actions.deleteMemory(m);
-                  refocus();
-                }
-              })().catch(() => undefined)
-            }
-          >
-            <Trash2 aria-hidden /> Delete
-          </Button>
+          </RoleGate>
         </div>
       </CardContent>
       <EditDialog memory={m} open={editing} onOpenChange={setEditing} />
     </Card>
   );
-}
-
-/** Save `text` as a file the browser downloads. */
-function saveFile(name: string, type: string, text: string): void {
-  const url = URL.createObjectURL(new Blob([text], { type }));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 /** What an import would do, before it does it (ADR-012, M8). */
@@ -483,9 +486,10 @@ function ImportPreview({ r, untrusted }: { r: MemoryImportResult; untrusted: boo
       </p>
       {r.claimsOwner > 0 ? (
         <p className="rounded-md border border-warning/40 bg-warning-bg px-3 py-2 text-warning">
-          {r.claimsOwner} {r.claimsOwner === 1 ? 'says it was' : 'say they were'} written by you.
-          They count as trusted only because you choose to import this file, and trusted memories
-          can be offered to Runs. Mark everything untrusted if you did not write it.
+          <span aria-hidden>{MEMORY_TRUST.untrusted.mark}</span> {r.claimsOwner}{' '}
+          {r.claimsOwner === 1 ? 'says it was' : 'say they were'} written by you. They count as
+          trusted only because you choose to import this file, and trusted memories can be offered
+          to Runs. Mark everything untrusted if you did not write it.
         </p>
       ) : null}
       {r.evicts > 0 ? (
@@ -517,22 +521,26 @@ function ImportDialog({
   const [untrusted, setUntrusted] = useState(false);
   const [preview, setPreview] = useState<MemoryImportResult | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (open) {
-      setBotId(initialBot !== '' ? initialBot : (bots[0]?.id ?? ''));
+      // No guess: the Bot the file names is chosen once a file is picked, else the owner picks.
+      setBotId(initialBot);
       setFile(null);
       setUntrusted(false);
       setPreview(null);
       setProblem(null);
     }
-  }, [open, initialBot, bots]);
+  }, [open, initialBot]);
   // Every change of Bot, file or trust choice previews again (a dry run: nothing is written).
   useEffect(() => {
     setPreview(null);
     setProblem(null);
+    setChecking(false);
     if (!file || !botId) return;
     let live = true;
+    setChecking(true);
     client.memory
       .import(botId, { jsonl: file.text, untrusted, dryRun: true })
       .then((r) => {
@@ -540,11 +548,15 @@ function ImportDialog({
       })
       .catch((err: unknown) => {
         if (live) setProblem(errorText(err));
+      })
+      .finally(() => {
+        if (live) setChecking(false);
       });
     return () => {
       live = false;
     };
   }, [client, botId, file, untrusted]);
+  const header = file ? readExportHeader(file.text) : null;
   const bot = bots.find((b) => b.id === botId);
   const ready = preview !== null && preview.errors.length === 0 && preview.total > 0;
   return (
@@ -569,6 +581,9 @@ function ImportDialog({
         >
           <Field id={`${ids}-bot`} label="Into Bot">
             <Select id={`${ids}-bot`} value={botId} onChange={(e) => setBotId(e.target.value)}>
+              <option value="" disabled>
+                Choose a Bot
+              </option>
               {bots.map((b) => (
                 <option key={b.id} value={b.id}>
                   {scrubControls(b.spec.name)}
@@ -581,14 +596,27 @@ function ImportDialog({
               id={`${ids}-file`}
               type="file"
               accept=".jsonl,application/x-ndjson,application/json,text/plain"
-              className="text-sm"
+              className="text-sm text-fg-muted file:mr-3 file:h-8 file:cursor-pointer file:rounded-md file:border file:border-solid file:border-border-input file:bg-surface file:px-3 file:text-sm file:font-medium file:text-fg hover:file:bg-surface-2"
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (!f) return;
-                void f.text().then((text) => setFile({ name: f.name, text }));
+                void f.text().then((text) => {
+                  setFile({ name: f.name, text });
+                  const from = exportedBot(readExportHeader(text), bots);
+                  if (from) setBotId(from);
+                });
               }}
             />
           </Field>
+          {header ? (
+            <p className="text-sm text-fg-muted" data-testid="import-from">
+              From:{' '}
+              {header.bots.length
+                ? scrubControls(header.bots.map((b) => b.name).join(', '))
+                : 'no Bot'}{' '}
+              (exported {formatLocalDate(header.exportedAt)})
+            </p>
+          ) : null}
           <label className="flex items-start gap-2 text-sm text-fg">
             <input
               type="checkbox"
@@ -604,6 +632,11 @@ function ImportDialog({
           {problem ? (
             <p role="alert" className="text-sm text-danger">
               <span aria-hidden>✘</span> {problem}
+            </p>
+          ) : null}
+          {checking ? (
+            <p role="status" className="text-sm text-fg-muted">
+              Checking the file…
             </p>
           ) : null}
           {preview ? <ImportPreview r={preview} untrusted={untrusted} /> : null}
@@ -637,7 +670,15 @@ export function MemoryScreen() {
   const [query, setQuery] = useState(search.q ?? '');
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
-  const client = useClient();
+  const actions = useActions();
+  // The palette's "Import memories…" lands here.
+  const importAsked = useStore(importMemoryIntent);
+  useEffect(() => {
+    if (importAsked && bots.data?.length) {
+      importMemoryIntent.set(false);
+      setImporting(true);
+    }
+  }, [importAsked, bots.data]);
   const searchRef = useRef<HTMLInputElement>(null);
   const kind = KINDS.some((k) => k.value === search.kind) ? (search.kind as MemoryKind) : undefined;
   const list = useMemoryList({
@@ -701,32 +742,38 @@ export function MemoryScreen() {
         description="What your Bots remember — their notes, run summaries and your feedback — and who wrote each one."
         actions={
           <>
-            <Button
-              onClick={() =>
-                void client.memory
-                  .export(search.bot)
-                  .then((text) => {
-                    const slug = search.bot
-                      ? slugify(bots.data?.find((b) => b.id === search.bot)?.spec.name ?? 'bot')
-                      : 'all';
-                    saveFile(
+            <RoleGate route="exportMemory">
+              <Button
+                onClick={() => {
+                  const slug = search.bot
+                    ? slugify(bots.data?.find((b) => b.id === search.bot)?.spec.name ?? 'bot')
+                    : 'all';
+                  void actions
+                    .exportMemory(
+                      search.bot,
                       `orbit-memory-${slug}-${new Date().toISOString().slice(0, 10)}.jsonl`,
-                      'application/x-ndjson',
-                      text,
-                    );
-                  })
-                  .catch(() => undefined)
-              }
-              disabled={!bots.data?.length}
-            >
-              <Download aria-hidden /> {search.bot ? 'Export this Bot' : 'Export all'}
-            </Button>
-            <Button onClick={() => setImporting(true)} disabled={!bots.data?.length}>
-              <Upload aria-hidden /> Import…
-            </Button>
-            <Button variant="primary" onClick={() => setAdding(true)} disabled={!bots.data?.length}>
-              <Plus aria-hidden /> Add memory
-            </Button>
+                    )
+                    .catch(() => undefined);
+                }}
+                disabled={!bots.data?.length}
+              >
+                <Download aria-hidden /> {search.bot ? 'Export this Bot' : 'Export all'}
+              </Button>
+            </RoleGate>
+            <RoleGate route="importMemory">
+              <Button onClick={() => setImporting(true)} disabled={!bots.data?.length}>
+                <Upload aria-hidden /> Import…
+              </Button>
+            </RoleGate>
+            <RoleGate route="createMemory">
+              <Button
+                variant="primary"
+                onClick={() => setAdding(true)}
+                disabled={!bots.data?.length}
+              >
+                <Plus aria-hidden /> Add memory
+              </Button>
+            </RoleGate>
           </>
         }
       />
@@ -790,9 +837,11 @@ export function MemoryScreen() {
           title={filtered ? 'Nothing here' : 'No memories yet'}
           action={
             bots.data?.length ? (
-              <Button variant="primary" onClick={() => setAdding(true)}>
-                <Plus aria-hidden /> Add memory
-              </Button>
+              <RoleGate route="createMemory">
+                <Button variant="primary" onClick={() => setAdding(true)}>
+                  <Plus aria-hidden /> Add memory
+                </Button>
+              </RoleGate>
             ) : undefined
           }
         >

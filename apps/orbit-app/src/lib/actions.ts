@@ -12,6 +12,8 @@ import { useNavigate } from '@tanstack/react-router';
 import { useMemo } from 'react';
 import { toast } from 'sonner';
 import { csrfSecret, errorText, useClient } from './api';
+import { saveFile } from './download';
+import { readExportHeader } from './memory-list';
 import { keys } from './queries';
 
 /** Undo window for reversible actions. */
@@ -435,6 +437,18 @@ export function useActions() {
               : 'Trusted memories may be offered to new Runs.',
         });
         return r;
+      },
+
+      /** Download an export (one Bot, or all); the count comes from its header line. */
+      async exportMemory(botId: string | undefined, fileName: string): Promise<number> {
+        const text = await c.memory.export(botId).catch(fail('Could not export the memories'));
+        const count =
+          readExportHeader(text)?.count ?? Math.max(0, text.trim().split('\n').length - 1);
+        saveFile(fileName, 'application/x-ndjson', text);
+        toast.success(`Exported ${count} ${count === 1 ? 'memory' : 'memories'}`, {
+          description: `Saved as ${fileName}.`,
+        });
+        return count;
       },
 
       async deleteMemory(m: Memory): Promise<void> {

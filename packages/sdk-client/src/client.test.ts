@@ -1,7 +1,7 @@
 import { OrbitError, type RunEvent } from '@orbit/core';
 import { type Harness, TOKEN, harness } from '@orbit/api/testing';
 import { afterEach, describe, expect, it } from 'vitest';
-import { OrbitClient } from './client';
+import { OrbitClient, roleFor } from './client';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -172,5 +172,15 @@ describe('OrbitClient', () => {
     secret = 'after';
     await live.call('getSession');
     expect(seen.slice(-2).map((x) => x.headers.get('x-orbit-csrf'))).toEqual(['before', 'after']);
+  });
+});
+
+describe('roleFor', () => {
+  it("reads each route's least role from the contract (ADR-015)", () => {
+    expect(roleFor('listRuns')).toBe('viewer');
+    expect(roleFor('pauseRun')).toBe('operator');
+    expect(roleFor('approve')).toBe('operator');
+    expect(roleFor('pauseBot')).toBe('owner');
+    expect(roleFor('listAudit')).toBe('owner');
   });
 });

@@ -27,3 +27,11 @@ export const TONE_FILL: Record<Tone, string> = {
   danger: 'bg-danger',
   attention: 'bg-attention',
 };
+
+/**
+ * A status symbol as text: some platforms draw ⏸ as a colour emoji, which
+ * drops the tone colour, so it gets VS15 (text presentation).
+ */
+export function textMark(mark: string): string {
+  return mark === '\u23F8' ? '\u23F8\uFE0E' : mark;
+}

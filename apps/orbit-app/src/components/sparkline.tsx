@@ -1,7 +1,7 @@
 /** @jsxRuntime automatic @jsxImportSource react */
 import { RUN_STATUS, type RunState, formatTokens } from '@orbit/core/browser';
 import { cn } from '../lib/cn';
-import { TONE_FILL } from '../lib/tone';
+import { TONE_FILL, textMark } from '../lib/tone';
 
 /**
  * Recent Runs, oldest → newest: bar height = tokens used, colour = outcome
@@ -26,7 +26,7 @@ export function RunSparkline({
       <p className={cn('flex items-end text-xs text-fg-subtle', className)}>
         1 run ·{' '}
         <span aria-hidden className="mx-0.5">
-          {w.mark}
+          {textMark(w.mark)}
         </span>
         {w.label}
       </p>
