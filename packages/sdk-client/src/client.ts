@@ -283,6 +283,10 @@ export class OrbitClient {
       this.call('removePluginSecret', { params: { plugin, name } }),
     setSetting: (plugin: string, name: string, value: string | null) =>
       this.call('setPluginSetting', { params: { plugin, name }, body: { value } }),
+    /** The configured catalog (ADR-019), with what is already installed. */
+    catalog: () => this.call('pluginCatalog'),
+    /** Install from the catalog or npm (SRI-verified, off until enabled); `dryRun` previews. */
+    install: (body: RouteBody<'installPlugin'>) => this.call('installPlugin', { body }),
   };
 
   /** Inbound triggers (webhooks, Slack, files, git). */
