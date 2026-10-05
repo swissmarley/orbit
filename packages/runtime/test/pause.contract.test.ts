@@ -13,6 +13,7 @@ import { type QueryFn, SdkDriver } from '../src/drivers/sdk';
 import type { AgentDriver } from '../src/drivers/types';
 import { Orchestrator } from '../src/orchestrator';
 import { readFixture, replay } from './fake-engine.mjs';
+import { FakeKeyProxy } from './fake-key-proxy';
 
 /**
  * Per-Run pause (ADR-016) through each real permission path: the SDK
@@ -96,6 +97,7 @@ const drivers: [string, () => { driver: AgentDriver; cwd: string }][] = [
         env: { ...env, ANTHROPIC_API_KEY: 'sk-ant-api03-test-000000' },
         bare: true,
         apiKeyHelper: null,
+        keyProxy: new FakeKeyProxy(),
         queryFn: fakeQuery(FIXTURE('many-reads')),
         findBwrap: () => '/usr/bin/bwrap',
       }),

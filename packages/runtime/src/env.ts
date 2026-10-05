@@ -3,6 +3,7 @@
  * process.env wholesale: each kind of child gets an explicit allowlist, and a
  * deny list is enforced afterwards as a second line of defence.
  */
+import { API_KEY_PLACEHOLDER, HOST_KEY_PROXY_ADDRESS } from '@orbit/sandbox';
 
 export type ChildKind =
   /** The user's own `claude` CLI (CliDriver, subscription mode). */
@@ -162,5 +163,70 @@ export function buildChildEnv(
 export function assertChildEnvSafe(kind: ChildKind, env: Env): void {
   for (const k of deniedFor(kind)) {
     if (env[k] !== undefined) throw new EnvPolicyError(`${k} leaked into a ${kind} child`);
+  }
+}
+
+/** Hosts the engine must reach directly, never through the host's HTTPS_PROXY. */
+const LOOPBACK_NO_PROXY: readonly string[] = [HOST_KEY_PROXY_ADDRESS, 'localhost'];
+
+/**
+ * The environment of an SDK engine on the host behind orbitd's key proxy
+ * (ADR-018, amended): built like any non-engine child (`tool`: no API or
+ * cloud credential, no provider switch, not the host's ANTHROPIC_BASE_URL),
+ * plus the placeholder key and the proxy's loopback base URL with the
+ * segment's token. `NO_PROXY` gains the loopback names so the engine talks
+ * to the proxy directly.
+ */
+export function proxiedEngineEnv(
+  source: Env,
+  baseUrl: string,
+  extra: Record<string, string> = {},
+): Record<string, string> {
+  const env = buildChildEnv('tool', source, extra);
+  const listed = (env.NO_PROXY ?? env.no_proxy ?? '')
+    .split(',')
+    .map((h) => h.trim())
+    .filter((h) => h !== '');
+  const noProxy = [...new Set([...listed, ...LOOPBACK_NO_PROXY])].join(',');
+  Object.assign(env, {
+    ANTHROPIC_API_KEY: API_KEY_PLACEHOLDER,
+    ANTHROPIC_BASE_URL: baseUrl,
+    NO_PROXY: noProxy,
+    no_proxy: noProxy,
+  });
+  assertProxiedEngineEnv(env);
+  return env;
+}
+
+/**
+ * Throws unless `env` is a proxied engine's: nothing a `tool` child may not
+ * have, the placeholder as its only key, and the API reached on loopback.
+ */
+export function assertProxiedEngineEnv(env: Env): void {
+  for (const k of deniedFor('tool')) {
+    if (k !== 'ANTHROPIC_API_KEY' && env[k] !== undefined) {
+      throw new EnvPolicyError(`${k} leaked into a proxied engine`);
+    }
+  }
+  if (env.ANTHROPIC_API_KEY !== API_KEY_PLACEHOLDER) {
+    throw new EnvPolicyError('A proxied engine gets only the placeholder API key');
+  }
+  for (const k of [
+    'CLAUDE_CODE_USE_BEDROCK',
+    'CLAUDE_CODE_USE_VERTEX',
+    'CLAUDE_CODE_USE_FOUNDRY',
+  ]) {
+    if (env[k] !== undefined) throw new EnvPolicyError(`${k} leaked into a proxied engine`);
+  }
+  let url: URL | null;
+  try {
+    url = new URL(env.ANTHROPIC_BASE_URL ?? '');
+  } catch {
+    url = null;
+  }
+  if (url?.protocol !== 'http:' || url.hostname !== HOST_KEY_PROXY_ADDRESS) {
+    throw new EnvPolicyError(
+      "A proxied engine reaches the API only through orbitd's loopback proxy",
+    );
   }
 }

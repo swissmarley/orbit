@@ -73,7 +73,11 @@ export interface PreparedWorkspace {
    * these and refuse everything else (ADR-018).
    */
   mounts?: readonly PathMount[];
-  /** Called once when the Run segment that prepared the workspace ends. */
+  /**
+   * Called when the Run segment that prepared the workspace ends, or as soon
+   * as it is stopped (kill switch, budget, stop): the orchestrator calls it
+   * at most once.
+   */
   release?: () => void;
   /** Worktree Bots: the owner's repository and the Bot's own branch (for plugins that run git). */
   git?: { repo: string; branch: string };
@@ -1137,7 +1141,20 @@ export class Orchestrator {
     const prior = this.state(runId);
     let ws: PreparedWorkspace;
     try {
-      ws = await this.workspaces(bot, driver.kind);
+      const prepared = await this.workspaces(bot, driver.kind);
+      const release = prepared.release;
+      let released = false;
+      ws =
+        release === undefined
+          ? prepared
+          : {
+              ...prepared,
+              release: () => {
+                if (released) return;
+                released = true;
+                release();
+              },
+            };
     } catch (err) {
       // Review M1: never leave a Run looking queued or running when nothing executes.
       this.deps.store.append(
@@ -1206,6 +1223,10 @@ export class Orchestrator {
     const abort = (cause: StopCause) => {
       if (stopCause) return;
       stopCause = cause;
+      // The Bot's host-side proxies stop forwarding for this segment now, not
+      // when the engine has wound down (ADR-018); the driver ends its own
+      // key-proxy lease on the abort signal.
+      ws.release?.();
       controller.abort();
     };
     const taint = new Set(prior.taintSources);
