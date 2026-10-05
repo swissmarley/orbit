@@ -1,0 +1,166 @@
+name: Release
+
+# A version tag (vX.Y.Z, matching packaging/npm/package.json) runs the full
+# check, publishes `orbit-bots` to npm with provenance (only when the
+# NPM_TOKEN secret exists), pushes the Docker image to ghcr.io, builds the
+# desktop bundles and creates the GitHub Release with the npm tarball, the
+# bundles and SHA-256 checksums (ADR-017). Run by hand it is a dry run:
+# everything is built and smoke-tested, nothing is published.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PUBLISH: ${{ startsWith(github.ref, 'refs/tags/v') }}
+
+jobs:
+  check:
+    name: format · lint · typecheck · test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      ORBIT_DRIVER: mock
+      ANTHROPIC_API_KEY: ''
+      NODE_OPTIONS: --max-old-space-size=6144
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: The tag is the package version
+        if: env.PUBLISH == 'true'
+        run: test "v$(node -p "require('./packaging/npm/package.json').version")" = "$GITHUB_REF_NAME"
+      - run: pnpm check
+
+  npm:
+    name: npm · build · smoke · publish
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    env:
+      ORBIT_DRIVER: mock
+      ANTHROPIC_API_KEY: ''
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      # Builds the package and installs the packed tarball into a temp prefix.
+      - run: pnpm smoke
+      - name: Pack the tested build
+        run: |
+          mkdir -p release
+          cd packaging/npm
+          npm pack --pack-destination ../../release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-tarball
+          path: release/*.tgz
+          if-no-files-found: error
+      - name: Publish to npm
+        if: env.PUBLISH == 'true' && env.NPM_TOKEN != ''
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish release/orbit-bots-*.tgz --provenance --access public
+      - name: No NPM_TOKEN secret
+        if: env.PUBLISH == 'true' && env.NPM_TOKEN == ''
+        run: echo "::warning::NPM_TOKEN is not set; orbit-bots was not published to npm."
+
+  docker:
+    name: docker · ghcr.io
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: env.PUBLISH == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ env.PUBLISH == 'true' }}
+            type=sha,enable=${{ env.PUBLISH != 'true' }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/orbitd.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ env.PUBLISH == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  desktop:
+    name: desktop
+    needs: check
+    uses: ./.github/workflows/desktop.yml
+    permissions:
+      contents: read
+
+  github-release:
+    name: GitHub Release
+    # The desktop bundles are optional (R9): a failed desktop build does not hold the release back.
+    needs: [npm, docker, desktop]
+    if: always() && needs.npm.result == 'success' && needs.docker.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-tarball
+          path: release
+      - uses: actions/download-artifact@v4
+        if: needs.desktop.result == 'success'
+        with:
+          pattern: orbit-desktop-*
+          path: release
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          mkdir -p release/flat
+          find release -type f ! -path 'release/flat/*' -exec mv {} release/flat/ \;
+          cd release/flat
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+      - name: Create the release
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" release/flat/* --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --title "Orbit $GITHUB_REF_NAME"
+      - name: Dry run
+        if: env.PUBLISH != 'true'
+        run: echo "Dry run; a vX.Y.Z tag would release:" && ls -l release/flat
