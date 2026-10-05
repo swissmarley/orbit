@@ -475,17 +475,23 @@ describe('installing from the catalog', () => {
 });
 
 describe('the store', () => {
-  it('may not live inside $ORBIT_HOME, where Bots write', () => {
-    expect(
-      () =>
-        new PluginInstaller({
-          registry,
-          storeDir: join(root, 'orbit', 'plugins'),
-          orbitHome: join(root, 'orbit'),
-          catalogUrl: `${registryUrl}/catalog.json`,
-          npmRegistry: registryUrl,
-        }),
-    ).toThrow(/inside Orbit's data folder/);
+  it('may not live inside $ORBIT_HOME, where Bots write: installs are refused', async () => {
+    const inside = new PluginInstaller({
+      registry,
+      storeDir: join(root, 'orbit', 'plugins'),
+      orbitHome: join(root, 'orbit'),
+      catalogUrl: `${registryUrl}/catalog.json`,
+      npmRegistry: registryUrl,
+    });
+    const integrity = publish('orbit-plugin-weather', '1.2.3', goodPackage());
+    await expect(
+      inside.install(
+        { source: 'npm', package: 'orbit-plugin-weather', version: '1.2.3', integrity },
+        'owner',
+        { dryRun: true },
+      ),
+    ).rejects.toThrow(/inside Orbit's data folder/);
+    expect(requested).toEqual([]);
   });
 
   it('only the installer puts plugins there: adding a folder inside it is refused', () => {

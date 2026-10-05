@@ -275,7 +275,7 @@ export class OrbitService {
       sandbox: { mode: config.plugins.sandbox, support: pluginSandbox },
       storeDir,
     });
-    // Refuses a store inside $ORBIT_HOME (Bots write there): orbitd does not start with one.
+    // Installs refuse a store inside $ORBIT_HOME (Bots write there).
     this.pluginInstaller = new PluginInstaller({
       registry: this.plugins,
       storeDir,

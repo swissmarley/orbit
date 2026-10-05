@@ -142,17 +142,21 @@ export class PluginInstaller {
   constructor(private readonly deps: PluginInstallerDeps) {
     this.fetchFn = deps.fetch ?? fetch;
     this.now = deps.now ?? (() => new Date());
-    if (isWithin(resolve(deps.storeDir), resolve(deps.orbitHome))) {
-      throw new OrbitError(
-        'invalid_config',
-        `The plugin store ${deps.storeDir} is inside Orbit's data folder, where Bots can write`,
-        { hint: 'Set plugins.storeDir (ORBIT_PLUGIN_STORE) to a folder outside $ORBIT_HOME.' },
-      );
-    }
   }
 
   get storeDir(): string {
     return resolve(this.deps.storeDir);
+  }
+
+  /** Bots write under $ORBIT_HOME: a package stored there could be rewritten by one. */
+  private assertStoreOutsideHome(): void {
+    if (isWithin(this.storeDir, resolve(this.deps.orbitHome))) {
+      throw new OrbitError(
+        'invalid_config',
+        `The plugin store ${this.storeDir} is inside Orbit's data folder, where Bots can write`,
+        { hint: 'Set plugins.storeDir (ORBIT_PLUGIN_STORE) to a folder outside $ORBIT_HOME.' },
+      );
+    }
   }
 
   // ── the catalog ────────────────────────────────────────────────────────────
@@ -322,6 +326,7 @@ export class PluginInstaller {
     by: string,
     opts: { dryRun?: boolean } = {},
   ): Promise<{ preview: PluginInstallPreview; plugin: PluginStatus | null }> {
+    this.assertStoreOutsideHome();
     const { pkg, version, integrity, entry } = await this.resolveRequest(req);
     const known = new Set(this.deps.registry.list().map((p) => p.id));
     if (entry && known.has(entry.id) && !opts.dryRun) {

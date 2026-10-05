@@ -175,7 +175,7 @@ sha512-…`; Settings → Integrations "Install from catalog"):
 **Store.** `plugins.storeDir` (`ORBIT_PLUGIN_STORE`), default
 `$XDG_DATA_HOME/orbit/plugins` (`~/.local/share/orbit/plugins`; macOS
 `~/Library/Application Support/Orbit/plugins`). Never inside `$ORBIT_HOME`
-(orbitd refuses to start with such a store): Bots write under `$ORBIT_HOME`,
+(installs refuse such a store, saying so): Bots write under `$ORBIT_HOME`,
 and the M7 rule that refuses plugin folders there has the same reason. The
 store is a denied path for every plugin (the Filesystem plugin refuses it; no
 sandbox binds it), `orbit plugin add` refuses folders inside it, and
