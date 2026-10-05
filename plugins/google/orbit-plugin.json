@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "id": "google",
+  "name": "Gmail & Calendar",
+  "version": "0.1.0",
+  "description": "Read and search your Gmail, draft replies, and read and add Google Calendar events. Reading and drafting are automatic; sending a draft and creating an event (which may email invitations) ask you first.",
+  "server": {
+    "transport": "stdio",
+    "command": "${node}",
+    "args": ["--import", "${tsx}", "${pluginDir}/src/server.ts"]
+  },
+  "tools": [
+    {
+      "name": "list_messages",
+      "tier": "READ",
+      "description": "Search mail: sender, subject, date, snippet (up to 25)"
+    },
+    { "name": "get_message", "tier": "READ", "description": "Read one message's headers and text" },
+    { "name": "list_drafts", "tier": "READ", "description": "List draft messages" },
+    {
+      "name": "create_draft",
+      "tier": "WRITE_LOCAL",
+      "description": "Create a draft or a draft reply (nothing is sent)"
+    },
+    { "name": "send_draft", "tier": "EXTERNAL", "description": "Send a draft (asks you)" },
+    {
+      "name": "list_events",
+      "tier": "READ",
+      "description": "List calendar events in a time window (up to 50)"
+    },
+    {
+      "name": "create_event",
+      "tier": "EXTERNAL",
+      "description": "Create a calendar event; with attendees Google emails invitations (asks you)"
+    }
+  ],
+  "secrets": [
+    {
+      "name": "GOOGLE_CLIENT_ID",
+      "description": "OAuth client id (Desktop app) from Google Cloud",
+      "required": true
+    },
+    {
+      "name": "GOOGLE_CLIENT_SECRET",
+      "description": "OAuth client secret of that client",
+      "required": true
+    },
+    {
+      "name": "GOOGLE_REFRESH_TOKEN",
+      "description": "Refresh token granted once for gmail.readonly, gmail.compose and calendar.events",
+      "required": true
+    }
+  ],
+  "settings": [
+    {
+      "name": "GOOGLE_CALENDAR_ID",
+      "description": "Calendar the event tools use (an id such as you@example.com, or primary)",
+      "default": "primary",
+      "required": false
+    }
+  ],
+  "env": ["GOOGLE_API_URL", "GOOGLE_TOKEN_URL"]
+}

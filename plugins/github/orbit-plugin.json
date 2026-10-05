@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "id": "github",
+  "name": "GitHub",
+  "version": "0.1.0",
+  "description": "Read and discuss GitHub issues and pull requests, and commit and push the Bot's own orbit/<bot> branch from its workspace. Reads are automatic; comments, new issues, pull requests and pushes ask you first.",
+  "homepage": "https://docs.github.com/en/rest",
+  "server": {
+    "transport": "stdio",
+    "command": "${node}",
+    "args": ["--import", "${tsx}", "${pluginDir}/src/server.ts"]
+  },
+  "tools": [
+    { "name": "list_issues", "tier": "READ", "description": "List a repository's issues" },
+    {
+      "name": "get_issue",
+      "tier": "READ",
+      "description": "Read an issue with its latest comments"
+    },
+    {
+      "name": "list_pull_requests",
+      "tier": "READ",
+      "description": "List a repository's pull requests"
+    },
+    {
+      "name": "get_pull_request",
+      "tier": "READ",
+      "description": "Read a pull request and the files it changes"
+    },
+    {
+      "name": "comment_on_issue",
+      "tier": "EXTERNAL",
+      "description": "Comment on an issue or pull request (asks you)"
+    },
+    { "name": "create_issue", "tier": "EXTERNAL", "description": "Open a new issue (asks you)" },
+    {
+      "name": "create_pull_request",
+      "tier": "EXTERNAL",
+      "description": "Open a pull request, by default from the Bot's branch (asks you)"
+    },
+    { "name": "git_status", "tier": "READ", "description": "Show the workspace's git status" },
+    {
+      "name": "git_diff",
+      "tier": "READ",
+      "description": "Show the workspace's uncommitted changes"
+    },
+    { "name": "git_log", "tier": "READ", "description": "Show the latest commits" },
+    {
+      "name": "git_commit",
+      "tier": "WRITE_LOCAL",
+      "description": "Commit on the Bot's own orbit/<bot> branch (hooks never run)"
+    },
+    {
+      "name": "git_push",
+      "tier": "EXTERNAL",
+      "description": "Push the Bot's own orbit/<bot> branch, never forced (asks you)"
+    }
+  ],
+  "secrets": [
+    {
+      "name": "GITHUB_TOKEN",
+      "description": "A GitHub token; needed for private repositories, comments, issues, pull requests and pushes.",
+      "required": false
+    }
+  ],
+  "settings": [
+    {
+      "name": "GITHUB_REPOSITORY",
+      "description": "The repository tools use when a call names none, as \"owner/name\"."
+    },
+    {
+      "name": "GIT_AUTHOR_NAME",
+      "description": "Author and committer name of the Bot's commits.",
+      "default": "Orbit Bot"
+    },
+    {
+      "name": "GIT_AUTHOR_EMAIL",
+      "description": "Author and committer email of the Bot's commits.",
+      "default": "orbit-bot@localhost"
+    }
+  ],
+  "env": ["GITHUB_API_URL"]
+}

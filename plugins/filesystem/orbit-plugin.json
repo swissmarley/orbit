@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "filesystem",
+  "name": "Filesystem",
+  "version": "0.1.0",
+  "description": "Read, search and write files in folders you choose, outside the Bot's own workspace. Reads are automatic; every write asks you first.",
+  "server": {
+    "transport": "stdio",
+    "command": "${node}",
+    "args": ["--import", "${tsx}", "${pluginDir}/src/server.ts"]
+  },
+  "tools": [
+    { "name": "list_directory", "tier": "READ", "description": "List a folder" },
+    { "name": "read_file", "tier": "READ", "description": "Read a text file (up to 1 MB)" },
+    {
+      "name": "search_files",
+      "tier": "READ",
+      "description": "Find files whose name or text contains a phrase"
+    },
+    {
+      "name": "write_file",
+      "tier": "EXTERNAL",
+      "description": "Create or replace a text file (outside the Bot's sandbox: asks you)"
+    }
+  ],
+  "settings": [
+    {
+      "name": "FS_ROOTS",
+      "description": "Folders the plugin may use: absolute paths separated by ':' (';' on Windows). Nothing outside them is reachable.",
+      "required": true
+    }
+  ]
+}

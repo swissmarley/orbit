@@ -1,0 +1,19 @@
+{
+  "name": "@orbit/plugin-browser",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Orbit reference plugin: a headless browser (Playwright) limited to the domains the owner allows",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/tools.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@orbit/plugin-kit": "workspace:*",
+    "zod": "4.6.5",
+    "playwright-core": "1.56.1"
+  }
+}

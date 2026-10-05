@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "id": "slack",
+  "name": "Slack",
+  "version": "0.1.0",
+  "description": "Read channels and threads the bot is a member of, look up people, post messages and add reactions. Reads are automatic; every post and reaction asks you first.",
+  "server": {
+    "transport": "stdio",
+    "command": "${node}",
+    "args": ["--import", "${tsx}", "${pluginDir}/src/server.ts"]
+  },
+  "tools": [
+    {
+      "name": "list_channels",
+      "tier": "READ",
+      "description": "List the public and private channels the bot is a member of"
+    },
+    {
+      "name": "get_channel_history",
+      "tier": "READ",
+      "description": "Read recent messages of a channel (up to 50)"
+    },
+    { "name": "get_thread_replies", "tier": "READ", "description": "Read a thread's replies" },
+    {
+      "name": "lookup_user",
+      "tier": "READ",
+      "description": "Look up a user's name and real name (no email)"
+    },
+    {
+      "name": "post_message",
+      "tier": "EXTERNAL",
+      "description": "Post a message to a channel or thread (asks you)"
+    },
+    {
+      "name": "add_reaction",
+      "tier": "EXTERNAL",
+      "description": "Add an emoji reaction to a message (asks you)"
+    }
+  ],
+  "secrets": [
+    {
+      "name": "SLACK_BOT_TOKEN",
+      "description": "Bot user OAuth token (xoxb-…) of your Slack app",
+      "required": true
+    },
+    {
+      "name": "SLACK_APP_TOKEN",
+      "description": "App-level token (xapp-…) for Orbit's Slack trigger over Socket Mode; the plugin's tools do not use it",
+      "required": false
+    }
+  ],
+  "settings": [
+    {
+      "name": "SLACK_DEFAULT_CHANNEL",
+      "description": "Channel id (C…) post_message uses when the Bot names none. Optional.",
+      "required": false
+    }
+  ],
+  "env": ["SLACK_API_URL"]
+}

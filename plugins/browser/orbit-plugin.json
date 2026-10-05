@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "browser",
+  "name": "Browser",
+  "version": "0.1.0",
+  "description": "A headless Chromium that opens and reads web pages on the domains you allow. Reading is automatic until the Run has seen untrusted content; clicking and typing always ask you first.",
+  "server": {
+    "transport": "stdio",
+    "command": "${node}",
+    "args": ["--import", "${tsx}", "${pluginDir}/src/server.ts"]
+  },
+  "tools": [
+    {
+      "name": "open_page",
+      "tier": "READ",
+      "egress": true,
+      "description": "Open a page on an allowed domain and read its text (the address reaches the site: asks you once the Run is tainted)"
+    },
+    {
+      "name": "get_text",
+      "tier": "READ",
+      "description": "Read the text of the current page or part of it"
+    },
+    { "name": "list_links", "tier": "READ", "description": "List the links on the current page" },
+    {
+      "name": "click",
+      "tier": "EXTERNAL",
+      "description": "Click an element (may submit a form: asks you)"
+    },
+    { "name": "fill", "tier": "EXTERNAL", "description": "Type into a form field (asks you)" }
+  ],
+  "settings": [
+    {
+      "name": "BROWSER_ALLOWED_DOMAINS",
+      "description": "Domains the browser may reach, comma-separated: 'example.com' is that host only, '*.example.com' its subdomains. IP addresses only when listed exactly. Every request a page makes is checked.",
+      "required": true
+    },
+    {
+      "name": "BROWSER_EXECUTABLE",
+      "description": "Optional path to a Chromium binary (default: Playwright's Chromium, see PLAYWRIGHT_BROWSERS_PATH)."
+    }
+  ],
+  "env": ["PLAYWRIGHT_BROWSERS_PATH"]
+}

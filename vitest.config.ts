@@ -7,6 +7,7 @@ export default defineConfig({
     projects: [
       'packages/*',
       'apps/*',
+      'plugins/*',
       {
         test: {
           name: 'repo',
