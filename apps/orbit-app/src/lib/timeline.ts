@@ -213,10 +213,17 @@ export function buildTimeline(events: readonly RunEvent[]): TimelineItem[] {
         items.push(s);
         break;
       }
+      case 'subagent.backgrounded':
+        note(e, '⇢', 'info', 'Subagent keeps working in the background');
+        break;
       case 'subagent.stopped': {
         const s = subagents.get(e.data.toolUseId);
         if (s) s.done = true;
         if (e.data.isError) note(e, '⇠', 'danger', 'Subagent finished with an error');
+        else if (e.data.outcome === 'stopped')
+          note(e, '⇠', 'warning', 'Background subagent was stopped');
+        else if (e.data.outcome === 'completed')
+          note(e, '⇠', 'success', 'Background subagent finished');
         break;
       }
       case 'approval.requested':
@@ -404,6 +411,8 @@ export interface SubagentNode {
   label: string;
   done: boolean;
   error: boolean;
+  /** Still working after its tool call returned (a background subagent). */
+  background: boolean;
   children: SubagentNode[];
 }
 
@@ -421,12 +430,17 @@ export function subagentTree(events: readonly RunEvent[]): SubagentNode[] {
         ),
         done: false,
         error: false,
+        background: false,
         children: [],
       };
       nodes.set(e.data.toolUseId, n);
       const parent = e.data.parentToolUseId ?? parentOfCall.get(e.data.toolUseId) ?? null;
       const p = parent ? nodes.get(parent) : undefined;
       (p ? p.children : roots).push(n);
+    }
+    if (e.type === 'subagent.backgrounded') {
+      const n = nodes.get(e.data.toolUseId);
+      if (n) n.background = true;
     }
     if (e.type === 'subagent.stopped') {
       const n = nodes.get(e.data.toolUseId);

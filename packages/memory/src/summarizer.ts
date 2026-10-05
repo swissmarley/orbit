@@ -1,20 +1,22 @@
-import { BotProposal, BotSpec, PROPOSABLE_TOOLS, type RunEvent, type RunState } from '@orbit/core';
+import {
+  BotProposal,
+  BotSpec,
+  PROPOSABLE_TOOLS,
+  type RunEvent,
+  type RunState,
+  formatLocalDate,
+} from '@orbit/core';
 
 function clip(text: string, max: number): string {
   const t = text.trim();
   return t.length <= max ? t : `${t.slice(0, max - 1)}…`;
 }
 
-function localDate(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso.slice(0, 10) : d.toISOString().slice(0, 10);
-}
-
 /** The free summary: the Run's own final answer (no model call). */
 export function resultSummary(run: RunState): { title: string; body: string } {
   const task = run.trigger?.kind === 'delegation' ? 'a task delegated by another Bot' : run.prompt;
   return {
-    title: `Run ${localDate(run.createdAt)}: ${clip(task.replace(/\s+/g, ' '), 90)}`,
+    title: `Run ${formatLocalDate(run.createdAt)}: ${clip(task.replace(/\s+/g, ' '), 90)}`,
     body: [`Task: ${clip(run.prompt, 400)}`, '', 'Result:', clip(run.resultText ?? '', 2400)].join(
       '\n',
     ),

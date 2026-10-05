@@ -1,4 +1,4 @@
-import type { Memory, RunState } from '@orbit/core';
+import { type Memory, type RunState, runLabel } from '@orbit/core';
 
 /** Neutralise our own tags inside model- or owner-written text. */
 function escapeTags(text: string): string {
@@ -117,7 +117,7 @@ export function thumbsFeedback(
   comment: string | null,
 ): { title: string; body: string } {
   const lines = [
-    `Your owner rated the result of Run ${run.runId} (${run.createdAt.slice(0, 10)}) as ${rating === 'up' ? 'good' : 'not good'}.`,
+    `Your owner rated the result of ${runLabel(run)} as ${rating === 'up' ? 'good' : 'not good'}.`,
   ];
   // The task text of a delegated Run was written by another Bot: leave it out.
   if (run.trigger?.kind !== 'delegation' && run.prompt)
@@ -131,7 +131,8 @@ export function thumbsFeedback(
 
 export function approvalFeedback(a: {
   toolName: string;
-  runId: string;
+  /** How the Run is named in the text (`runLabel`). */
+  run: string;
   status: 'approved' | 'denied';
   reason: string | null;
   input: Record<string, unknown>;
@@ -143,7 +144,7 @@ export function approvalFeedback(a: {
       signal: 'denied',
       title: `Owner denied ${a.toolName}`,
       body: [
-        `In Run ${a.runId} your owner denied a ${a.toolName} call.`,
+        `In ${a.run} your owner denied a ${a.toolName} call.`,
         a.reason ? `Owner's reason: ${clip(a.reason, 1500)}` : 'No reason given.',
       ].join('\n'),
     };
@@ -157,7 +158,7 @@ export function approvalFeedback(a: {
       signal: 'edited',
       title: `Owner edited ${a.toolName} before approving`,
       body: [
-        `In Run ${a.runId} your owner changed the arguments of a ${a.toolName} call before approving it.`,
+        `In ${a.run} your owner changed the arguments of a ${a.toolName} call before approving it.`,
         ...changed
           .slice(0, 10)
           .map((k) =>
@@ -171,6 +172,6 @@ export function approvalFeedback(a: {
   return {
     signal: 'approved',
     title: `Owner approved ${a.toolName}`,
-    body: `In Run ${a.runId} your owner approved a ${a.toolName} call as proposed${a.always ? ' and allowed such calls from now on' : ''}.`,
+    body: `In ${a.run} your owner approved a ${a.toolName} call as proposed${a.always ? ' and allowed such calls from now on' : ''}.`,
   };
 }

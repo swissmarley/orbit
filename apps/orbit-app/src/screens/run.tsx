@@ -207,6 +207,9 @@ function Tree({ nodes }: { nodes: SubagentNode[] }) {
         <li key={n.toolUseId}>
           <span className={n.error ? 'text-danger' : n.done ? 'text-fg-muted' : 'text-attention'}>
             <span aria-hidden>{n.error ? '✘' : n.done ? '✔' : '●'}</span> {n.label}
+            {n.background && !n.done ? (
+              <span className="text-xs text-fg-muted"> · in the background</span>
+            ) : null}
             <span className="sr-only">
               {n.error ? ' (failed)' : n.done ? ' (finished)' : ' (working)'}
             </span>

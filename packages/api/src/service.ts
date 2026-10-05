@@ -18,6 +18,7 @@ import {
   pluginSecretKey,
   event,
   humanPrincipalCount,
+  runLabel,
   slugify,
 } from '@orbit/core';
 import {
@@ -983,6 +984,14 @@ export class OrbitService {
         `This Run already delegated ${parent.children.length} tasks (limit ${parentBot.spec.delegation.maxChildrenPerRun})`,
       );
     }
+    // The parent Bot's daily budgets count its delegations too (M6 review L5).
+    const daily = this.orchestrator.checkDailyBudgets(parentBot, true, 1);
+    if (daily) {
+      throw new OrbitError(
+        'blocked',
+        `${parentBot.spec.name}'s daily ${daily.budget === 'runsPerDay' ? 'Run' : 'cost'} budget does not allow another delegation (${daily.actual} of ${daily.limit})`,
+      );
+    }
     // Unfinished children keep their whole ceiling reserved (review M6 H1).
     const reserved = parent.children
       .filter((c) => c.status === 'running')
@@ -1201,9 +1210,10 @@ export class OrbitService {
   private recordDecisionFeedback(approval: Approval, always: boolean): void {
     if (approval.status !== 'approved' && approval.status !== 'denied') return;
     try {
+      const run = this.store.getRun(approval.runId);
       const text = approvalFeedback({
         toolName: approval.toolName,
-        runId: approval.runId,
+        run: run ? runLabel(run) : 'a Run',
         status: approval.status,
         reason: approval.decision?.reason ?? null,
         input: approval.input,

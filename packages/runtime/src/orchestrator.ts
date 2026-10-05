@@ -722,18 +722,45 @@ export class Orchestrator {
     return null;
   }
 
-  private checkDailyBudgets(
+  /**
+   * Today's Runs and spend of a Bot, its delegations included (M6 review L5):
+   * every Run its Runs delegated to (and theirs) counts against its daily
+   * budgets as well as against the child Bot's own.
+   */
+  dailyUsage(bot: Bot): { runs: number; costUsd: number } {
+    const today = this.deps.store.runsSince(bot.id, startOfUtcDay(this.now()));
+    let runs = today.length;
+    const seen = new Set<string>();
+    const descend = (r: RunState, depth: number) => {
+      if (depth > 6) return;
+      for (const c of r.children) {
+        if (seen.has(c.runId)) continue;
+        seen.add(c.runId);
+        runs += 1;
+        const child = this.deps.store.getRun(c.runId);
+        if (child) descend(child, depth + 1);
+      }
+    };
+    for (const r of today) descend(r, 0);
+    // All segments of every Run started today, and what finished children spent.
+    const costUsd = today.reduce((sum, r) => sum + r.totals.costUsd + r.delegated.costUsd, 0);
+    return { runs, costUsd };
+  }
+
+  /** The daily budget a new Run (or a delegation) of this Bot would break, if any. */
+  checkDailyBudgets(
     bot: Bot,
     countRuns = true,
+    /** Runs about to be added (a delegation not yet enqueued). */
+    adding = 0,
   ): { budget: 'runsPerDay' | 'costPerDay'; limit: number; actual: number } | null {
-    const today = this.deps.store.runsSince(bot.id, startOfUtcDay(this.now()));
+    const usage = this.dailyUsage(bot);
     const b = bot.spec.budgets;
-    // The Run just queued is included in `today`.
-    if (countRuns && today.length > b.maxRunsPerDay)
-      return { budget: 'runsPerDay', limit: b.maxRunsPerDay, actual: today.length };
+    // The Run just queued is included in `usage.runs`.
+    if (countRuns && usage.runs + adding > b.maxRunsPerDay)
+      return { budget: 'runsPerDay', limit: b.maxRunsPerDay, actual: usage.runs + adding };
     if (b.maxCostUsdPerDay !== null) {
-      // All segments of every Run started today.
-      const spent = today.reduce((sum, r) => sum + r.totals.costUsd, 0);
+      const spent = usage.costUsd;
       if (spent >= b.maxCostUsdPerDay)
         return {
           budget: 'costPerDay',

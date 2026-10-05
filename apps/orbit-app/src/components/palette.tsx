@@ -20,6 +20,7 @@ import {
 import { useEffect } from 'react';
 import { useActions } from '../lib/actions';
 import { useBots, useKill, usePendingApprovals, useRuns } from '../lib/queries';
+import { otherModalOpen } from '../lib/modal';
 import { createStore, useStore } from '../lib/store';
 import { setTheme } from '../lib/theme';
 import { confirmAction } from './confirm';
@@ -76,7 +77,8 @@ export function CommandPalette() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() === 'k' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        paletteStore.set((o) => !o);
+        // Never over another dialog (an approval card, a confirmation): close only.
+        paletteStore.set((o) => (o ? false : !otherModalOpen()));
       }
     };
     window.addEventListener('keydown', onKey);

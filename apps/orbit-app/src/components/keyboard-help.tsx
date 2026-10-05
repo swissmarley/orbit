@@ -2,6 +2,7 @@
 import { useEffect } from 'react';
 import { INBOX_KEYS } from '../lib/inbox';
 import { MOD } from '../lib/platform';
+import { otherModalOpen } from '../lib/modal';
 import { createStore, useStore } from '../lib/store';
 import { Dialog, DialogContent } from './ui/dialog';
 import { Kbd } from './ui/misc';
@@ -82,6 +83,8 @@ export function KeyboardHelp() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === '?' && !e.metaKey && !e.ctrlKey && !isField(e.target)) {
+        // Never over another dialog (an approval card, a confirmation): close only.
+        if (!helpStore.get() && otherModalOpen()) return;
         e.preventDefault();
         helpStore.set((o) => !o);
       }

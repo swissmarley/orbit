@@ -177,8 +177,10 @@ export function renderEvent(raw: RunEvent, paint: Paint, cwd: string | null): st
     }
     case 'subagent.started':
       return `  ${paint('magenta', '⇢')} subagent ${paint('bold', e.data.agentType ?? 'agent')} ${paint('dim', e.data.description ?? '')}`;
+    case 'subagent.backgrounded':
+      return `  ${paint('magenta', '⇢')} subagent keeps working ${paint('dim', 'in the background')}`;
     case 'subagent.stopped':
-      return `  ${paint('magenta', '⇠')} subagent finished${e.data.isError ? paint('red', ' with an error') : ''}`;
+      return `  ${paint('magenta', '⇠')} subagent ${e.data.outcome === 'stopped' ? 'stopped' : 'finished'}${e.data.isError ? paint('red', ' with an error') : ''}`;
     case 'status.summary':
       return e.data.needsAction
         ? `  ${paint('yellow', '⚑ needs you:')} ${e.data.needsAction}`

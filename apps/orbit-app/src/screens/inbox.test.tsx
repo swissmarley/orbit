@@ -70,6 +70,38 @@ describe('Inbox', () => {
     });
   });
 
+  it('Esc in the edit or deny field steps back to the card, without closing it', async () => {
+    const { h, approval } = await withPendingApproval();
+    const user = userEvent.setup();
+    await user.keyboard('e');
+    const box = await screen.findByRole('textbox', { name: /Arguments \(JSON\)/ });
+    expect(document.activeElement).toBe(box);
+    await user.keyboard('{Escape}');
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: /Arguments \(JSON\)/ })).toBeNull(),
+    );
+    expect(screen.getByTestId('approval-card')).toBeTruthy();
+    await user.keyboard('d');
+    const reason = await screen.findByRole('textbox', { name: /Reason/ });
+    expect(document.activeElement).toBe(reason);
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: /Reason/ })).toBeNull());
+    expect(screen.getByTestId('approval-card')).toBeTruthy();
+    expect(h.service.approvals.require(approval.id).status).toBe('pending');
+  });
+
+  it('Ctrl+K and ? do not open over the approval card', async () => {
+    await withPendingApproval();
+    const user = userEvent.setup();
+    await user.keyboard('a');
+    await screen.findByTestId('approval-card');
+    await user.keyboard('{Control>}k{/Control}');
+    await user.keyboard('?');
+    expect(screen.queryByPlaceholderText(/Search|Type a command/i)).toBeNull();
+    expect(screen.queryByRole('heading', { name: /Keyboard/i })).toBeNull();
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+  });
+
   it('invalid edited JSON cannot be approved', async () => {
     await withPendingApproval();
     const user = userEvent.setup();

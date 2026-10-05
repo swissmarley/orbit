@@ -185,7 +185,17 @@ export const RunEventBody = z.discriminatedUnion('type', [
     description: nullableString,
     parentToolUseId,
   }),
-  ev('subagent.stopped', { toolUseId: z.string(), isError: z.boolean() }),
+  /**
+   * The subagent keeps working in the background: its tool call returned at
+   * launch, and `subagent.stopped` follows when its task-notification arrives.
+   */
+  ev('subagent.backgrounded', { toolUseId: z.string() }),
+  ev('subagent.stopped', {
+    toolUseId: z.string(),
+    isError: z.boolean(),
+    /** How a background subagent ended (from its task-notification); null for foreground ones. */
+    outcome: z.enum(['completed', 'failed', 'stopped']).nullable().default(null),
+  }),
   ev('hook', { hookEvent: z.string(), hookName: z.string(), outcome: nullableString }),
   ev('status.summary', {
     category: z.string(),

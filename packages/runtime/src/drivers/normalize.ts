@@ -39,7 +39,6 @@ const IGNORED_SYSTEM_SUBTYPES = new Set([
   'thinking_tokens',
   'task_summary',
   'task_progress',
-  'task_updated',
   'status',
   'session_state_changed',
   'commands_changed',
@@ -93,6 +92,14 @@ export class Normalizer {
   lastAssistantText: string | null = null;
   terminal: RunEventBody | null = null;
   private readonly subagents = new Set<string>();
+  /** Subagents running in the background (their tool result arrives at launch). */
+  private readonly background = new Set<string>();
+  /** Engine task ids → the tool call that started the task. */
+  private readonly taskTool = new Map<string, string>();
+  /** Background subagents whose tool result has arrived (still working). */
+  private readonly launched = new Set<string>();
+  /** Background tasks whose notification came before their tool result (rare). */
+  private readonly endedEarly = new Map<string, 'completed' | 'failed' | 'stopped'>();
   private readonly seenMessages = new Set<string>();
   /** Live token usage across assistant turns (approximate until the result). */
   private live = { inputTokens: 0, outputTokens: 0, turns: 0 };
@@ -166,6 +173,7 @@ export class Normalizer {
         out.push(event('tool.call', { toolUseId, name, input, parentToolUseId: parent }));
         if (SUBAGENT_TOOLS.has(name) && !this.subagents.has(toolUseId)) {
           this.subagents.add(toolUseId);
+          if (input.run_in_background === true) this.background.add(toolUseId);
           out.push(
             event('subagent.started', {
               toolUseId,
@@ -210,7 +218,20 @@ export class Normalizer {
           }),
         );
         if (this.subagents.has(toolUseId)) {
-          out.push(event('subagent.stopped', { toolUseId, isError }));
+          const early = this.endedEarly.get(toolUseId);
+          if (this.background.has(toolUseId) && !isError && early) {
+            this.endedEarly.delete(toolUseId);
+            out.push(event('subagent.backgrounded', { toolUseId }));
+            out.push(
+              event('subagent.stopped', { toolUseId, isError: early === 'failed', outcome: early }),
+            );
+          } else if (this.background.has(toolUseId) && !isError) {
+            // Launched, not finished: its task-notification says when it ends.
+            this.launched.add(toolUseId);
+            out.push(event('subagent.backgrounded', { toolUseId }));
+          } else {
+            out.push(event('subagent.stopped', { toolUseId, isError, outcome: null }));
+          }
         }
       } else if (block.type === 'text') {
         const text = str(block.text) ?? '';
@@ -261,6 +282,9 @@ export class Normalizer {
         ];
       case 'task_started': {
         const toolUseId = str(m.tool_use_id);
+        const taskId = str(m.task_id);
+        if (toolUseId && taskId) this.taskTool.set(taskId, toolUseId);
+        if (toolUseId && m.is_backgrounded === true) this.background.add(toolUseId);
         if (!toolUseId || this.subagents.has(toolUseId)) return [];
         this.subagents.add(toolUseId);
         return [
@@ -271,6 +295,27 @@ export class Normalizer {
             parentToolUseId: null,
           }),
         ];
+      }
+      case 'task_updated': {
+        // A foreground subagent moved to the background (Ctrl+B, or the engine decided).
+        const taskId = str(m.task_id);
+        const toolUseId = taskId ? this.taskTool.get(taskId) : undefined;
+        const patch = isObj(m.patch) ? m.patch : {};
+        if (toolUseId && patch.is_backgrounded === true) this.background.add(toolUseId);
+        return [];
+      }
+      case 'task_notification': {
+        const taskId = str(m.task_id);
+        const toolUseId = str(m.tool_use_id) ?? (taskId ? this.taskTool.get(taskId) : undefined);
+        const status = str(m.status);
+        if (!toolUseId || !this.subagents.has(toolUseId)) return [];
+        const outcome = status === 'failed' || status === 'stopped' ? status : 'completed';
+        if (!this.launched.has(toolUseId)) {
+          if (this.background.has(toolUseId)) this.endedEarly.set(toolUseId, outcome);
+          return [];
+        }
+        this.launched.delete(toolUseId);
+        return [event('subagent.stopped', { toolUseId, isError: outcome === 'failed', outcome })];
       }
       default:
         if (subtype && IGNORED_SYSTEM_SUBTYPES.has(subtype)) return [];

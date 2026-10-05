@@ -105,3 +105,105 @@ describe('normalizer edge cases', () => {
     expect(b?.type === 'usage_limit' && b.data.resetsAt).toBe('2026-10-05T00:00:00.000Z');
   });
 });
+
+describe('background subagents (task-notification)', () => {
+  const agentCall = (id: string, input: Record<string, unknown>) => ({
+    type: 'assistant',
+    message: {
+      id: `m_${id}`,
+      content: [
+        { type: 'tool_use', id, name: 'Agent', input: { subagent_type: 'researcher', ...input } },
+      ],
+    },
+    parent_tool_use_id: null,
+  });
+  const result = (id: string, text = 'Async agent launched successfully.') => ({
+    type: 'user',
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: text }] },
+    parent_tool_use_id: null,
+  });
+  const notification = (taskId: string, toolUseId: string | undefined, status: string) => ({
+    type: 'system',
+    subtype: 'task_notification',
+    task_id: taskId,
+    ...(toolUseId ? { tool_use_id: toolUseId } : {}),
+    status,
+    output_file: '/tmp/out',
+    summary: 'done',
+  });
+  const subagentEvents = (messages: unknown[]) =>
+    normalizeAll(messages).filter((e) => e.type.startsWith('subagent.'));
+
+  it('a run_in_background subagent ends with its notification, not its tool result', () => {
+    expect(
+      subagentEvents([
+        agentCall('t1', { run_in_background: true, description: 'dig' }),
+        {
+          type: 'system',
+          subtype: 'task_started',
+          task_id: 'task-1',
+          tool_use_id: 't1',
+          is_backgrounded: true,
+        },
+        result('t1'),
+        notification('task-1', 't1', 'completed'),
+      ]),
+    ).toEqual([
+      {
+        type: 'subagent.started',
+        data: {
+          toolUseId: 't1',
+          agentType: 'researcher',
+          description: 'dig',
+          parentToolUseId: null,
+        },
+      },
+      { type: 'subagent.backgrounded', data: { toolUseId: 't1' } },
+      { type: 'subagent.stopped', data: { toolUseId: 't1', isError: false, outcome: 'completed' } },
+    ]);
+  });
+
+  it('a foreground subagent moved to the background (task_updated) is tracked by task id', () => {
+    expect(
+      subagentEvents([
+        agentCall('t2', {}),
+        { type: 'system', subtype: 'task_started', task_id: 'task-2', tool_use_id: 't2' },
+        {
+          type: 'system',
+          subtype: 'task_updated',
+          task_id: 'task-2',
+          patch: { is_backgrounded: true },
+        },
+        result('t2', 'running in the background'),
+        notification('task-2', undefined, 'failed'),
+      ]).map((e) => (e.type === 'subagent.stopped' ? e.data : e.type)),
+    ).toEqual([
+      'subagent.started',
+      'subagent.backgrounded',
+      { toolUseId: 't2', isError: true, outcome: 'failed' },
+    ]);
+  });
+
+  it('handles a notification that arrives before the tool result', () => {
+    expect(
+      subagentEvents([
+        agentCall('t3', { run_in_background: true }),
+        notification('task-3', 't3', 'stopped'),
+        result('t3'),
+      ]).map((e) => (e.type === 'subagent.stopped' ? e.data.outcome : e.type)),
+    ).toEqual(['subagent.started', 'subagent.backgrounded', 'stopped']);
+  });
+
+  it('foreground subagents still end with their tool result; stray notifications are ignored', () => {
+    expect(
+      subagentEvents([
+        agentCall('t4', {}),
+        result('t4', 'answer'),
+        notification('task-x', 'nope', 'completed'),
+      ]),
+    ).toEqual([
+      expect.objectContaining({ type: 'subagent.started' }),
+      { type: 'subagent.stopped', data: { toolUseId: 't4', isError: false, outcome: null } },
+    ]);
+  });
+});

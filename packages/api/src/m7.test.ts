@@ -355,3 +355,48 @@ describe('Inbox Triage demo', () => {
     expect(r.resultText).toMatch(/did not pay it/);
   });
 });
+
+describe("a delegating Bot's daily budgets count its children (M6 review L5)", () => {
+  async function team(budgets: Record<string, unknown>) {
+    await createBot({
+      name: 'Researcher',
+      goal: 'Research',
+      mock: { fixture: 'subagent-delegation' },
+    });
+    return createBot({
+      name: 'Lead',
+      mock: { fixture: 'delegate-to-peer' },
+      delegation: { allowedBots: ['Researcher'] },
+      budgets,
+    });
+  }
+
+  it('a delegation counts as one of the parent Bot’s Runs today', async () => {
+    start();
+    await team({ maxRunsPerDay: 1 });
+    const started = await h.json<RunState>('POST', '/v1/bots/lead/runs', {});
+    await settle();
+    const r = await run(started.body.runId);
+    expect(r.children).toHaveLength(0);
+    const results = (await events(r.runId)).flatMap((e) =>
+      e.type === 'tool.result' && e.data.isError ? [e.data.content] : [],
+    );
+    expect(results.join('\n')).toMatch(
+      /daily Run budget does not allow another delegation \(2 of 1\)/,
+    );
+  });
+
+  it('children Runs and their spend count towards the parent Bot’s day', async () => {
+    start();
+    const lead = await team({ maxRunsPerDay: 3 });
+    const started = await h.json<RunState>('POST', '/v1/bots/lead/runs', {});
+    await settle();
+    expect((await run(started.body.runId)).children).toHaveLength(1);
+    expect(h.service.orchestrator.dailyUsage(lead)).toMatchObject({ runs: 2 });
+    // Run 2 of the day plus its delegation would be 4 > 3: the delegation is refused.
+    const second = await h.json<RunState>('POST', '/v1/bots/lead/runs', {});
+    await settle();
+    expect((await run(second.body.runId)).children).toHaveLength(0);
+    expect(h.service.orchestrator.dailyUsage(lead).runs).toBe(3);
+  });
+});

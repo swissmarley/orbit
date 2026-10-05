@@ -173,6 +173,12 @@ export function ApprovalCard({
             }
             onChange={(e) => setEdited(e.target.value)}
             onKeyDown={(e) => {
+              // Esc leaves edit mode (back to the card), even with focus in the field.
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                onMode('card');
+                return;
+              }
               if (
                 e.key === 'Enter' &&
                 (e.metaKey || e.ctrlKey) &&
@@ -221,6 +227,12 @@ export function ApprovalCard({
             value={reason}
             maxLength={2000}
             onChange={(e) => setReason(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                onMode('card');
+              }
+            }}
             placeholder="e.g. Don't email customers directly — draft it for me instead."
             autoFocus
           />

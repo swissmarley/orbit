@@ -96,7 +96,7 @@ describe('timeline', () => {
         parentToolUseId: null,
       }),
       ev('message.assistant', { messageId: null, text: 'inner', parentToolUseId: 'task1' }),
-      ev('subagent.stopped', { toolUseId: 'task1', isError: false }),
+      ev('subagent.stopped', { toolUseId: 'task1', isError: false, outcome: null }),
     ];
     const items = buildTimeline(events);
     const inner = items.find((i) => i.kind === 'message');
@@ -107,6 +107,7 @@ describe('timeline', () => {
         label: 'researcher — look things up',
         done: true,
         error: false,
+        background: false,
         children: [],
       },
     ]);

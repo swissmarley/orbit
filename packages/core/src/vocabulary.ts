@@ -243,3 +243,43 @@ export const TRIGGER_KIND_WORD: Readonly<Record<TriggerSpec['kind'], string>> = 
   file: 'files',
   git: 'git',
 };
+
+/** Local calendar date, "2026-10-05" (memory titles, in the zone orbitd runs in). */
+export function formatLocalDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+const RUN_KIND_WORD: Readonly<Record<string, string>> = {
+  manual: 'manual',
+  cron: 'scheduled',
+  interval: 'scheduled',
+  webhook: 'webhook',
+  slack: 'Slack',
+  file: 'file-change',
+  git: 'git',
+  delegation: 'delegated',
+  resume: 'resumed',
+};
+
+/**
+ * A Run named for people (and in Orbit-written feedback): "the scheduled Run
+ * of 5 Oct 2026, 08:00". Only Orbit-controlled facts: the trigger kind and
+ * the local start time.
+ */
+export function runLabel(run: { createdAt: string; trigger: { kind: string } | null }): string {
+  const d = new Date(run.createdAt);
+  const when = Number.isNaN(d.getTime())
+    ? run.createdAt
+    : d.toLocaleString(undefined, {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+  const kind = RUN_KIND_WORD[run.trigger?.kind ?? 'manual'] ?? 'manual';
+  return `the ${kind} Run of ${when}`;
+}
