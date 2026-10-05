@@ -22,7 +22,8 @@
     "orbitd": "tsx apps/orbitd/src/bin.ts",
     "test:e2e": "pnpm --filter @orbit/app build && pnpm --filter @orbit/app e2e",
     "package": "pnpm --filter orbit-bots build",
-    "smoke": "pnpm --filter orbit-bots smoke"
+    "smoke": "pnpm --filter orbit-bots smoke",
+    "load-test": "tsx apps/orbitd/scripts/load-test.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

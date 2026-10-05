@@ -248,6 +248,8 @@ export class OrbitService {
     null;
   private readonly resumeOptions = new Map<string, { prompt?: string; mockFixture?: string }>();
   private ticker: NodeJS.Timeout | undefined;
+  /** The global kill switch was seen engaged (and what waited was closed). */
+  private killSeen = false;
   private unsubscribe: (() => void) | undefined;
   private unsubscribeRuns: (() => void) | undefined;
   /** Post-run summaries run one at a time, after the Run's outcome is final. */
@@ -530,6 +532,12 @@ export class OrbitService {
   /** Housekeeping: scheduled triggers, approval expiry, usage-limit resumes. */
   tick(): void {
     try {
+      // A global kill engaged from another process (the shared controls table)
+      // reaches executing Runs through the orchestrator's poll; what waits
+      // (queued, parked, rate limited) is closed here, as `setKill` does.
+      const kill = this.controls.globalKill();
+      if (kill && !this.killSeen) this.closeWaiting();
+      this.killSeen = kill !== null;
       for (const r of this.scheduler.tick()) {
         if (!r.outcome.fired) this.log('info', `trigger ${r.key} skipped: ${r.outcome.reason}`);
       }
@@ -642,17 +650,27 @@ export class OrbitService {
     try {
       if (job.kind === 'start') {
         await this.orchestrator.execute(job.runId);
-        return;
+      } else {
+        const options = this.resumeOptions.get(job.runId) ?? {};
+        this.resumeOptions.delete(job.runId);
+        await this.orchestrator.resume(job.runId, options);
       }
-      const options = this.resumeOptions.get(job.runId) ?? {};
-      this.resumeOptions.delete(job.runId);
-      await this.orchestrator.resume(job.runId, options);
     } catch (err) {
       // Review M1: a job that died before its segment ended must not leave the
       // Run looking queued or running (it would also block its trigger forever).
       this.closeOrphan(job.runId, err);
       throw err;
     }
+    // A child that ended while this job was still finishing could not queue
+    // the parent's resume (the queue holds one job per Run), and nobody else
+    // would: look again once the queue has let go of the Run (M8 corpus).
+    setImmediate(() => {
+      try {
+        if (this.store.getRun(job.runId)?.status === 'delegating') this.maybeAutoResume(job.runId);
+      } catch (err) {
+        this.log('warn', `after ${job.kind} ${job.runId}: ${errorMessage(err)}`);
+      }
+    });
   }
 
   /** Fail a Run that claims to be queued or running but executes nowhere. */
@@ -1261,6 +1279,8 @@ export class OrbitService {
   private maybeAutoResume(runId: string, force?: boolean, fixture?: string): boolean {
     const run = this.store.getRun(runId);
     if (!run || run.pendingApprovals.length > 0 || run.pendingDelegations.length > 0) return false;
+    // Under a kill switch nothing is lined up to continue after the release.
+    if (this.controls.globalKill() || this.bots.find(run.botId)?.pausedAt) return false;
     if (run.status === 'delegating') return this.pushResume(run);
     if (run.status !== 'waiting_approval') return false;
     const bot = this.bots.find(run.botId);
@@ -2018,6 +2038,7 @@ export class OrbitService {
 
   setKill(on: boolean): { engaged: boolean; by: string | null } {
     this.orchestrator.killAll(this.actor(), on);
+    this.killSeen = on;
     if (on) {
       // "Stop everything": nothing waiting may continue after the release (review L2).
       this.closeWaiting();

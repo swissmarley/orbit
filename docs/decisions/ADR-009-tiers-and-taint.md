@@ -52,3 +52,14 @@ them (M7).
 - Bash stays EXTERNAL everywhere until the native engine sandbox has been
   verified live (and, in Docker, until the API key is kept out of the
   container).
+
+## Amendment in M8 (injection corpus)
+
+- A leading read verb no longer makes a name READ when a destructive, shell
+  or code-running word follows it (`get_rm`, `view_eval`, `fetch_curl`, in
+  snake, camel or kebab case): those words (`ACTING_WORDS` in `tiers.ts`)
+  count as mutating verbs, so such a name is EXTERNAL, and a draft verb next
+  to one is not drafting (`purge_drafts`). Words that are usually nouns
+  (`format`, `system`, `clone`, `mail`) stay out of the list, so reads such
+  as `get_system_info` keep READ. The plugin floor (ADR-014) uses the same
+  list; one table test covers both functions.

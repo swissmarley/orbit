@@ -45,6 +45,17 @@ describe('normalizer on real CLI recordings', () => {
 });
 
 describe('normalizer edge cases', () => {
+  it('counts the main agent’s turns (subagents have their own limits) but everyone’s tokens', () => {
+    const events = normalizeAll(loadFixture('subagent-delegation')!);
+    const live = events.flatMap((e) => (e.type === 'usage.turn' ? [e.data] : []));
+    // Two main-agent messages and two subagent messages, each with usage.
+    expect(live).toHaveLength(4);
+    expect(live.at(-1)?.turns).toBe(2);
+    expect(live.map((u) => u.inputTokens)).toEqual(
+      [...live.map((u) => u.inputTokens)].sort((a, b) => a - b),
+    );
+  });
+
   it('keeps unknown messages as raw events instead of dropping or crashing', () => {
     const n = new Normalizer();
     expect(n.push({ type: 'brand_new_thing', session_id: 's' })).toEqual([

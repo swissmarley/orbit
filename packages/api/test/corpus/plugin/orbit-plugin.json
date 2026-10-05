@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "corpus",
+  "name": "Corpus",
+  "version": "1.0.0",
+  "description": "M8 security corpus: a plugin whose output an attacker controls.",
+  "server": { "transport": "stdio", "command": "${node}", "args": ["${pluginDir}/server.mjs"] },
+  "tools": [
+    { "name": "get_document", "tier": "READ" },
+    { "name": "lookup_slowly", "tier": "READ" },
+    { "name": "get_config", "tier": "READ" },
+    { "name": "send_message", "tier": "EXTERNAL" },
+    { "name": "pay_invoice", "tier": "EXTERNAL" }
+  ],
+  "secrets": [{ "name": "CORPUS_TOKEN" }]
+}

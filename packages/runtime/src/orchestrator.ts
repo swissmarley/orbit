@@ -19,6 +19,7 @@ import {
   event,
   inputHash,
   isTerminalEvent,
+  neutraliseTags,
   newId,
   slugify,
 } from '@orbit/core';
@@ -241,7 +242,15 @@ export function childBudget(left: BudgetCap): BudgetCap {
   };
 }
 
-const escapeTags = (t: string) => t.replace(/<(\/?)(orbit-[a-z-]+)/gi, '‹$1$2');
+/** Every string inside a tool's output with Orbit's own tags neutralised. */
+function neutraliseDeep(value: unknown): unknown {
+  if (typeof value === 'string') return neutraliseTags(value);
+  if (Array.isArray(value)) return value.map(neutraliseDeep);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, neutraliseDeep(v)]));
+  }
+  return value;
+}
 
 export interface EnqueueOptions {
   prompt?: string;
@@ -277,7 +286,7 @@ type StopCause =
   | { kind: 'pause'; by: string }
   | {
       kind: 'budget';
-      budget: 'toolCalls' | 'wallClock' | 'tokens' | 'costPerRun' | 'costPerDay';
+      budget: 'toolCalls' | 'wallClock' | 'tokens' | 'turns' | 'costPerRun' | 'costPerDay';
       limit: number;
       actual: number;
     };
@@ -963,12 +972,16 @@ export class Orchestrator {
     bot: Bot,
     state: RunState,
   ): {
-    budget: 'wallClock' | 'tokens' | 'costPerRun' | 'costPerDay';
+    budget: 'wallClock' | 'tokens' | 'turns' | 'costPerRun' | 'costPerDay';
     limit: number;
     actual: number;
   } | null {
     const b = effectiveBudgets(bot, state.budgetCap);
     const spent = spentSoFar(state);
+    const maxTurns = bot.spec.maxTurns ?? null;
+    if (maxTurns !== null && state.totals.turns >= maxTurns) {
+      return { budget: 'turns', limit: maxTurns, actual: state.totals.turns };
+    }
     if (state.totals.activeMs >= b.maxWallClockMinutes * 60_000) {
       return {
         budget: 'wallClock',
@@ -1018,7 +1031,7 @@ export class Orchestrator {
             e.type === 'delegation.finished'
               ? [
                   `<orbit-delegation bot="${(names.get(e.data.childRunId) ?? e.data.childBotId).replace(/["<>]/g, ' ')}" run="${e.data.childRunId}" status="${e.data.status}">`,
-                  escapeTags(e.data.result),
+                  neutraliseTags(e.data.result),
                   '</orbit-delegation>',
                 ].join('\n')
               : '',
@@ -1196,6 +1209,10 @@ export class Orchestrator {
     // Budgets carry across delegation: a child Run gets at most what its parent had left.
     const budgets = effectiveBudgets(bot, prior.budgetCap);
     const spentBefore = spentSoFar(prior);
+    // Turns are a per-Run budget like the others: Orbit counts them itself, so
+    // an engine that ignores its own limit is stopped all the same (M8 corpus).
+    const maxTurns = bot.spec.maxTurns ?? null;
+    const turnsBefore = prior.totals.turns;
     // Grants decided before this segment are usable in it, and only in it.
     const segmentStart = this.now().toISOString();
     const segmentStartMs = this.now().getTime();
@@ -1223,6 +1240,8 @@ export class Orchestrator {
       });
     };
     const parked: string[] = [];
+    /** Untrusted sources a call's own output carries in (a read of a marked workspace file). */
+    const exposedBy = new Map<string, string[]>();
     let toolCalls = spentBefore.toolCalls;
     let lastAssistantText: string | null = null;
     const files = fileAccessContext({
@@ -1254,6 +1273,15 @@ export class Orchestrator {
     );
     const session = orbit?.session ?? null;
     const plugins = orbit?.plugins ?? null;
+    // A kill switch or budget does not wait for a plugin call in flight:
+    // stopping the segment's servers ends the call (and what it started) now.
+    if (plugins) {
+      controller.signal.addEventListener(
+        'abort',
+        () => void this.deps.pluginSegments?.close(plugins, runId),
+        { once: true },
+      );
+    }
     let delegationsSeen = 0;
     /** An open pause request (ADR-016), and the call it stopped the Run at. */
     let pauseRequest: { by: string } | null = null;
@@ -1267,9 +1295,10 @@ export class Orchestrator {
       input: Record<string, unknown>,
       taintBefore: number,
     ) => {
-      this.carryFileTaint(bot, runId, ws, req.toolName, input, taint, taintBefore, (src) =>
-        addTaint(src, req.toolUseId),
-      );
+      this.carryFileTaint(bot, runId, ws, req.toolName, input, taint, taintBefore, (src) => {
+        if (req.toolUseId && src.length > 0) exposedBy.set(req.toolUseId, [...src]);
+        addTaint(src, req.toolUseId);
+      });
       const orbitTool = orbitToolOf(req.toolName);
       if (orbitTool && session) {
         const args = canonicalArgs(orbitTool, input);
@@ -1472,9 +1501,8 @@ export class Orchestrator {
     };
 
     const toolResult: ToolResultHandler = (req) => {
-      const redacted = this.deps.redactor.redact(req.response);
-      const changed = JSON.stringify(redacted) !== JSON.stringify(req.response);
-      if (req.isError && changed) {
+      let redacted = this.deps.redactor.redact(req.response);
+      if (req.isError && JSON.stringify(redacted) !== JSON.stringify(req.response)) {
         // The engine cannot rewrite a failed tool's error text (PostToolUseFailure
         // has no updatedToolOutput), so stop before the model's next turn sees it.
         abort({ kind: 'exposure', toolName: req.toolName });
@@ -1482,7 +1510,16 @@ export class Orchestrator {
           stop: 'Orbit stopped this run: a tool error contained a secret.',
         });
       }
-      const source = [...taint].find((s) => s === req.toolName);
+      // Output from an untrusted source (the tool itself, or a marked workspace
+      // file it read) is data: the model is told so, and Orbit's own tags in it
+      // are neutralised, so it cannot close or forge a block (M8 corpus).
+      const source =
+        [...taint].find((s) => s === req.toolName) ??
+        (req.toolUseId ? exposedBy.get(req.toolUseId)?.join(', ') : undefined);
+      if (source && !req.isError && orbitToolOf(req.toolName) === null) {
+        redacted = neutraliseDeep(redacted);
+      }
+      const changed = JSON.stringify(redacted) !== JSON.stringify(req.response);
       // A delegation pauses this Run: stop the engine after the tool result,
       // park, and resume with the peer's answer (no slot held while it works).
       const delegated =
@@ -1554,7 +1591,7 @@ export class Orchestrator {
         model,
         appendSystemPrompt: composeBotSystemPrompt(bot) + context.tools,
         tools: bot.spec.tools ?? null,
-        maxTurns: bot.spec.maxTurns ?? null,
+        maxTurns: maxTurns === null ? null : Math.max(1, maxTurns - turnsBefore),
         resumeSessionId: seg.resumeSessionId,
         sessionId: seg.resumeSessionId ? null : randomUUID(),
         permission,
@@ -1589,6 +1626,12 @@ export class Orchestrator {
               limit: budgets.maxCostUsdPerRun,
               actual: Number(total.toFixed(4)),
             });
+          }
+        }
+        if (body.type === 'usage.turn' && maxTurns !== null) {
+          const turns = turnsBefore + body.data.turns;
+          if (turns > maxTurns) {
+            abort({ kind: 'budget', budget: 'turns', limit: maxTurns, actual: turns });
           }
         }
         if (body.type === 'usage.turn' && budgets.maxTokensPerRun !== null) {

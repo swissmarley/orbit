@@ -1,9 +1,4 @@
-import { type Memory, type RunState, runLabel } from '@orbit/core';
-
-/** Neutralise our own tags inside model- or owner-written text. */
-function escapeTags(text: string): string {
-  return text.replace(/<(\/?)(orbit-[a-z-]+)/gi, '‹$1$2');
-}
+import { type Memory, type RunState, neutraliseTags, runLabel } from '@orbit/core';
 
 const attr = (v: string) => v.replace(/["<>&\r\n]/g, ' ');
 
@@ -21,8 +16,8 @@ export function formatMemory(m: Memory): string {
   ];
   return [
     `<orbit-memory ${attrs.join(' ')}>`,
-    escapeTags(m.title),
-    escapeTags(m.body.trim()),
+    neutraliseTags(m.title),
+    neutraliseTags(m.body.trim()),
     '</orbit-memory>',
   ].join('\n');
 }

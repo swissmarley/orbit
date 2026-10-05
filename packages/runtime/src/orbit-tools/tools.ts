@@ -1,4 +1,12 @@
-import { type Bot, MEMORY_LIMITS, type Memory, OrbitError, errorMessage, event } from '@orbit/core';
+import {
+  type Bot,
+  MEMORY_LIMITS,
+  type Memory,
+  OrbitError,
+  errorMessage,
+  event,
+  neutraliseTags,
+} from '@orbit/core';
 import { type MemoryStore, formatMemory, mergeTaint } from '@orbit/memory';
 import type { EventStore } from '@orbit/store';
 import { z } from 'zod';
@@ -121,8 +129,8 @@ export function canonicalArgs(
 function hitLine(m: Memory, snippet: string): string {
   return [
     `<orbit-memory-hit id="${m.id}" kind="${m.kind}" source="${m.source}" trust="${m.taint.length ? 'untrusted' : 'trusted'}" written="${m.createdAt.slice(0, 10)}">`,
-    m.title.replace(/<(\/?)(orbit-)/gi, '‹$1$2'),
-    snippet.replace(/<(\/?)(orbit-)/gi, '‹$1$2'),
+    neutraliseTags(m.title),
+    neutraliseTags(snippet),
     '</orbit-memory-hit>',
   ].join('\n');
 }

@@ -190,3 +190,10 @@ Orbit's PreToolUse authorization (`packages/api/src/m7.live.test.ts`).
 - Slack and webhook payloads always make the Run tainted; owners who want a
   Slack-triggered Bot to post back without approval cannot get that from a
   standing rule (by design, ADR-009).
+
+## Amendment in M8 (injection corpus)
+
+- `tierFloor` shares ADR-009's acting words: a read verb followed by a
+  destructive, shell or code-running word (`get_rm`, `view_eval`) floors at
+  EXTERNAL, so a manifest cannot declare it READ; the reference plugins'
+  read tools keep READ (a test lists them).

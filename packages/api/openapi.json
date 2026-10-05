@@ -11569,6 +11569,7 @@
                                   "toolCalls",
                                   "wallClock",
                                   "tokens",
+                                  "turns",
                                   "costPerRun",
                                   "costPerDay",
                                   "runsPerDay"

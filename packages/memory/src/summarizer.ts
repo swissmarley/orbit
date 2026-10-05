@@ -5,6 +5,7 @@ import {
   type RunEvent,
   type RunState,
   formatLocalDate,
+  neutraliseTags,
 } from '@orbit/core';
 
 function clip(text: string, max: number): string {
@@ -56,7 +57,7 @@ export const SUMMARY_SYSTEM = [
 ].join('\n');
 
 export function summaryPrompt(transcript: string): string {
-  return `<transcript>\n${transcript.replace(/<\/?transcript>/gi, '')}\n</transcript>\n\nWrite the memory note now.`;
+  return `<transcript>\n${neutraliseTags(transcript, 'transcript')}\n</transcript>\n\nWrite the memory note now.`;
 }
 
 export function parseSummary(text: string): { title: string; body: string } | null {

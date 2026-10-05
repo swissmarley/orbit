@@ -6,6 +6,7 @@ import {
   classifyTool,
   effectivePluginTier,
   globToRegExp,
+  tierFloor,
 } from './tiers';
 
 const contained = { shellContained: true } as const;
@@ -393,5 +394,128 @@ describe('plugin tier floors (ADR-014)', () => {
       overrides: [{ pattern: 'mcp__browser__open_page', tier: 'READ', egress: true }],
     });
     expect(cls).toMatchObject({ tier: 'READ', egress: true, basis: 'override' });
+  });
+});
+
+// M8 injection corpus (PLAN §7): a read verb followed by a destructive or
+// acting word must not read as a read. One table for both the heuristic
+// (`classifyTool`) and the plugin floor (`tierFloor`), so the two never drift.
+describe('a read verb followed by an acting word is not a read (M8 corpus)', () => {
+  it.each<[string, string, Tier]>([
+    // snake_case
+    ['get then remove (shell abbreviation)', 'get_rm', 'EXTERNAL'],
+    ['view then evaluate code', 'view_eval', 'EXTERNAL'],
+    ['list and delete in one call', 'list_and_delete', 'EXTERNAL'],
+    ['read then send in one call', 'read_then_send', 'EXTERNAL'],
+    ['fetch then execute', 'fetch_exec', 'EXTERNAL'],
+    ['search then destroy', 'search_destroy', 'EXTERNAL'],
+    ['find then purge', 'find_purge', 'EXTERNAL'],
+    ['show then wipe', 'show_wipe', 'EXTERNAL'],
+    ['lookup then drop a table', 'lookup_drop_table', 'EXTERNAL'],
+    ['read a file then truncate it', 'read_file_truncate', 'EXTERNAL'],
+    ['get then overwrite', 'get_overwrite', 'EXTERNAL'],
+    ['describe then reset', 'describe_reset', 'EXTERNAL'],
+    ['count then clear', 'count_clear', 'EXTERNAL'],
+    ['get through a shell', 'get_shell', 'EXTERNAL'],
+    ['fetch with curl', 'fetch_curl', 'EXTERNAL'],
+    ['get with wget', 'get_wget', 'EXTERNAL'],
+    ['read over ssh', 'read_ssh', 'EXTERNAL'],
+    ['view then spawn', 'view_spawn', 'EXTERNAL'],
+    ['list then trigger a workflow', 'list_trigger_workflow', 'EXTERNAL'],
+    ['get then launch', 'get_launch', 'EXTERNAL'],
+    ['get then dispatch', 'get_dispatch', 'EXTERNAL'],
+    ['get then sudo', 'get_sudo', 'EXTERNAL'],
+    ['read then chmod', 'read_chmod', 'EXTERNAL'],
+    ['get then kill', 'get_kill', 'EXTERNAL'],
+    ['get then unlink', 'get_unlink', 'EXTERNAL'],
+    ['list then move to trash', 'list_trash', 'EXTERNAL'],
+    ['get then repost', 'get_repost', 'EXTERNAL'],
+    ['get then impersonate', 'get_impersonate', 'EXTERNAL'],
+    ['get then bypass', 'get_bypass', 'EXTERNAL'],
+    // camelCase and kebab-case spellings of the same names
+    ['camelCase get-rm', 'getRm', 'EXTERNAL'],
+    ['camelCase view-eval', 'viewEval', 'EXTERNAL'],
+    ['camelCase list-and-delete', 'listAndDelete', 'EXTERNAL'],
+    ['camelCase read-then-send', 'readThenSend', 'EXTERNAL'],
+    ['camelCase fetch-exec', 'fetchExec', 'EXTERNAL'],
+    ['capitalised abbreviation (getRM)', 'getRM', 'EXTERNAL'],
+    ['kebab-case get-rm', 'get-rm', 'EXTERNAL'],
+    ['kebab-case view-eval', 'view-eval', 'EXTERNAL'],
+    ['kebab-case read-then-send', 'read-then-send', 'EXTERNAL'],
+    // destroying drafts in another system is not drafting
+    ['purge drafts', 'purge_drafts', 'EXTERNAL'],
+    ['rm a draft', 'rm_draft', 'EXTERNAL'],
+    ['wipe a draft', 'wipe_draft', 'EXTERNAL'],
+    // money still wins over everything
+    ['read then pay', 'read_then_pay', 'FINANCIAL'],
+    ['get then transfer funds', 'get_transfer_funds', 'FINANCIAL'],
+  ])('%s: %s → %s for the heuristic and the plugin floor', (_scenario, tool, tier) => {
+    const name = `mcp__x__${tool}`;
+    expect(classifyTool(name, open)?.tier).toBe(tier);
+    expect(tierFloor(name)).toBe(tier);
+    // A manifest cannot declare it READ either.
+    expect(effectivePluginTier(name, 'READ')).toEqual({ tier, raised: true });
+  });
+
+  // Positive controls: genuine reads stay READ (the reference plugins' own
+  // read tools among them), so the guard fires on actions, not on reads.
+  it.each<[string, string]>([
+    ['reading an issue', 'get_issue'],
+    ['listing Slack channels', 'list_channels'],
+    ['reading a file', 'read_file'],
+    ['searching files', 'search_files'],
+    ['listing a directory', 'list_directory'],
+    ['reading a pull request', 'get_pull_request'],
+    ['listing pull requests', 'list_pull_requests'],
+    ['reading channel history', 'get_channel_history'],
+    ['reading thread replies', 'get_thread_replies'],
+    ['looking up a user', 'lookup_user'],
+    ['listing calendar events', 'list_events'],
+    ['listing drafts', 'list_drafts'],
+    ['reading page text', 'get_text'],
+    ['listing links', 'list_links'],
+    ['reading a message', 'get_message'],
+    ['reading a post', 'get_post'],
+    ['reading system info (system is a noun)', 'get_system_info'],
+    ['reading a date format (format is a noun)', 'get_date_format'],
+    ['reading a clone URL', 'get_clone_url'],
+    ['reading mail', 'get_mail'],
+    ['listing forks', 'list_forks'],
+    ['camelCase read', 'getPullRequest'],
+    ['kebab-case read', 'list-channels'],
+  ])('%s (%s) stays READ', (_scenario, tool) => {
+    const name = `mcp__x__${tool}`;
+    expect(classifyTool(name, open)?.tier).toBe('READ');
+    expect(tierFloor(name)).toBe('READ');
+    expect(effectivePluginTier(name, 'READ')).toEqual({ tier: 'READ', raised: false });
+  });
+
+  it("every reference plugin's declared READ tool keeps READ (no false positives)", () => {
+    const declaredReads = [
+      'mcp__browser__get_text',
+      'mcp__browser__list_links',
+      'mcp__browser__open_page',
+      'mcp__filesystem__list_directory',
+      'mcp__filesystem__read_file',
+      'mcp__filesystem__search_files',
+      'mcp__github__list_issues',
+      'mcp__github__get_issue',
+      'mcp__github__list_pull_requests',
+      'mcp__github__get_pull_request',
+      'mcp__github__git_status',
+      'mcp__github__git_diff',
+      'mcp__github__git_log',
+      'mcp__google__list_messages',
+      'mcp__google__get_message',
+      'mcp__google__list_drafts',
+      'mcp__google__list_events',
+      'mcp__slack__list_channels',
+      'mcp__slack__get_channel_history',
+      'mcp__slack__get_thread_replies',
+      'mcp__slack__lookup_user',
+    ];
+    for (const name of declaredReads) {
+      expect(effectivePluginTier(name, 'READ'), name).toEqual({ tier: 'READ', raised: false });
+    }
   });
 });
