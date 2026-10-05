@@ -2,8 +2,13 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   BOT_TEMPLATES,
+  EXACT_VERSION,
+  NPM_PACKAGE_NAME,
   OrbitError,
+  PLUGIN_SANDBOX_STATE,
   PLUGIN_STATE,
+  type PluginInstallPreview,
+  type PluginSandboxNeeds,
   type PluginStatus,
   TIER_WORD,
   TRIGGER_KIND_WORD,
@@ -60,13 +65,40 @@ export async function pluginsList(ctx: Context, o: { json?: boolean }): Promise<
   return 0;
 }
 
+/** What a plugin's sandbox gets, in one line (ADR-019). */
+export function sandboxNeeds(n: PluginSandboxNeeds): string {
+  const parts = [
+    n.workspace === 'none'
+      ? 'no workspace'
+      : `workspace ${n.workspace === 'read' ? 'read-only' : 'read-write'}`,
+    n.network ? 'network' : 'no network',
+    ...n.paths.map((f) => `${f.name} ${f.access === 'write' ? 'read-write' : 'read-only'}`),
+  ];
+  if (n.nestedSandbox) parts.push('starts a browser with its own sandbox');
+  return parts.join(' · ');
+}
+
 export function renderPlugin(pl: PluginStatus, p: Paint): string[] {
+  const from =
+    pl.source.kind === 'builtin'
+      ? ', ships with Orbit'
+      : pl.source.kind === 'npm'
+        ? `, npm ${pl.source.package ?? '?'}@${pl.source.version ?? '?'}`
+        : '';
   const lines = [
-    `${p('bold', clean(pl.name))} ${p('dim', `(${clean(pl.id)} ${clean(pl.version)}${pl.builtIn ? ', ships with Orbit' : ''})`)}  ${stateWord(p, pl.state)}`,
+    `${p('bold', clean(pl.name))} ${p('dim', `(${clean(pl.id)} ${clean(pl.version)}${clean(from)})`)}  ${stateWord(p, pl.state)}`,
     `  ${p('dim', PLUGIN_STATE[pl.state].meaning)}`,
   ];
   if (pl.description) lines.push(`  ${clean(pl.description)}`);
   lines.push(`  ${p('dim', 'server')} ${clean(pl.server)}`);
+  const sb = PLUGIN_SANDBOX_STATE[pl.sandbox.state];
+  lines.push(
+    `  ${p('dim', 'sandbox')} ${p(TONE[sb.tone], `${sb.mark} ${sb.label}`)}${pl.sandbox.engine ? p('dim', ` (${pl.sandbox.engine})`) : ''}${pl.sandbox.reason ? `  ${clean(pl.sandbox.reason)}` : ''}`,
+  );
+  if (pl.sandbox.state !== 'remote') {
+    lines.push(`  ${p('dim', 'gets')}    ${clean(sandboxNeeds(pl.sandbox.needs))}`);
+  }
+  if (pl.source.integrity) lines.push(`  ${p('dim', 'integrity')} ${clean(pl.source.integrity)}`);
   lines.push('', p('bold', 'Tools'));
   const tools = [...pl.tools].sort(
     (a, b) =>
@@ -313,6 +345,154 @@ export async function webhookSecret(
       ? 'GitHub style: set it as the webhook secret; GitHub sends X-Hub-Signature-256 and X-GitHub-Delivery.'
       : 'Orbit style: send X-Orbit-Timestamp (unix seconds) and X-Orbit-Signature: sha256=HMAC_SHA256(secret, "<timestamp>.<body>") in hex.',
   );
+  return 0;
+}
+
+export async function pluginCatalog(ctx: Context, o: { json?: boolean }): Promise<number> {
+  const listing = await (await ctx.client()).plugins.catalog();
+  if (o.json) {
+    json(ctx, listing);
+    return listing.error ? 1 : 0;
+  }
+  const p = painter(ctx.io);
+  if (listing.error) {
+    ctx.io.err(p('red', `✘ ${clean(listing.error)}`));
+    return 1;
+  }
+  if (listing.description) ctx.io.out(p('dim', clean(listing.description)));
+  if (listing.entries.length === 0) {
+    ctx.io.out(
+      `The catalog (${clean(listing.url)}) lists no plugins yet. Install a package you trust with: orbit plugin install npm:<package>@<version> --integrity sha512-…`,
+    );
+    return 0;
+  }
+  for (const e of listing.entries) {
+    const mark = e.installed
+      ? p('green', `✔ installed${e.installedVersion ? ` ${clean(e.installedVersion)}` : ''}`)
+      : p('dim', '○ not installed');
+    ctx.io.out(
+      `${p('bold', clean(e.id).padEnd(14))} ${clean(e.name)}  ${p('dim', `${clean(e.package)}@${clean(e.version)}`)}  ${mark}`,
+    );
+    if (e.description) ctx.io.out(`  ${p('dim', clean(e.description))}`);
+  }
+  ctx.io.out(p('dim', '\nInstall one: orbit plugin install <id>'));
+  return 0;
+}
+
+/** `npm:<package>@<exact version>` (scoped names have a leading @). */
+export function parseNpmSpec(spec: string): { package: string; version: string } | null {
+  if (!spec.startsWith('npm:')) return null;
+  const rest = spec.slice('npm:'.length);
+  const at = rest.lastIndexOf('@');
+  if (at <= 0) return null;
+  const pkg = rest.slice(0, at);
+  const version = rest.slice(at + 1);
+  return NPM_PACKAGE_NAME.test(pkg) && EXACT_VERSION.test(version)
+    ? { package: pkg, version }
+    : null;
+}
+
+export function renderPreview(pv: PluginInstallPreview, p: Paint): string[] {
+  const lines = [
+    `${p('bold', clean(pv.name))} ${p('dim', `(${clean(pv.id)} ${clean(pv.version)})`)} from npm ${clean(pv.package)}@${clean(pv.packageVersion)}`,
+  ];
+  if (pv.description) lines.push(`  ${clean(pv.description)}`);
+  lines.push(
+    `  ${p('dim', 'integrity')} ${clean(pv.integrity)} ${p('green', '✔ matched')}`,
+    `  ${p('dim', 'manifest')}  ${clean(pv.manifestHash)} ${pv.fromCatalog ? p('green', '✔ from the catalog') : p('yellow', '△ not from the catalog: you vouch for it')}`,
+    `  ${p('dim', 'server')}    ${clean(pv.server)}`,
+    `  ${p('dim', 'sandbox')}   ${clean(sandboxNeeds(pv.sandbox))}`,
+    `  ${p('dim', 'files')}     ${pv.files} (${Math.max(1, Math.round(pv.bytes / 1024))} KB)`,
+    '',
+    p('bold', 'Tools'),
+  );
+  for (const t of [...pv.tools].sort(
+    (a, b) =>
+      TIER_ORDER.indexOf(a.tier) - TIER_ORDER.indexOf(b.tier) || a.name.localeCompare(b.name),
+  )) {
+    const w = TIER_WORD[t.tier];
+    lines.push(
+      `  ${p(TONE[w.tone], `${w.mark} ${w.label}`.padEnd(14))} ${clean(t.name)}${t.egress ? p('dim', ' · reaches any address') : ''}  ${p('dim', clean(t.description))}`,
+    );
+  }
+  if (pv.secrets.length) {
+    lines.push(
+      '',
+      `${p('bold', 'Secrets')} ${pv.secrets.map((s) => `${clean(s.name)}${s.required ? '' : p('dim', ' (optional)')}`).join(', ')}`,
+    );
+  }
+  if (pv.settings.length) {
+    lines.push(`${p('bold', 'Settings')} ${pv.settings.map((s) => clean(s.name)).join(', ')}`);
+  }
+  if (pv.env.length) {
+    lines.push(`${p('bold', 'Reads from orbitd’s environment')} ${pv.env.map(clean).join(', ')}`);
+  }
+  return lines;
+}
+
+/**
+ * Install from the catalog (`<id>`) or npm (`npm:<package>@<version>
+ * --integrity sha512-…`): orbitd downloads and verifies it first (a dry run)
+ * and shows what it declares; then, after `y` or with --yes, installs it off.
+ */
+export async function pluginInstall(
+  ctx: Context,
+  spec: string,
+  o: { integrity?: string; yes?: boolean; dryRun?: boolean; json?: boolean },
+): Promise<number> {
+  const npm = parseNpmSpec(spec);
+  if (spec.startsWith('npm:') && !npm) {
+    throw new OrbitError('invalid_input', `Not a package with an exact version: ${spec}`, {
+      hint: 'orbit plugin install npm:<package>@<version> --integrity sha512-…  (no ranges or tags)',
+    });
+  }
+  if (npm && !o.integrity) {
+    throw new OrbitError('invalid_input', 'An npm install needs the package integrity', {
+      hint: `Get it from the publisher or \`npm view ${npm.package}@${npm.version} dist.integrity\`, then pass --integrity sha512-…`,
+    });
+  }
+  if (!npm && o.integrity) {
+    throw new OrbitError(
+      'invalid_input',
+      '--integrity is for npm: installs; catalog entries carry their own',
+    );
+  }
+  const c = await ctx.client();
+  const req = npm
+    ? { source: 'npm' as const, ...npm, integrity: o.integrity ?? '' }
+    : { source: 'catalog' as const, id: spec };
+  const p = painter(ctx.io);
+  const dry = await c.plugins.install({ ...req, dryRun: true });
+  if (o.dryRun) {
+    if (o.json) json(ctx, dry);
+    else for (const l of renderPreview(dry.preview, p)) ctx.io.out(l);
+    return 0;
+  }
+  if (!o.json) for (const l of renderPreview(dry.preview, p)) ctx.io.out(l);
+  if (!o.yes) {
+    if (!ctx.io.interactive || !ctx.io.ask) {
+      throw new OrbitError('invalid_input', 'Installing needs your confirmation', {
+        hint: 'Review it with --dry-run, then run again with --yes.',
+      });
+    }
+    const answer = await ctx.io.ask(
+      `\nInstall ${clean(dry.preview.name)}? It stays off until you enable it. [y/N] `,
+    );
+    if (answer.trim().toLowerCase() !== 'y') {
+      ctx.io.out('Nothing was installed.');
+      return 1;
+    }
+  }
+  const done = await c.plugins.install({ ...req, dryRun: false });
+  if (o.json) {
+    json(ctx, done);
+    return 0;
+  }
+  const pl = done.plugin;
+  ctx.io.out(
+    `${p('green', '✔')} Installed ${clean(dry.preview.name)} (${clean(dry.preview.id)}). It is off: review it with \`orbit plugin show ${clean(dry.preview.id)}\`, then \`orbit plugin enable ${clean(dry.preview.id)}\`.`,
+  );
+  for (const w of pl?.warnings ?? []) ctx.io.out(p('yellow', `⚠ ${clean(w)}`));
   return 0;
 }
 

@@ -1,3 +1,4 @@
+import { createInterface } from 'node:readline/promises';
 import { styleText } from 'node:util';
 
 type Style = Parameters<typeof styleText>[0];
@@ -19,6 +20,8 @@ export interface Io {
   startDaemon?: (env: Record<string, string | undefined>) => Promise<void>;
   /** Open a URL in the browser (`orbit app`). Default: the platform launcher. */
   openUrl?: (url: string) => void;
+  /** Ask a question on the terminal and resolve with the answer (`plugin install`). */
+  ask?: (question: string) => Promise<string>;
 }
 
 export function processIo(): Io {
@@ -36,6 +39,14 @@ export function processIo(): Io {
     env,
     color,
     interactive: process.stdin.isTTY && process.stdout.isTTY,
+    async ask(question) {
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      try {
+        return await rl.question(question);
+      } finally {
+        rl.close();
+      }
+    },
     onInterrupt(handler) {
       process.on('SIGINT', handler);
       return () => process.off('SIGINT', handler);

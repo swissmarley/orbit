@@ -1,7 +1,10 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { gzipSync } from 'node:zlib';
 import { ExitCode, type RunEvent } from '@orbit/core';
 import { type Daemon, startDaemon } from '@orbit/orbitd';
 import { localClient, readDaemonInfo } from '@orbit/sdk-client';
@@ -15,10 +18,36 @@ const FAKE_CLAUDE = join(import.meta.dirname, '../test/fake-claude-auth.mjs');
 /** Daemons the CLI auto-started in this process (one per test home). */
 const daemons: Daemon[] = [];
 
-function harness(env: Record<string, string | undefined>) {
+/** A minimal ustar + gzip packer for test packages. */
+function packTarball(files: Record<string, string>): Buffer {
+  const parts: Buffer[] = [];
+  for (const [name, text] of Object.entries(files)) {
+    const data = Buffer.from(text);
+    const h = Buffer.alloc(512);
+    h.write(name, 0);
+    h.write('0000644\0', 100);
+    h.write('0000000\0', 108);
+    h.write('0000000\0', 116);
+    h.write(`${data.length.toString(8).padStart(11, '0')}\0`, 124);
+    h.write('00000000000\0', 136);
+    h.write('        ', 148);
+    h.write('0', 156);
+    h.write('ustar\0', 257);
+    h.write('00', 263);
+    let sum = 0;
+    for (const b of h) sum += b;
+    h.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148);
+    parts.push(h, data, Buffer.alloc((512 - (data.length % 512)) % 512));
+  }
+  parts.push(Buffer.alloc(1024));
+  return gzipSync(Buffer.concat(parts));
+}
+
+function harness(env: Record<string, string | undefined>, extra: Partial<Io> = {}) {
   const out: string[] = [];
   const err: string[] = [];
   const io: Io = {
+    ...extra,
     out: (t) => out.push(t),
     err: (t) => err.push(t),
     env,
@@ -141,6 +170,103 @@ describe('orbit CLI', () => {
     cli.reset();
     expect(await cli.run('plugin', 'disable', 'filesystem')).toBe(0);
     expect(cli.text()).toMatch(/○ off/);
+  }, 30_000);
+
+  it('plugin catalog and install: verified preview, confirmation, --yes, --json, and rm removes the files', async () => {
+    const pkg = packTarball({
+      'package/package.json': JSON.stringify({ name: 'orbit-plugin-clock', version: '1.0.0' }),
+      'package/orbit-plugin.json': JSON.stringify({
+        schemaVersion: 1,
+        id: 'clock',
+        name: 'Clock',
+        version: '1.0.0',
+        server: { transport: 'stdio', command: '${node}', args: ['${pluginDir}/server.js'] },
+        tools: [{ name: 'get_time', tier: 'READ', description: 'What time it is' }],
+        sandbox: { workspace: 'none', network: false },
+      }),
+      'package/server.js': 'process.stdin.resume();\n',
+    });
+    const integrity = `sha512-${createHash('sha512').update(pkg).digest('base64')}`;
+    const registry = createServer((req, res) => {
+      if (req.url === '/orbit-plugin-clock/-/orbit-plugin-clock-1.0.0.tgz') res.end(pkg);
+      else if (req.url === '/catalog.json') {
+        res.end(
+          JSON.stringify({
+            schemaVersion: 1,
+            description: 'Test catalog',
+            plugins: [
+              {
+                id: 'clock',
+                name: 'Clock',
+                package: 'orbit-plugin-clock',
+                version: '1.0.0',
+                integrity,
+              },
+            ],
+          }),
+        );
+      } else res.writeHead(404).end();
+    });
+    await new Promise<void>((done) => registry.listen(0, '127.0.0.1', done));
+    const url = `http://127.0.0.1:${(registry.address() as { port: number }).port}`;
+    const store = join(tmpdir(), `orbit-cli-store-${process.pid}`);
+    const asked: string[] = [];
+    try {
+      const env = {
+        ...mockEnv(),
+        ORBIT_PLUGIN_CATALOG_URL: `${url}/catalog.json`,
+        ORBIT_NPM_REGISTRY: url,
+        ORBIT_PLUGIN_STORE: store,
+      };
+      const cli = harness(env);
+      expect(await cli.run('plugin', 'catalog')).toBe(0);
+      expect(cli.text()).toMatch(/clock\s+Clock\s+orbit-plugin-clock@1\.0\.0\s+○ not installed/);
+      cli.reset();
+      // Not a terminal and no --yes: nothing is installed.
+      expect(await cli.run('plugin', 'install', 'clock')).toBe(2);
+      expect(cli.text()).toContain(`integrity ${integrity} ✔ matched`);
+      expect(cli.text()).toMatch(/◇ read\s+get_time/);
+      expect(cli.text()).toContain('sandbox   no workspace · no network');
+      expect(cli.err.join('\n')).toMatch(/needs your confirmation/);
+      cli.reset();
+      // A terminal: asked, and "n" installs nothing.
+      const tty = harness(env, {
+        interactive: true,
+        ask: (q) => (asked.push(q), Promise.resolve('n')),
+      });
+      expect(await tty.run('plugin', 'install', 'clock')).toBe(1);
+      expect(asked[0]).toMatch(/Install Clock\? It stays off until you enable it\. \[y\/N\]/);
+      expect(tty.text()).toContain('Nothing was installed.');
+      // npm: needs an exact version and the integrity.
+      expect(await cli.run('plugin', 'install', 'npm:orbit-plugin-clock@^1.0.0')).toBe(2);
+      expect(await cli.run('plugin', 'install', 'npm:orbit-plugin-clock@1.0.0')).toBe(2);
+      expect(cli.err.join('\n')).toMatch(/needs the package integrity/);
+      cli.reset();
+      expect(
+        await cli.run(
+          'plugin',
+          'install',
+          'npm:orbit-plugin-clock@1.0.0',
+          '--integrity',
+          integrity,
+          '--yes',
+          '--json',
+        ),
+      ).toBe(0);
+      expect(
+        cli.json<{ plugin: { id: string; state: string; source: { kind: string } } }>().plugin,
+      ).toMatchObject({ id: 'clock', state: 'disabled', source: { kind: 'npm' } });
+      cli.reset();
+      expect(await cli.run('plugin', 'show', 'clock')).toBe(0);
+      expect(cli.text()).toContain('(clock 1.0.0, npm orbit-plugin-clock@1.0.0)');
+      expect(cli.text()).toMatch(/sandbox (▣ sandboxed|△ unsandboxed)/);
+      cli.reset();
+      expect(await cli.run('plugin', 'rm', 'clock')).toBe(0);
+      expect(readdirSync(store)).toEqual([]);
+    } finally {
+      registry.close();
+      rmSync(store, { recursive: true, force: true });
+    }
   }, 30_000);
 
   it('plugin secrets come from a file or stdin, never argv, and are never printed', async () => {
