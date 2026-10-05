@@ -1,8 +1,11 @@
 /** @jsxRuntime automatic @jsxImportSource react */
 import {
+  PLUGIN_SANDBOX_STATE,
   PLUGIN_STATE,
+  type PluginInstallPreview,
   type PluginStatus,
   TIER_WORD,
+  describeSandboxNeeds,
   TRIGGER_KIND_WORD,
   TRIGGER_STATE,
   type Tier,
@@ -13,11 +16,13 @@ import { Link } from '@tanstack/react-router';
 import {
   AlertTriangle,
   Copy,
+  Download,
   KeyRound,
   Plug,
   Power,
   RefreshCw,
   Settings2,
+  Trash2,
   Webhook,
 } from 'lucide-react';
 import { useId, useRef, useState } from 'react';
@@ -30,7 +35,7 @@ import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Field, Input } from '../components/ui/input';
 import { useActions } from '../lib/actions';
-import { useInboundTriggers, usePlugins } from '../lib/queries';
+import { useInboundTriggers, usePluginCatalog, usePlugins } from '../lib/queries';
 
 /** Manifest text is written by whoever wrote the plugin: shown as text, scrubbed. */
 const t = (s: string) => scrubControls(s);
@@ -55,8 +60,49 @@ export function enableText(p: PluginStatus): string {
   ].filter(Boolean);
   return [
     `Orbit starts it once to list its tools (${t(p.server)}). Bots whose config lists "${p.id}" can then use: ${parts.join(', ') || 'no tools'}.`,
-    `It runs in the Bot's workspace with ${gets.length ? gets.join(', ') : 'no secrets'} — never your API key, your Claude login or another plugin's secrets. Everything it returns counts as untrusted.`,
+    `It gets ${gets.length ? gets.join(', ') : 'no secrets'} — never your API key, your Claude login or another plugin's secrets. Everything it returns counts as untrusted.`,
+    sandboxText(p),
   ].join(' ');
+}
+
+/** How the plugin runs here (ADR-019), in a sentence. */
+export function sandboxText(p: PluginStatus): string {
+  const s = p.sandbox;
+  switch (s.state) {
+    case 'sandboxed':
+      return `It runs in an OS sandbox (${s.engine ?? 'sandbox'}) with ${describeSandboxNeeds(s.needs)}; your home folder and Orbit's data are not there.`;
+    case 'unsandboxed':
+      return `It runs as your user without an OS sandbox: ${t(s.reason ?? 'none is available')}.`;
+    case 'refused':
+      return `It cannot start here: ${t(s.reason ?? 'it cannot be sandboxed')} and plugins.sandbox is required.`;
+    case 'off':
+      return 'It runs as your user: plugins.sandbox is off.';
+    case 'remote':
+      return 'It is a server elsewhere: nothing runs on this computer.';
+  }
+}
+
+/** What installing a package means, in words, before the owner confirms. */
+export function installText(pv: PluginInstallPreview): string {
+  const count = (tier: Tier) => pv.tools.filter((x) => x.tier === tier).length;
+  const tools = TIER_ORDER.flatMap((tier) =>
+    count(tier) ? [`${count(tier)} ${TIER_WORD[tier].label}`] : [],
+  );
+  return [
+    `${t(pv.package)}@${t(pv.packageVersion)} matched its integrity (${pv.integrity.slice(0, 23)}…)${pv.fromCatalog ? ' and the catalog’s manifest' : ''}.`,
+    `It declares ${pv.tools.length} tool${pv.tools.length === 1 ? '' : 's'} (${tools.join(', ')})${pv.secrets.length ? `, the secrets ${pv.secrets.map((s) => s.name).join(', ')}` : ''}, and a sandbox with ${describeSandboxNeeds(pv.sandbox)}.`,
+    'Nothing in the package runs now; it stays off until you enable it.',
+  ].join(' ');
+}
+
+function SandboxBadge({ plugin: p }: { plugin: PluginStatus }) {
+  const w = PLUGIN_SANDBOX_STATE[p.sandbox.state];
+  return (
+    <Badge tone={w.tone} title={w.meaning}>
+      <span aria-hidden>{w.mark}</span>
+      {w.label}
+    </Badge>
+  );
 }
 
 /** "12 tools: 7 read, 1 local write, 4 external". */
@@ -273,10 +319,16 @@ function PluginCard({ plugin: p }: { plugin: PluginStatus }) {
           <div className="flex flex-wrap items-center gap-2">
             <CardTitle id={headingId}>{t(p.name)}</CardTitle>
             <StateBadge state={p.state} />
+            <SandboxBadge plugin={p} />
             <span className="font-mono text-xs text-fg-muted">
               {p.id} {t(p.version)}
             </span>
             {p.builtIn ? <span className="text-xs text-fg-subtle">ships with Orbit</span> : null}
+            {p.source.kind === 'npm' ? (
+              <span className="font-mono text-xs text-fg-subtle">
+                npm {t(p.source.package ?? '')}@{t(p.source.version ?? '')}
+              </span>
+            ) : null}
           </div>
           {p.description ? <p className="text-sm text-fg-muted">{t(p.description)}</p> : null}
         </div>
@@ -315,6 +367,30 @@ function PluginCard({ plugin: p }: { plugin: PluginStatus }) {
           >
             <RefreshCw aria-hidden /> Check
           </Button>
+          {p.builtIn ? null : (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              aria-label={`Remove ${t(p.name)}`}
+              onClick={() =>
+                act(async () => {
+                  const ok = await confirmAction({
+                    title: `Remove ${t(p.name)}?`,
+                    body:
+                      p.source.kind === 'npm'
+                        ? 'Orbit forgets it, deletes its installed files and its secrets.'
+                        : 'Orbit forgets it and its secrets; its folder stays where it is.',
+                    confirm: 'Remove',
+                    danger: true,
+                  });
+                  if (ok) await actions.removePlugin(p);
+                })
+              }
+            >
+              <Trash2 aria-hidden /> Remove
+            </Button>
+          )}
         </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -340,6 +416,9 @@ function PluginCard({ plugin: p }: { plugin: PluginStatus }) {
         ) : null}
         <p className="text-sm text-fg-muted">
           {toolSummary(p)} · each tool has a fixed tier; external ones always ask you
+        </p>
+        <p className="text-xs text-fg-muted" data-testid="plugin-sandbox">
+          {sandboxText(p)}
         </p>
         <details open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
           <summary className="cursor-pointer text-sm font-medium text-fg">
@@ -553,6 +632,91 @@ function InboundTriggers() {
   );
 }
 
+function InstallFromCatalog() {
+  const q = usePluginCatalog();
+  const actions = useActions();
+  const [busy, setBusy] = useState<string | null>(null);
+  const install = (id: string) => {
+    setBusy(id);
+    void (async () => {
+      // orbitd downloads and verifies it first; nothing is kept until the owner says yes.
+      const preview = await actions.previewPluginInstall(id);
+      const ok = await confirmAction({
+        title: `Install ${t(preview.name)}?`,
+        body: installText(preview),
+        confirm: 'Install',
+      });
+      if (ok) await actions.installPlugin(id);
+    })()
+      .catch(() => undefined)
+      .finally(() => setBusy(null));
+  };
+  return (
+    <Card>
+      <CardHeader>
+        <h2 className="text-base font-semibold text-fg">Install from catalog</h2>
+      </CardHeader>
+      <CardContent>
+        {q.isPending ? (
+          <ListSkeleton rows={2} />
+        ) : q.isError ? (
+          <ErrorState error={q.error} retry={() => void q.refetch()} />
+        ) : q.data.error ? (
+          <p role="note" className="text-sm text-warning">
+            <AlertTriangle aria-hidden className="mr-1 inline size-4" />
+            {t(q.data.error)}
+          </p>
+        ) : q.data.entries.length === 0 ? (
+          <p className="text-sm text-fg-muted">
+            The catalog lists no plugins yet. A package you trust can be installed from a terminal:{' '}
+            <code className="font-mono text-xs">
+              orbit plugin install npm:&lt;package&gt;@&lt;version&gt; --integrity sha512-…
+            </code>
+          </p>
+        ) : (
+          <ul className="divide-y divide-border" aria-label="Catalog plugins">
+            {q.data.entries.map((e) => (
+              <li
+                key={e.id}
+                className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm"
+                data-testid="catalog-entry"
+              >
+                <span className="font-medium">{t(e.name)}</span>
+                <span className="font-mono text-xs text-fg-muted">
+                  {t(e.package)}@{t(e.version)}
+                </span>
+                {e.description ? (
+                  <span className="basis-full text-xs text-fg-muted">{t(e.description)}</span>
+                ) : null}
+                {e.installed ? (
+                  <Badge tone="success" className="ml-auto">
+                    <span aria-hidden>✔</span>
+                    installed{e.installedVersion ? ` ${t(e.installedVersion)}` : ''}
+                  </Badge>
+                ) : (
+                  <Button
+                    size="sm"
+                    className="ml-auto"
+                    disabled={busy !== null}
+                    aria-label={`Install ${t(e.name)}`}
+                    onClick={() => install(e.id)}
+                  >
+                    <Download aria-hidden /> Install
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="mt-2 text-xs text-fg-subtle">
+          Each entry pins an exact version and its sha512 integrity; Orbit verifies both before it
+          unpacks anything, never runs install scripts, and keeps it off until you enable it.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 function AddPlugin() {
   const actions = useActions();
   const id = useId();
@@ -622,6 +786,7 @@ export function Integrations() {
         </div>
       )}
       <InboundTriggers />
+      <InstallFromCatalog />
       <AddPlugin />
     </div>
   );

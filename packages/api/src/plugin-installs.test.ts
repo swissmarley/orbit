@@ -3,42 +3,16 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { type Server, createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { gzipSync } from 'node:zlib';
 import type { PluginCatalogListing, PluginStatus } from '@orbit/core';
 import type { PluginSandboxSupport } from '@orbit/sandbox';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { z } from 'zod';
-import { type Harness, harness } from '../test/harness';
+import { type Harness, harness, packTarball } from '../test/harness';
 import type { DoctorReport, InstallPluginResult } from './contract';
-
-/** A minimal ustar + gzip packer for the test package. */
-function tgz(files: Record<string, string>): Buffer {
-  const parts: Buffer[] = [];
-  for (const [name, text] of Object.entries(files)) {
-    const data = Buffer.from(text);
-    const h = Buffer.alloc(512);
-    h.write(name, 0);
-    h.write('0000644\0', 100);
-    h.write('0000000\0', 108);
-    h.write('0000000\0', 116);
-    h.write(`${data.length.toString(8).padStart(11, '0')}\0`, 124);
-    h.write('00000000000\0', 136);
-    h.write('        ', 148);
-    h.write('0', 156);
-    h.write('ustar\0', 257);
-    h.write('00', 263);
-    let sum = 0;
-    for (const b of h) sum += b;
-    h.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148);
-    parts.push(h, data, Buffer.alloc((512 - (data.length % 512)) % 512));
-  }
-  parts.push(Buffer.alloc(1024));
-  return gzipSync(Buffer.concat(parts));
-}
 
 const sri = (b: Buffer) => `sha512-${createHash('sha512').update(b).digest('base64')}`;
 
-const PACKAGE = tgz({
+const PACKAGE = packTarball({
   'package/package.json': JSON.stringify({ name: 'orbit-plugin-clock', version: '1.0.0' }),
   'package/orbit-plugin.json': JSON.stringify({
     schemaVersion: 1,

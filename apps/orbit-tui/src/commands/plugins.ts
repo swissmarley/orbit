@@ -2,13 +2,13 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   BOT_TEMPLATES,
+  describeSandboxNeeds,
   EXACT_VERSION,
   NPM_PACKAGE_NAME,
   OrbitError,
   PLUGIN_SANDBOX_STATE,
   PLUGIN_STATE,
   type PluginInstallPreview,
-  type PluginSandboxNeeds,
   type PluginStatus,
   TIER_WORD,
   TRIGGER_KIND_WORD,
@@ -66,17 +66,7 @@ export async function pluginsList(ctx: Context, o: { json?: boolean }): Promise<
 }
 
 /** What a plugin's sandbox gets, in one line (ADR-019). */
-export function sandboxNeeds(n: PluginSandboxNeeds): string {
-  const parts = [
-    n.workspace === 'none'
-      ? 'no workspace'
-      : `workspace ${n.workspace === 'read' ? 'read-only' : 'read-write'}`,
-    n.network ? 'network' : 'no network',
-    ...n.paths.map((f) => `${f.name} ${f.access === 'write' ? 'read-write' : 'read-only'}`),
-  ];
-  if (n.nestedSandbox) parts.push('starts a browser with its own sandbox');
-  return parts.join(' · ');
-}
+export const sandboxNeeds = describeSandboxNeeds;
 
 export function renderPlugin(pl: PluginStatus, p: Paint): string[] {
   const from =

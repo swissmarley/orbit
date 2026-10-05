@@ -266,6 +266,19 @@ export function pluginSandboxNeeds(m: Pick<PluginManifest, 'sandbox'>): PluginSa
   return m.sandbox ?? DEFAULT_SANDBOX_NEEDS;
 }
 
+/** What a plugin's sandbox gets, in words (Integrations, `orbit plugin show`, the TUI). */
+export function describeSandboxNeeds(n: PluginSandboxNeeds): string {
+  const parts = [
+    n.workspace === 'none'
+      ? 'no workspace'
+      : `the workspace ${n.workspace === 'read' ? 'read-only' : 'read-write'}`,
+    n.network ? 'the network' : 'no network',
+    ...n.paths.map((f) => `${f.name} folders ${f.access === 'write' ? 'read-write' : 'read-only'}`),
+  ];
+  if (n.nestedSandbox) parts.push('a browser with its own sandbox');
+  return parts.join(' · ');
+}
+
 // ── the plugin catalog (ADR-019) ───────────────────────────────────────────
 
 /** npm package names: lowercase, URL-safe, optionally scoped. */

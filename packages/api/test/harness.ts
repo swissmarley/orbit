@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { gzipSync } from 'node:zlib';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { serve } from '@hono/node-server';
@@ -27,6 +28,31 @@ export interface Harness {
   json<T>(method: string, path: string, body?: unknown): Promise<{ status: number; body: T }>;
   listen(): Promise<string>;
   close(): Promise<void>;
+}
+
+/** A minimal ustar + gzip packer for test npm packages (plugin installs, ADR-019). */
+export function packTarball(files: Record<string, string>): Buffer {
+  const parts: Buffer[] = [];
+  for (const [name, text] of Object.entries(files)) {
+    const data = Buffer.from(text);
+    const h = Buffer.alloc(512);
+    h.write(name, 0);
+    h.write('0000644\0', 100);
+    h.write('0000000\0', 108);
+    h.write('0000000\0', 116);
+    h.write(`${data.length.toString(8).padStart(11, '0')}\0`, 124);
+    h.write('00000000000\0', 136);
+    h.write('        ', 148);
+    h.write('0', 156);
+    h.write('ustar\0', 257);
+    h.write('00', 263);
+    let sum = 0;
+    for (const b of h) sum += b;
+    h.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148);
+    parts.push(h, data, Buffer.alloc((512 - (data.length % 512)) % 512));
+  }
+  parts.push(Buffer.alloc(1024));
+  return gzipSync(Buffer.concat(parts));
 }
 
 /** Plain private directories: no sandbox detection, no git, no docker. */

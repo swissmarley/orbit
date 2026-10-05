@@ -1,11 +1,13 @@
 /** @jsxRuntime automatic @jsxImportSource react */
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import axe from 'axe-core';
 import { afterEach, describe, expect, it } from 'vitest';
-import { harness } from '@orbit/api/testing';
+import { harness, packTarball } from '@orbit/api/testing';
 import { type Mounted, mountApp } from '../test/harness';
 
 /** The repository's reference plugins (jsdom has no file URL to find them from). */
@@ -94,6 +96,88 @@ describe('Settings → Integrations', () => {
       'ghp_appsecret0123456789abcdefghijklmnop',
     );
   });
+
+  it('installs a catalog plugin after showing its integrity, tools and sandbox; removes it', async () => {
+    const pkg = packTarball({
+      'package/package.json': JSON.stringify({ name: 'orbit-plugin-clock', version: '1.0.0' }),
+      'package/orbit-plugin.json': JSON.stringify({
+        schemaVersion: 1,
+        id: 'clock',
+        name: 'Clock',
+        version: '1.0.0',
+        server: { transport: 'stdio', command: '${node}', args: ['${pluginDir}/server.js'] },
+        tools: [{ name: 'get_time', tier: 'READ' }],
+        sandbox: { workspace: 'none', network: false },
+      }),
+      'package/server.js': 'process.stdin.resume();\n',
+    });
+    const integrity = `sha512-${createHash('sha512').update(pkg).digest('base64')}`;
+    const store = mkdtempSync(join(tmpdir(), 'orbit-app-store-'));
+    const catalog = {
+      schemaVersion: 1,
+      plugins: [
+        {
+          id: 'clock',
+          name: 'Clock',
+          description: 'What time it is',
+          package: 'orbit-plugin-clock',
+          version: '1.0.0',
+          integrity,
+        },
+      ],
+    };
+    // The registry and catalog hosts, answered in-process (jsdom has no network to spare).
+    const pluginFetch: typeof fetch = (input) => {
+      const url = input instanceof Request ? input.url : input.toString();
+      return Promise.resolve(
+        url.endsWith('/catalog.json')
+          ? new Response(JSON.stringify(catalog))
+          : url.endsWith('/orbit-plugin-clock/-/orbit-plugin-clock-1.0.0.tgz')
+            ? new Response(pkg)
+            : new Response('', { status: 404 }),
+      );
+    };
+    try {
+      const h = harness({
+        config: {
+          plugins: {
+            catalogUrl: 'https://catalog.example/catalog.json',
+            npmRegistry: 'https://registry.example',
+            storeDir: store,
+          },
+        },
+        service: { pluginsDir: null, pluginFetch },
+      });
+      m = mountApp('/settings?tab=integrations', { h });
+      const entry = await screen.findByTestId('catalog-entry');
+      expect(within(entry).getByText('orbit-plugin-clock@1.0.0')).toBeTruthy();
+      const user = userEvent.setup();
+      await user.click(within(entry).getByRole('button', { name: 'Install Clock' }));
+      const dialog = await screen.findByRole('dialog', { name: /Install Clock\?/ });
+      expect(dialog.textContent).toMatch(/matched its integrity \(sha512-/);
+      expect(dialog.textContent).toMatch(/1 tool \(1 read\)/);
+      expect(dialog.textContent).toMatch(/no workspace · no network/);
+      expect(dialog.textContent).toMatch(/stays off until you enable it/);
+      await noA11yViolations(document.body);
+      await user.click(within(dialog).getByRole('button', { name: /^Install/ }));
+      await waitFor(() => expect(h.service.plugins.get('clock').source.kind).toBe('npm'));
+      const clock = await waitFor(() => card('Clock'));
+      expect(within(clock).getByText('npm orbit-plugin-clock@1.0.0')).toBeTruthy();
+      expect(within(clock).getByTestId('plugin-sandbox').textContent).toMatch(
+        /OS sandbox|without an OS sandbox/,
+      );
+      await waitFor(() =>
+        expect(within(screen.getByTestId('catalog-entry')).getByText(/installed/)).toBeTruthy(),
+      );
+      await user.click(within(clock).getByRole('button', { name: 'Remove Clock' }));
+      const remove = await screen.findByRole('dialog', { name: /Remove Clock\?/ });
+      expect(remove.textContent).toMatch(/deletes its installed files/);
+      await user.click(within(remove).getByRole('button', { name: /^Remove/ }));
+      await waitFor(() => expect(readdirSync(store)).toEqual([]));
+    } finally {
+      rmSync(store, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   it('shows inbound triggers and mints a webhook signing secret once', async () => {
     const h = harness({ service: { pluginsDir: null } });
