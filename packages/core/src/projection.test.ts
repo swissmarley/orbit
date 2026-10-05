@@ -18,7 +18,16 @@ function envelope(seq: number, body: RunEventBody): RunEvent {
 const happy: RunEvent[] = [
   envelope(1, {
     type: 'run.queued',
-    data: { trigger: { kind: 'manual', source: null }, prompt: 'hi', priority: 0, fixture: null },
+    data: {
+      trigger: { kind: 'manual', source: null },
+      prompt: 'hi',
+      priority: 0,
+      fixture: null,
+      parentRunId: null,
+      depth: 0,
+      inheritedTaint: [],
+      budgetCap: null,
+    },
   }),
   envelope(2, {
     type: 'run.started',
@@ -146,5 +155,159 @@ describe('resume scheduling and older projections', () => {
     const normalized = normalizeRunState(old as RunState);
     expect(normalized).toEqual(stored);
     expect(RunState.parse(normalized)).toEqual(stored);
+  });
+
+  describe('delegation (M6)', () => {
+    const queued = (data: Record<string, unknown>) =>
+      envelope(1, {
+        type: 'run.queued',
+        data: {
+          trigger: { kind: 'delegation', source: 'run_0' },
+          prompt: 'task',
+          priority: 0,
+          fixture: null,
+          parentRunId: 'run_0',
+          depth: 1,
+          inheritedTaint: ['WebFetch'],
+          budgetCap: { toolCalls: 5, tokens: null, costUsd: null, wallClockMinutes: 10 },
+          ...data,
+        },
+      });
+
+    it('a child Run starts with its parent, depth, ceiling and inherited taint', () => {
+      const s = replayRun([queued({})])!;
+      expect(s).toMatchObject({ parentRunId: 'run_0', depth: 1, taintSources: ['WebFetch'] });
+      expect(s.budgetCap?.toolCalls).toBe(5);
+    });
+
+    it('a parent parks as delegating, counts child spend, and stays parked until children answer', () => {
+      const started = (seq: number, id: string) =>
+        envelope(seq, {
+          type: 'delegation.started',
+          data: { childRunId: id, childBotId: 'bot_c', childBotName: 'C', task: 't' },
+        });
+      const finished = (seq: number, id: string) =>
+        envelope(seq, {
+          type: 'delegation.finished',
+          data: {
+            childRunId: id,
+            childBotId: 'bot_c',
+            status: 'completed',
+            result: 'ok',
+            totals: { tokens: 100, costUsd: 0.5, toolCalls: 3 },
+          },
+        });
+      const base = replayRun(happy.slice(0, 4))!;
+      let s = foldRun(base, started(5, 'run_a'));
+      s = foldRun(s, started(6, 'run_b'));
+      // run_b answers before the parent has even parked.
+      s = foldRun(s, finished(7, 'run_b'));
+      s = foldRun(
+        s,
+        envelope(8, {
+          type: 'run.parked',
+          data: { approvalIds: [], sessionId: 's1', delegations: ['run_a', 'run_b'] },
+        }),
+      );
+      expect(s.status).toBe('delegating');
+      expect(s.pendingDelegations).toEqual(['run_a']);
+      s = foldRun(s, finished(9, 'run_a'));
+      expect(s.pendingDelegations).toEqual([]);
+      expect(s.children.map((c) => c.status)).toEqual(['completed', 'completed']);
+      expect(s.delegated).toEqual({ tokens: 200, costUsd: 1, toolCalls: 6 });
+      s = foldRun(
+        s,
+        envelope(10, { type: 'run.resumed', data: { reason: 'delegation', sessionId: 's1' } }),
+      );
+      expect(s.status).toBe('running');
+    });
+
+    it('approvals pending at park win over delegations (the Run needs you first)', () => {
+      const base = replayRun(happy.slice(0, 4))!;
+      let s = foldRun(
+        base,
+        envelope(5, {
+          type: 'delegation.started',
+          data: { childRunId: 'run_a', childBotId: 'b', childBotName: 'B', task: 't' },
+        }),
+      );
+      s = foldRun(
+        s,
+        envelope(6, {
+          type: 'approval.requested',
+          data: {
+            approvalId: 'apr_1',
+            toolUseId: null,
+            toolName: 'x',
+            tier: 'EXTERNAL',
+            summary: 'x',
+          },
+        }),
+      );
+      s = foldRun(
+        s,
+        envelope(7, {
+          type: 'run.parked',
+          data: { approvalIds: ['apr_1'], sessionId: null, delegations: ['run_a'] },
+        }),
+      );
+      expect(s.status).toBe('waiting_approval');
+      s = foldRun(
+        s,
+        envelope(8, {
+          type: 'approval.decided',
+          data: {
+            approvalId: 'apr_1',
+            decision: 'approved',
+            by: 'owner',
+            edited: false,
+            reason: null,
+            ruleId: null,
+          },
+        }),
+      );
+      expect(s.status).toBe('delegating');
+    });
+
+    it('older run.queued and run.parked events without delegation fields still fold', () => {
+      const old = envelope(1, {
+        type: 'run.queued',
+        data: {
+          trigger: { kind: 'manual', source: null },
+          prompt: 'p',
+          priority: 0,
+          fixture: null,
+        },
+      } as unknown as RunEventBody);
+      const s = replayRun([old])!;
+      expect(s).toMatchObject({ parentRunId: null, depth: 0, budgetCap: null, taintSources: [] });
+    });
+
+    it('records thumbs ratings and memory writes', () => {
+      let s = replayRun(happy)!;
+      s = foldRun(
+        s,
+        envelope(50, {
+          type: 'feedback.recorded',
+          data: { signal: 'thumbs_down', memoryId: 'mem_1', approvalId: null, by: 'owner' },
+        }),
+      );
+      s = foldRun(
+        s,
+        envelope(51, {
+          type: 'memory.written',
+          data: {
+            memoryId: 'mem_2',
+            kind: 'summary',
+            source: 'summarizer',
+            title: 't',
+            tainted: false,
+          },
+        }),
+      );
+      expect(s.rating).toBe('down');
+      expect(s.memoryWrites).toBe(1);
+      expect(s.status).toBe('completed');
+    });
   });
 });

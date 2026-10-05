@@ -16,6 +16,7 @@
     "@anthropic-ai/sdk": "0.131.0",
     "@modelcontextprotocol/sdk": "1.32.0",
     "@orbit/core": "workspace:*",
+    "@orbit/memory": "workspace:*",
     "@orbit/policy": "workspace:*",
     "@orbit/sandbox": "workspace:*",
     "@orbit/store": "workspace:*",

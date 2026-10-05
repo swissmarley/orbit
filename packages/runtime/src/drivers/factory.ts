@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { type OrbitConfig, OrbitError } from '@orbit/core';
 import type { AuthResolution } from '../auth/resolver';
 import { assertCliDriverAllowed } from '../auth/guard';
@@ -50,6 +51,7 @@ export async function createDriver(
           authMethod: resolution.authMethod,
           env,
           bridge,
+          runDir: join(config.home, 'run'),
           ...(deps.secrets ? { secrets: deps.secrets } : {}),
         }),
         close: () => bridge.close(),

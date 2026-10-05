@@ -101,6 +101,8 @@ export function loadConfig(
     merged.mode = parsed.data;
   }
   if (env.ORBIT_CLAUDE_PATH) merged.claudePath = env.ORBIT_CLAUDE_PATH;
+  const triageCalls = intFromEnv(env, 'ORBIT_TRIAGE_MAX_CALLS_PER_DAY');
+  if (triageCalls !== undefined) merged.triage = { ...merged.triage, maxCallsPerDay: triageCalls };
   const max = intFromEnv(env, 'ORBIT_MAX_CONCURRENT_RUNS');
   if (max !== undefined) {
     merged.limits = {

@@ -211,6 +211,9 @@ importers:
       '@orbit/core':
         specifier: workspace:*
         version: link:../core
+      '@orbit/memory':
+        specifier: workspace:*
+        version: link:../memory
       '@orbit/policy':
         specifier: workspace:*
         version: link:../policy
@@ -236,7 +239,17 @@ importers:
         specifier: 4.6.5
         version: 4.6.5
 
-  packages/memory: {}
+  packages/memory:
+    dependencies:
+      '@orbit/core':
+        specifier: workspace:*
+        version: link:../core
+      '@orbit/store':
+        specifier: workspace:*
+        version: link:../store
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
 
   packages/policy:
     dependencies:
@@ -270,6 +283,9 @@ importers:
       '@orbit/core':
         specifier: workspace:*
         version: link:../core
+      '@orbit/memory':
+        specifier: workspace:*
+        version: link:../memory
       '@orbit/policy':
         specifier: workspace:*
         version: link:../policy

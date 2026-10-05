@@ -125,7 +125,41 @@ export function renderEvent(raw: RunEvent, paint: Paint, cwd: string | null): st
     case 'run.killed':
       return paint('red', `  ■ ${e.data.scope} kill switch (${e.data.by})`);
     case 'run.parked':
-      return paint('magenta', `⏸ waiting for your approval (${e.data.approvalIds.join(', ')})`);
+      return e.data.approvalIds.length > 0
+        ? paint('magenta', `⏸ waiting for your approval (${e.data.approvalIds.join(', ')})`)
+        : paint('cyan', `⇢ waiting for delegated Runs (${e.data.delegations.join(', ')})`);
+    case 'delegation.started':
+      return `  ${paint('cyan', '⇢')} delegated to ${paint('bold', e.data.childBotName)} ${paint('dim', `(${e.data.childRunId})`)} ${oneLine(e.data.task, 80)}`;
+    case 'delegation.finished':
+      return `  ${paint(e.data.status === 'completed' ? 'green' : 'yellow', '⇠')} ${paint('dim', e.data.childRunId)} ${e.data.status}: ${oneLine(e.data.result, 80)}`;
+    case 'memory.written':
+      return paint(
+        'dim',
+        `  ✎ memory ${e.data.source === 'summarizer' ? 'summary' : 'note'} saved: ${oneLine(e.data.title, 70)}${e.data.tainted ? ' (untrusted)' : ''}`,
+      );
+    case 'memory.recalled':
+      return e.data.via === 'context'
+        ? paint(
+            'dim',
+            `  ⌕ ${e.data.memoryIds.length} memor${e.data.memoryIds.length === 1 ? 'y' : 'ies'} offered as context`,
+          )
+        : paint(
+            e.data.tainted ? 'yellow' : 'dim',
+            `  ⌕ memory ${e.data.via}: ${e.data.memoryIds.length} found${e.data.tainted ? ' (untrusted)' : ''}`,
+          );
+    case 'memory.summarized':
+      if (e.data.error) return paint('yellow', `  ✎ no summary: ${oneLine(e.data.error, 100)}`);
+      return e.data.mode === 'triage'
+        ? paint(
+            'dim',
+            `  ✎ summarized by ${e.data.model ?? 'the triage model'} · ${tokens(e.data.inputTokens)} in / ${tokens(e.data.outputTokens)} out${e.data.costUsd !== null ? ` · ~$${e.data.costUsd.toFixed(4)}` : ''}`,
+          )
+        : null;
+    case 'feedback.recorded':
+      return paint(
+        'dim',
+        `  ${e.data.signal === 'thumbs_up' ? '▲' : e.data.signal === 'thumbs_down' ? '▼' : '✎'} feedback recorded (${e.data.signal.replace('_', ' ')})`,
+      );
     case 'run.resumed':
       return paint('cyan', `▶ resumed after ${e.data.reason.replace('_', ' ')}`);
     case 'run.resume_scheduled':

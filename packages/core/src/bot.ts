@@ -71,6 +71,52 @@ export const TriggerSpec = z.discriminatedUnion('kind', [CronTrigger, IntervalTr
 export type TriggerSpec = z.infer<typeof TriggerSpec>;
 
 /**
+ * A subagent the Bot may hand work to inside its own Run (the engine's
+ * `agents` / `--agents`). Every tool call a subagent makes goes through the
+ * same Orbit policy hook as the Bot's own calls.
+ */
+export const SubagentSpec = z.object({
+  /** When the Bot should use it (shown to the model). */
+  description: z.string().trim().min(1).max(1000),
+  /** The subagent's system prompt. */
+  prompt: z.string().trim().min(1).max(20_000),
+  /** Tool subset; omitted = the Bot's tools. Must be a subset of the Bot's tools when those are set. */
+  tools: z.array(z.string().min(1)).max(50).optional(),
+  /** Model alias or ID (`haiku` = ORBIT_TRIAGE_MODEL is a good choice for routine work); omitted = the Bot's model. */
+  model: z.string().trim().min(1).max(100).optional(),
+  maxTurns: z.int().positive().max(200).optional(),
+});
+export type SubagentSpec = z.infer<typeof SubagentSpec>;
+
+export const SUBAGENT_NAME = /^[a-z][a-z0-9-]{0,39}$/;
+
+export const BotMemorySettings = z.object({
+  /**
+   * After each completed Run:
+   * - off:    remember nothing
+   * - result: keep the Run's final answer as its summary (no model call, free)
+   * - triage: summarize the Run with ORBIT_TRIAGE_MODEL (one small, metered call;
+   *           capped by `triage.maxCallsPerDay`)
+   */
+  summarize: z.enum(['off', 'result', 'triage']).default('result'),
+  /** Offer trusted memories and recent feedback to new Runs. */
+  inject: z.boolean().default(true),
+  /** Upper bound of memory text added to a Run's context. */
+  maxContextChars: z.int().min(0).max(20_000).default(4000),
+  /** Give the Bot the Orbit memory tools (search, read, write). */
+  tools: z.boolean().default(true),
+});
+export type BotMemorySettings = z.infer<typeof BotMemorySettings>;
+
+export const BotDelegation = z.object({
+  /** Bots (ids or names) this Bot may hand tasks to with `delegate_to_bot`; empty = none. */
+  allowedBots: z.array(z.string().trim().min(1)).max(20).default([]),
+  /** Delegations one Run may start. */
+  maxChildrenPerRun: z.int().min(1).max(10).default(3),
+});
+export type BotDelegation = z.infer<typeof BotDelegation>;
+
+/**
  * User-authored Bot configuration. Later milestones extend it with triggers,
  * policy, budgets, plugins and memory settings; every field added must have a
  * safe default so older specs stay valid.
@@ -112,6 +158,14 @@ export const BotSpec = z.object({
   priority: z.int().min(-10).max(10).default(0),
   /** Extra directories the Bot may read (never write). */
   readRoots: z.array(z.string().min(1)).default([]),
+  /** Subagents by name (engine `agents`); their tool calls go through the same policy. */
+  subagents: z
+    .record(z.string().regex(SUBAGENT_NAME, 'lowercase letters, digits and dashes'), SubagentSpec)
+    .refine((r) => Object.keys(r).length <= 10, 'at most 10 subagents')
+    .default({}),
+  /** Peer Bots this Bot may delegate to (each delegation is a child Run). */
+  delegation: BotDelegation.prefault({}),
+  memory: BotMemorySettings.prefault({}),
 });
 export type BotSpec = z.infer<typeof BotSpec>;
 export type BotSpecInput = z.input<typeof BotSpec>;

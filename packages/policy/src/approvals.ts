@@ -82,7 +82,11 @@ function toApproval(r: Row): Approval {
     input: r.input as Record<string, unknown>,
     inputHash: r.inputHash,
     tier: r.tier as Tier,
-    card: r.card as ApprovalCard,
+    // Cards stored before M6 have no delegation chain.
+    card: {
+      ...(r.card as ApprovalCard),
+      delegatedBy: (r.card as ApprovalCard).delegatedBy ?? null,
+    },
     status: r.status as ApprovalStatus,
     decision: (r.decision as ApprovalDecision | null) ?? null,
     createdAt: r.createdAt,

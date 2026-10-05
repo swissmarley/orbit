@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, resolve, sep } from 'node:path';
 import { OrbitError, type RunEvent, errorMessage } from '@orbit/core';
+import { handleMcpBody } from '@orbit/runtime';
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
@@ -63,6 +64,9 @@ function param(params: Record<string, string>, name: string): string {
 }
 
 const MAX_BODY_BYTES = 1024 * 1024;
+
+/** Orbit's MCP endpoint for engines (ADR-012); not part of the client contract. */
+export const MCP_PATH = '/mcp/orbit';
 
 /** Per-port cookie name: cookies ignore ports, and two daemons may share 127.0.0.1. */
 export function sessionCookieName(url: string): string {
@@ -168,6 +172,7 @@ export function createApp(opts: AppOptions): Hono {
     (method === 'GET' || method === 'HEAD') &&
     !path.startsWith('/v1/') &&
     path !== '/v1' &&
+    !path.startsWith('/mcp/') &&
     path !== '/openapi.json';
 
   app.onError((err, c) => {
@@ -241,6 +246,8 @@ export function createApp(opts: AppOptions): Hono {
   app.use('*', async (c, next) => {
     if (publicPaths.has(c.req.path) || isAppPath(c.req.method, c.req.path)) return next();
     if (c.req.method === 'POST' && c.req.path === routes.createSession.path) return next();
+    // The engines' MCP endpoint authenticates with per-segment tokens of its own.
+    if (c.req.path === MCP_PATH) return next();
     if (tokenMatches(c.req.header('authorization'), opts.token)) {
       via.set(c.req.raw, 'token');
       return next();
@@ -280,6 +287,36 @@ export function createApp(opts: AppOptions): Hono {
   );
 
   app.get('/openapi.json', (c) => c.json(buildOpenApi()));
+
+  /**
+   * Orbit's tools for the CLI engine (ADR-012): JSON-RPC over HTTP with the
+   * segment's bearer token. Browsers never get here (any Origin is refused),
+   * and a token only reaches its own Run's tools, each call checked against
+   * the calls Orbit's policy allowed.
+   */
+  app.post(MCP_PATH, async (c) => {
+    if (c.req.header('origin') !== undefined) {
+      return c.json(errorBody('forbidden', 'Not for browsers'), 403);
+    }
+    const token = /^Bearer (\S+)$/.exec(c.req.header('authorization') ?? '')?.[1];
+    const session = token ? service.orbitSessions.byToken(token) : undefined;
+    if (!session) return c.json(errorBody('unauthorized', 'Unknown or expired MCP token'), 401);
+    let body: unknown;
+    try {
+      body = JSON.parse(await c.req.text());
+    } catch {
+      return c.json(
+        { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } },
+        400,
+      );
+    }
+    const result = await handleMcpBody(service.orbitTools, session, body);
+    return result === null ? c.body(null, 202) : c.json(result as object);
+  });
+  // Stateless server: no server-initiated stream, no sessions to end.
+  app.on(['GET', 'DELETE'], MCP_PATH, (c) =>
+    c.json(errorBody('invalid_input', 'Method not allowed'), 405),
+  );
 
   const requireVia = (c: Context) => {
     const v = via.get(c.req.raw);
@@ -406,6 +443,32 @@ export function createApp(opts: AppOptions): Hono {
     queue: () => service.queueSnapshot(),
     schedules: ({ query }) =>
       service.schedules((query as z.output<typeof routes.schedules.query>).bot),
+    listMemory: ({ query }) => {
+      const q = query as z.output<typeof routes.listMemory.query>;
+      return service.listMemory(q.bot, { query: q.q, kind: q.kind, limit: q.limit });
+    },
+    createMemory: ({ params, body }) =>
+      service.createMemory(param(params, 'bot'), body as z.output<typeof routes.createMemory.body>),
+    getMemory: ({ params }) => service.memory.get(param(params, 'memory')),
+    updateMemory: ({ params, body }) =>
+      service.updateMemory(
+        param(params, 'memory'),
+        body as z.output<typeof routes.updateMemory.body>,
+      ),
+    deleteMemory: ({ params }) => {
+      service.deleteMemory(param(params, 'memory'));
+      return { ok: true };
+    },
+    runMemory: ({ params }) =>
+      service.memory.forRun(service.requireRun(param(params, 'run')).runId),
+    runFeedback: ({ params, body }) =>
+      service.feedback(param(params, 'run'), body as z.output<typeof routes.runFeedback.body>),
+    runTree: ({ params }) => service.runTree(param(params, 'run')),
+    botTaint: ({ params }) => service.taintedFiles(param(params, 'bot')),
+    clearBotTaint: ({ params }) => ({ cleared: service.clearTaintedFiles(param(params, 'bot')) }),
+    triageUsage: () => service.triageUsage(),
+    proposeBot: ({ body }) =>
+      service.proposeBot((body as z.output<typeof routes.proposeBot.body>).goal),
     events: ({ query }, c) => sse(c, query as z.output<typeof routes.events.query>),
   };
 

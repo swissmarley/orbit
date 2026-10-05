@@ -39,6 +39,10 @@ export const mailerEvents = (runId: string, botId: string) =>
         prompt: 'Reply to Ada',
         priority: 10,
         fixture: null,
+        parentRunId: null,
+        depth: 0,
+        inheritedTaint: [],
+        budgetCap: null,
       },
     },
     {
@@ -68,7 +72,7 @@ export const mailerEvents = (runId: string, botId: string) =>
         summary: 'send email (gmail) → ada@example.com',
       },
     },
-    { type: 'run.parked', data: { approvalIds: ['apr_1'], sessionId: 's1' } },
+    { type: 'run.parked', data: { approvalIds: ['apr_1'], sessionId: 's1', delegations: [] } },
   ]);
 
 export function run(runId: string, botId: string, status: RunState['status']): RunState {
@@ -81,6 +85,10 @@ export function run(runId: string, botId: string, status: RunState['status']): R
           prompt: 'p',
           priority: 10,
           fixture: null,
+          parentRunId: null,
+          depth: 0,
+          inheritedTaint: [],
+          budgetCap: null,
         },
       },
     ]),
@@ -108,6 +116,7 @@ export function approval(id: string, over: Partial<Approval['card']> = {}): Appr
       botId: 'bot_a',
       botName: 'Mailer',
       runId: 'run_a2',
+      delegatedBy: null,
       untrusted: [],
       risk: 'Has effects outside the sandbox.',
       ...over,

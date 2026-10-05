@@ -26,7 +26,7 @@ describe('OrbitClient', () => {
     await h.service.queue.idle();
     expect((await client.runs.get(run.runId)).status).toBe('completed');
     expect((await client.runs.list({ bot: 'notes' })).map((r) => r.runId)).toEqual([run.runId]);
-    expect((await client.runs.events(run.runId)).at(-1)?.type).toBe('run.completed');
+    expect((await client.runs.events(run.runId)).map((e) => e.type)).toContain('run.completed');
     expect(await client.audit.export()).toContain('bot.created');
     expect(await client.kill.status()).toEqual({ engaged: false, by: null });
   });

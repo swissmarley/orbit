@@ -1,6 +1,14 @@
 import { z } from 'zod';
 import { AuthMethod, DriverKind, RunStatus } from './enums';
-import { type RunEvent, TriggerRef, UsageTotals } from './events';
+import { BudgetCap, type RunEvent, TriggerRef, UsageTotals } from './events';
+
+export const ChildRun = z.object({
+  runId: z.string(),
+  botId: z.string(),
+  botName: z.string(),
+  status: z.enum(['running', 'completed', 'failed', 'cancelled']),
+});
+export type ChildRun = z.infer<typeof ChildRun>;
 
 /**
  * Read model of a single Run, derived purely from its events. The event
@@ -59,6 +67,22 @@ export const RunState = z.object({
     costUsd: z.number(),
     activeMs: z.number(),
   }),
+  /** The Run that delegated this one; null for top-level Runs. */
+  parentRunId: z.string().nullable(),
+  /** Delegation depth (0 = top level). */
+  depth: z.int(),
+  /** Budget ceiling inherited from the delegating parent. */
+  budgetCap: BudgetCap.nullable(),
+  /** Peer-Bot Runs this Run delegated to, in order. */
+  children: z.array(ChildRun),
+  /** Child Runs a parked Run still waits for. */
+  pendingDelegations: z.array(z.string()),
+  /** Spend of finished child Runs; counts against this Run's budgets. */
+  delegated: z.object({ tokens: z.number(), costUsd: z.number(), toolCalls: z.number() }),
+  /** The owner's thumbs rating of the Run (latest wins). */
+  rating: z.enum(['up', 'down']).nullable(),
+  /** Memories this Run wrote (notes, summary). */
+  memoryWrites: z.int(),
 });
 export type RunState = z.infer<typeof RunState>;
 
@@ -102,6 +126,14 @@ function blankState(runId: string, botId: string, createdAt: string): RunState {
     budgetExceeded: null,
     killedBy: null,
     totals: { tokens: 0, turns: 0, costUsd: 0, activeMs: 0 },
+    parentRunId: null,
+    depth: 0,
+    budgetCap: null,
+    children: [],
+    pendingDelegations: [],
+    delegated: { tokens: 0, costUsd: 0, toolCalls: 0 },
+    rating: null,
+    memoryWrites: 0,
   };
 }
 
@@ -118,6 +150,9 @@ export function foldRun(prev: RunState | undefined, e: RunEvent): RunState {
         pendingApprovals: [...prev.pendingApprovals],
         totals: { ...prev.totals },
         taintSources: [...prev.taintSources],
+        children: prev.children.map((c) => ({ ...c })),
+        pendingDelegations: [...prev.pendingDelegations],
+        delegated: { ...prev.delegated },
       }
     : initialRunState(e);
   s.lastSeq = e.seq;
@@ -130,6 +165,13 @@ export function foldRun(prev: RunState | undefined, e: RunEvent): RunState {
       s.prompt = e.data.prompt;
       // Events logged before M3 have no priority (the log is never rewritten).
       s.priority = typeof e.data.priority === 'number' ? e.data.priority : 0;
+      // Events logged before M6 have no delegation fields.
+      s.parentRunId = typeof e.data.parentRunId === 'string' ? e.data.parentRunId : null;
+      s.depth = typeof e.data.depth === 'number' ? e.data.depth : 0;
+      s.budgetCap = typeof e.data.budgetCap === 'object' ? e.data.budgetCap : null;
+      for (const t of Array.isArray(e.data.inheritedTaint) ? e.data.inheritedTaint : []) {
+        if (!s.taintSources.includes(t)) s.taintSources.push(t);
+      }
       break;
     case 'run.started':
       s.status = 'running';
@@ -183,6 +225,38 @@ export function foldRun(prev: RunState | undefined, e: RunEvent): RunState {
       break;
     case 'approval.decided':
       s.pendingApprovals = s.pendingApprovals.filter((id) => id !== e.data.approvalId);
+      if (
+        s.status === 'waiting_approval' &&
+        s.pendingApprovals.length === 0 &&
+        s.pendingDelegations.length > 0
+      )
+        s.status = 'delegating';
+      break;
+    case 'delegation.started':
+      if (!s.children.some((c) => c.runId === e.data.childRunId)) {
+        s.children.push({
+          runId: e.data.childRunId,
+          botId: e.data.childBotId,
+          botName: e.data.childBotName,
+          status: 'running',
+        });
+      }
+      break;
+    case 'delegation.finished': {
+      const child = s.children.find((c) => c.runId === e.data.childRunId);
+      if (child) child.status = e.data.status;
+      s.pendingDelegations = s.pendingDelegations.filter((id) => id !== e.data.childRunId);
+      s.delegated.tokens += e.data.totals.tokens;
+      s.delegated.costUsd += e.data.totals.costUsd;
+      s.delegated.toolCalls += e.data.totals.toolCalls;
+      break;
+    }
+    case 'memory.written':
+      s.memoryWrites += 1;
+      break;
+    case 'feedback.recorded':
+      if (e.data.signal === 'thumbs_up') s.rating = 'up';
+      if (e.data.signal === 'thumbs_down') s.rating = 'down';
       break;
     case 'run.tainted':
       if (!s.taintSources.includes(e.data.source)) s.taintSources.push(e.data.source);
@@ -193,11 +267,20 @@ export function foldRun(prev: RunState | undefined, e: RunEvent): RunState {
     case 'run.killed':
       s.killedBy = e.data.scope;
       break;
-    case 'run.parked':
-      // Waiting on the human: not ended, not failed.
-      s.status = 'waiting_approval';
+    case 'run.parked': {
+      // Waiting on the human (or on delegated Runs): not ended, not failed.
+      const finished = new Set(
+        s.children.filter((c) => c.status !== 'running').map((c) => c.runId),
+      );
+      const delegations = Array.isArray(e.data.delegations) ? e.data.delegations : [];
+      s.pendingDelegations = delegations.filter((id) => !finished.has(id));
+      s.status =
+        s.pendingApprovals.length === 0 && s.pendingDelegations.length > 0
+          ? 'delegating'
+          : 'waiting_approval';
       s.sessionId = e.data.sessionId ?? s.sessionId;
       break;
+    }
     case 'run.resume_scheduled':
       s.resumeAt = e.data.at;
       break;

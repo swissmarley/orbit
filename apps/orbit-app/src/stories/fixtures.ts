@@ -30,6 +30,7 @@ export const approval: Approval = {
     botId: 'bot_demo',
     botName: 'Mailer',
     runId: 'run_demo',
+    delegatedBy: null,
     untrusted: [],
     risk: 'Has effects outside the sandbox (sends, posts, merges, deletes or contacts other systems).',
   },

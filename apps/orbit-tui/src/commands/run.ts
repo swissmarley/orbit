@@ -15,7 +15,9 @@ export function exitCodeForRun(run: RunState): number {
   switch (run.status) {
     case 'completed':
       return ExitCode.ok;
+    // Parked: on your approval, or until the Bots it delegated to answer.
     case 'waiting_approval':
+    case 'delegating':
       return ExitCode.waitingApproval;
     case 'rate_limited':
       return ExitCode.rateLimited;
@@ -68,7 +70,10 @@ export async function follow(
         const line = renderEvent(e, p, cwd);
         if (line !== null) ctx.io.out(line);
       }
-      if (SEGMENT_END.has(e.type)) break;
+      // A Run that parks only to wait for its delegations resumes by itself: keep following.
+      const waitsOnPeers =
+        e.type === 'run.parked' && e.data.approvalIds.length === 0 && e.data.delegations.length > 0;
+      if (SEGMENT_END.has(e.type) && !waitsOnPeers) break;
     }
   } finally {
     offInterrupt();

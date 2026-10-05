@@ -51,6 +51,7 @@ describe('buildApprovalCard', () => {
       runId: 'run_1',
       untrusted: [],
       risk: 'Has effects outside the sandbox (sends, posts, merges, deletes or contacts other systems).',
+      delegatedBy: null,
     });
   });
 

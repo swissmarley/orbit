@@ -18,7 +18,9 @@ export function listFixtures(root = FIXTURES_DIR): string[] {
   const dir = latestVersionDir(root);
   if (!dir) return [];
   return readdirSync(join(root, dir))
-    .filter((f) => f.endsWith('.jsonl') && !f.startsWith('hook-input'))
+    .filter(
+      (f) => f.endsWith('.jsonl') && !f.startsWith('hook-input') && !f.endsWith('-resumed.jsonl'),
+    )
     .map((f) => f.replace(/\.jsonl$/, ''))
     .sort();
 }

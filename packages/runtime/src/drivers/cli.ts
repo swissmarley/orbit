@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -36,6 +38,39 @@ export interface CliDriverOptions {
   secrets?: { addSecret(value: string): void };
   /** How long a hook request may wait for its tool call to appear on stdout. */
   callWaitMs?: number;
+  /** Private directory for per-Run files (the MCP config with its token); default: the OS temp dir. */
+  runDir?: string;
+}
+
+/**
+ * `--mcp-config` content for Orbit's loopback MCP endpoint. The token is a
+ * header, so the file is written 0600 inside a fresh 0700 directory and its
+ * path (never the token) goes on the command line.
+ */
+export function buildMcpConfig(http: { url: string; token: string }): string {
+  return JSON.stringify({
+    mcpServers: {
+      orbit: {
+        type: 'http',
+        url: http.url,
+        headers: { Authorization: `Bearer ${http.token}` },
+        alwaysLoad: true,
+      },
+    },
+  });
+}
+
+/** Write the MCP config privately; returns its path and a cleanup function. */
+export function writeMcpConfig(
+  runDir: string | undefined,
+  http: { url: string; token: string },
+): { path: string; dispose: () => void } {
+  const base = runDir ?? tmpdir();
+  mkdirSync(base, { recursive: true, mode: 0o700 });
+  const dir = mkdtempSync(join(base, 'orbit-mcp-'));
+  const path = join(dir, 'mcp.json');
+  writeFileSync(path, buildMcpConfig(http), { mode: 0o600 });
+  return { path, dispose: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
 const reject = (reason: string) => hookOutput({ behavior: 'deny', reason });
@@ -76,7 +111,11 @@ export function buildCliSettings(
  * and interactive permission prompts are all disabled: Orbit's hook is the
  * only thing that can allow a tool call.
  */
-export function buildCliArgs(req: DriverRunRequest, settingsJson: string): string[] {
+export function buildCliArgs(
+  req: DriverRunRequest,
+  settingsJson: string,
+  mcpConfigPath: string | null = null,
+): string[] {
   const args = [
     '-p',
     '--output-format',
@@ -102,6 +141,11 @@ export function buildCliArgs(req: DriverRunRequest, settingsJson: string): strin
   args.push('--forward-subagent-text');
   if (req.tools) args.push('--tools', req.tools.join(','));
   if (req.maxBudgetUsd) args.push('--max-budget-usd', String(req.maxBudgetUsd));
+  // Orbit's own MCP server is the only one (`--strict-mcp-config` above).
+  if (mcpConfigPath) args.push('--mcp-config', mcpConfigPath);
+  if (req.agents && Object.keys(req.agents).length > 0) {
+    args.push('--agents', JSON.stringify(req.agents));
+  }
   return args;
 }
 
@@ -114,7 +158,8 @@ export function buildCliArgs(req: DriverRunRequest, settingsJson: string): strin
 export class CliDriver implements AgentDriver {
   readonly kind = 'cli' as const;
   readonly authMethod: AuthMethod;
-  private readonly opts: Required<Omit<CliDriverOptions, 'authMethod' | 'secrets'>>;
+  private readonly opts: Required<Omit<CliDriverOptions, 'authMethod' | 'secrets' | 'runDir'>>;
+  private readonly runDir: string | undefined;
   private readonly secrets: CliDriverOptions['secrets'];
 
   constructor(options: CliDriverOptions) {
@@ -129,6 +174,7 @@ export class CliDriver implements AgentDriver {
       callWaitMs: options.callWaitMs ?? 10_000,
     };
     this.secrets = options.secrets;
+    this.runDir = options.runDir;
   }
 
   run(req: DriverRunRequest): AsyncIterable<RunEventBody> {
@@ -197,9 +243,15 @@ export class CliDriver implements AgentDriver {
     });
     assertChildEnvSafe('cli-engine', env);
 
+    let mcp: { path: string; dispose: () => void } | null = null;
+    if (req.orbitTools?.http) {
+      this.secrets?.addSecret(req.orbitTools.http.token);
+      mcp = writeMcpConfig(this.runDir, req.orbitTools.http);
+    }
     const args = buildCliArgs(
       req,
       buildCliSettings(this.opts.nodePath, this.opts.hookScript, req.engineSandbox ?? null),
+      mcp?.path ?? null,
     );
     // Own process group, so stopping a Run also stops tool grandchildren.
     const child = spawn(this.opts.claudePath, args, {
@@ -280,6 +332,7 @@ export class CliDriver implements AgentDriver {
       req.signal.removeEventListener('abort', onAbort);
       if (killTimer) clearTimeout(killTimer);
       registration.dispose();
+      mcp?.dispose();
       if (normalizer.terminal) {
         finish();
         return;
@@ -304,6 +357,7 @@ export class CliDriver implements AgentDriver {
     child.on('close', onExit);
     child.on('error', (err) => {
       registration.dispose();
+      mcp?.dispose();
       finish(
         event('run.failed', {
           code: 'engine_spawn_failed',

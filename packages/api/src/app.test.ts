@@ -148,12 +148,17 @@ describe('orbitd API — bots and runs', () => {
     expect(run.body.status).toBe('completed');
     const events = await h.json<RunEvent[]>('GET', `/v1/runs/${started.body.runId}/events`);
     expect(events.body[0]?.type).toBe('run.queued');
-    expect(events.body.at(-1)?.type).toBe('run.completed');
+    // The free post-run summary follows the outcome (Bots summarize their result by default).
+    expect(events.body.map((e) => e.type).slice(-3)).toEqual([
+      'run.completed',
+      'memory.written',
+      'memory.summarized',
+    ]);
     const tail = await h.json<RunEvent[]>(
       'GET',
       `/v1/runs/${started.body.runId}/events?afterSeq=${events.body.length - 1}`,
     );
-    expect(tail.body.map((e) => e.type)).toEqual(['run.completed']);
+    expect(tail.body.map((e) => e.type)).toEqual(['memory.summarized']);
     const runs = await h.json<RunState[]>('GET', '/v1/runs?status=completed&bot=notes');
     expect(runs.body.map((r) => r.runId)).toEqual([started.body.runId]);
     expect((await h.json('GET', '/v1/runs?status=bogus')).status).toBe(400);

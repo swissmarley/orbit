@@ -32,6 +32,7 @@ function card(toolName: string, tier: Tier, what = `do ${toolName}`): ApprovalCa
     runId: 'run_1',
     untrusted: [],
     risk: 'r',
+    delegatedBy: null,
   };
 }
 

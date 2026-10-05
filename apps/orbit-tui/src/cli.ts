@@ -8,6 +8,16 @@ import { approvalShow, approvalsList, approve, deny } from './commands/approvals
 import { auditExport, auditList, auditVerify } from './commands/audit';
 import { killSwitch, pauseBot, stopRun } from './commands/controls';
 import { daemonStart, daemonStatus, daemonStop } from './commands/daemon';
+import {
+  feedbackCmd,
+  memoryAdd,
+  memoryEdit,
+  memoryList,
+  memoryRm,
+  memoryShow,
+  treeCmd,
+  triageCmd,
+} from './commands/memory';
 import { rulesAdd, rulesList, rulesRevoke } from './commands/rules';
 import { completion } from './commands/completion';
 import {
@@ -334,6 +344,76 @@ export async function main(argv: string[], io: Io): Promise<number> {
     .option('--no-open', 'print the link instead of opening a browser')
     .option('--json', 'machine-readable output ({ url, expiresAt })')
     .action((o: { origin?: string; open?: boolean; json?: boolean }) => set(openApp(context(), o)));
+
+  const memory = program
+    .command('memory')
+    .description('What Bots remember: notes, run summaries and your feedback (with provenance)');
+  memory
+    .command('list')
+    .description('Memories of one Bot (or all), newest first')
+    .argument('[bot]', 'bot name or id')
+    .option('-s, --search <words>', 'full-text search')
+    .option('-k, --kind <kind>', 'note, summary, feedback or fact')
+    .option('-l, --limit <n>', 'how many', '50')
+    .option('--json', 'machine-readable output')
+    .action((b: string | undefined, o: Parameters<typeof memoryList>[2]) =>
+      set(memoryList(context(), b, o)),
+    );
+  memory
+    .command('show')
+    .argument('<id>', 'memory id')
+    .option('--json', 'machine-readable output')
+    .action((id: string, o: { json?: boolean }) => set(memoryShow(context(), id, o)));
+  memory
+    .command('add')
+    .description('Write a memory for a Bot (body from stdin or --body-file)')
+    .argument('<bot>', 'bot name or id')
+    .requiredOption('-t, --title <title>', 'short title')
+    .option('--body-file <path>', 'read the body from a file (default: stdin)')
+    .option('--pin', 'always offer it to new Runs')
+    .option('--json', 'machine-readable output')
+    .action((b: string, o: Parameters<typeof memoryAdd>[2]) => set(memoryAdd(context(), b, o)));
+  memory
+    .command('edit')
+    .description('Edit a memory; --trust marks an untrusted one as reviewed')
+    .argument('<id>', 'memory id')
+    .option('-t, --title <title>', 'new title')
+    .option('--body', 'replace the body with stdin')
+    .option('--body-file <path>', 'replace the body with this file')
+    .option('--pin', 'pin it')
+    .option('--unpin', 'unpin it')
+    .option('--trust', 'you reviewed it: clear its taint (audited)')
+    .option('--json', 'machine-readable output')
+    .action((id: string, o: Parameters<typeof memoryEdit>[2]) => set(memoryEdit(context(), id, o)));
+  memory
+    .command('rm')
+    .argument('<id>', 'memory id')
+    .option('--json', 'machine-readable output')
+    .action((id: string, o: { json?: boolean }) => set(memoryRm(context(), id, o)));
+
+  program
+    .command('feedback')
+    .description('Rate a finished Run: orbit feedback <run> up|down [--comment …]')
+    .argument('<run>', 'run id')
+    .argument('<rating>', 'up or down')
+    .option('-c, --comment <text>', 'what was good or bad (the Bot sees it next time)')
+    .option('--json', 'machine-readable output')
+    .action((runId: string, rating: string, o: { comment?: string; json?: boolean }) =>
+      set(feedbackCmd(context(), runId, rating, o)),
+    );
+
+  program
+    .command('tree')
+    .description('The delegation tree a Run belongs to (Bots handing work to Bots)')
+    .argument('<run>', 'run id')
+    .option('--json', 'machine-readable output')
+    .action((runId: string, o: { json?: boolean }) => set(treeCmd(context(), runId, o)));
+
+  program
+    .command('triage')
+    .description('Triage-model calls today (summaries, proposals) against the daily limit')
+    .option('--json', 'machine-readable output')
+    .action((o: { json?: boolean }) => set(triageCmd(context(), o)));
 
   program
     .command('completion')

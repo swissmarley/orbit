@@ -170,6 +170,77 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX approvals_expiry_idx ON approvals (status, expires_at);
     `,
   },
+  {
+    id: 4,
+    name: 'memory-feedback-taint-triage',
+    sql: `
+      -- Bot memory (ADR-012). seq is the FTS rowid; id is the public id.
+      CREATE TABLE memories (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        bot_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        source TEXT NOT NULL,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        taint TEXT NOT NULL,
+        run_id TEXT,
+        approval_id TEXT,
+        signal TEXT,
+        pinned INTEGER NOT NULL DEFAULT 0,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        edited_at TEXT
+      );
+      CREATE INDEX memories_bot_idx ON memories (bot_id, created_at);
+      CREATE INDEX memories_run_idx ON memories (run_id);
+
+      -- Full-text index over title and body (SQLite FTS5; a Postgres adapter uses tsvector).
+      CREATE VIRTUAL TABLE memories_fts USING fts5(
+        title, body, content='memories', content_rowid='seq', tokenize='porter unicode61'
+      );
+      CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
+        INSERT INTO memories_fts (rowid, title, body) VALUES (new.seq, new.title, new.body);
+      END;
+      CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN
+        INSERT INTO memories_fts (memories_fts, rowid, title, body)
+          VALUES ('delete', old.seq, old.title, old.body);
+      END;
+      CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
+        INSERT INTO memories_fts (memories_fts, rowid, title, body)
+          VALUES ('delete', old.seq, old.title, old.body);
+        INSERT INTO memories_fts (rowid, title, body) VALUES (new.seq, new.title, new.body);
+      END;
+
+      -- Workspace files written by tainted Runs (M2 review M1): reading one taints a later Run.
+      -- path is relative to the Bot workspace; '*' marks the whole workspace (a tainted shell).
+      CREATE TABLE workspace_taint (
+        bot_id TEXT NOT NULL,
+        path TEXT NOT NULL,
+        sources TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (bot_id, path)
+      );
+
+      -- Every call on the triage path (summaries, Create Bot proposals): metered and capped.
+      CREATE TABLE triage_calls (
+        id TEXT PRIMARY KEY,
+        purpose TEXT NOT NULL,
+        bot_id TEXT,
+        run_id TEXT,
+        model TEXT NOT NULL,
+        status TEXT NOT NULL,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        cost_micro_usd INTEGER,
+        error TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX triage_calls_created_idx ON triage_calls (created_at);
+    `,
+  },
 ];
 
 /** When migration `id` was applied to this database, or null. */

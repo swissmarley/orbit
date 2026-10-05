@@ -198,7 +198,12 @@ describe('orbit CLI', () => {
 
     h.reset();
     expect(await h.run('logs', runId, '--json')).toBe(0);
-    expect(h.ndjson()).toEqual(events);
+    // The log also holds the post-run summary, written after the outcome.
+    const logged = h.ndjson();
+    expect(logged.slice(0, events.length)).toEqual(events);
+    expect(logged.slice(events.length).map((e) => e.type)).toEqual(
+      logged.length > events.length ? ['memory.written', 'memory.summarized'] : [],
+    );
 
     h.reset();
     expect(await h.run('runs', '--json')).toBe(0);
@@ -611,6 +616,120 @@ describe('orbit CLI', () => {
       expect(h.text()).not.toContain('supersecret');
       expect(await h.run('secret', 'rm', 'GITHUB_TOKEN')).toBe(0);
       expect(await h.run('secret', 'rm', 'GITHUB_TOKEN')).toBe(ExitCode.notFound);
+    });
+  });
+
+  describe('M6: memory, feedback, delegation, triage', () => {
+    it('lists, shows, adds, edits and deletes memories; rates Runs; shows the triage budget', async () => {
+      const h = harness(mockEnv());
+      await h.run(
+        'bot',
+        'create',
+        '--name',
+        'Notes',
+        '--goal',
+        'Keep notes',
+        '--fixture',
+        'memory-notes',
+      );
+      h.reset();
+      expect(await h.run('run', 'notes', '--json')).toBe(0);
+      const runId = h.ndjson()[0]!.runId;
+      h.reset();
+      expect(await h.run('memory', 'list', 'notes', '--json')).toBe(0);
+      const listed = h.json<{ id: string; kind: string; source: string }[]>();
+      expect(listed.map((m) => m.source).sort()).toEqual(['bot', 'summarizer']);
+      h.reset();
+      expect(await h.run('memory', 'list', 'notes', '--search', 'launch')).toBe(0);
+      expect(h.text()).toContain('✓ trusted');
+      expect(h.text()).toContain('Launch owner');
+      const note = listed.find((m) => m.kind === 'note')!;
+      h.reset();
+      expect(await h.run('memory', 'show', note.id)).toBe(0);
+      expect(h.text()).toContain('by Bot');
+      const body = join(home, 'body.md');
+      writeFileSync(body, 'Prefer short answers.\n');
+      h.reset();
+      expect(
+        await h.run(
+          'memory',
+          'add',
+          'notes',
+          '--title',
+          'Style',
+          '--body-file',
+          body,
+          '--pin',
+          '--json',
+        ),
+      ).toBe(0);
+      const added = h.json<{ id: string; pinned: boolean; source: string }>();
+      expect(added).toMatchObject({ pinned: true, source: 'owner' });
+      h.reset();
+      expect(
+        await h.run('memory', 'edit', added.id, '--title', 'House style', '--unpin', '--json'),
+      ).toBe(0);
+      expect(h.json<{ title: string; pinned: boolean }>()).toMatchObject({
+        title: 'House style',
+        pinned: false,
+      });
+      h.reset();
+      expect(await h.run('memory', 'edit', added.id)).toBe(ExitCode.usage);
+      h.reset();
+      expect(await h.run('memory', 'rm', added.id)).toBe(0);
+      h.reset();
+      expect(await h.run('memory', 'show', added.id)).toBe(ExitCode.notFound);
+
+      h.reset();
+      expect(await h.run('feedback', runId, 'down', '--comment', 'Too long')).toBe(0);
+      expect(h.text()).toContain('Feedback saved');
+      h.reset();
+      expect(await h.run('feedback', runId, 'sideways')).toBe(ExitCode.usage);
+
+      h.reset();
+      expect(await h.run('triage', '--json')).toBe(0);
+      expect(h.json<{ callsToday: number; limit: number }>()).toMatchObject({
+        callsToday: 0,
+        limit: 20,
+      });
+    });
+
+    it('follows a delegating Run until it resumes, and draws the delegation tree', async () => {
+      const h = harness(mockEnv());
+      await h.run(
+        'bot',
+        'create',
+        '--name',
+        'Researcher',
+        '--goal',
+        'Research',
+        '--fixture',
+        'pong',
+      );
+      const spec = writeSpec(
+        home,
+        'lead.json',
+        JSON.stringify({
+          name: 'Lead',
+          goal: 'Lead the work',
+          mock: { fixture: 'delegate-to-peer' },
+          delegation: { allowedBots: ['Researcher'] },
+        }),
+      );
+      expect(await h.run('bot', 'create', '--file', spec)).toBe(0);
+      h.reset();
+      expect(await h.run('run', 'lead')).toBe(0);
+      const text = h.text();
+      expect(text).toContain('delegated to Researcher');
+      expect(text).toContain('waiting for delegated Runs');
+      expect(text).toContain('resumed after delegation');
+      expect(text).toContain('✔ completed');
+      const runId = /run (run_\w+) · replay/.exec(text)?.[1];
+      expect(runId).toBeDefined();
+      h.reset();
+      expect(await h.run('tree', runId!)).toBe(0);
+      expect(h.out[0]).toContain('✔ done Lead');
+      expect(h.out[1]).toMatch(/^└─ ✔ done Researcher run_/);
     });
   });
 });

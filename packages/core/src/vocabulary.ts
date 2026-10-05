@@ -25,6 +25,12 @@ export const RUN_STATUS: Readonly<Record<RunStatus, StatusWord>> = {
     tone: 'attention',
     meaning: 'parked until you decide an approval',
   },
+  delegating: {
+    mark: '⇢',
+    label: 'delegated',
+    tone: 'info',
+    meaning: 'waiting for the peer Bots it handed work to',
+  },
   rate_limited: {
     mark: '⧗',
     label: 'usage limit',
@@ -72,10 +78,37 @@ export const TIER_WORD: Readonly<Record<Tier, StatusWord>> = {
   },
 };
 
+/**
+ * Provenance of a memory: trusted (written or reviewed by you, or by a Bot
+ * while nothing untrusted had entered its Run) or untrusted (influenced by
+ * web, email, tool or delegated content). Untrusted memories are never
+ * offered to Runs automatically, and reading one taints the Run.
+ */
+export const MEMORY_TRUST: Readonly<Record<'trusted' | 'untrusted', StatusWord>> = {
+  trusted: {
+    mark: '✓',
+    label: 'trusted',
+    tone: 'success',
+    meaning: 'written by you, or by a Bot while nothing untrusted had entered its Run',
+  },
+  untrusted: {
+    mark: '⚠',
+    label: 'untrusted',
+    tone: 'warning',
+    meaning:
+      'influenced by web, email, tool or delegated content: never offered to Runs automatically, and reading it taints the Run',
+  },
+};
+
+export function memoryTrust(m: { taint: readonly string[] }): StatusWord {
+  return m.taint.length > 0 ? MEMORY_TRUST.untrusted : MEMORY_TRUST.trusted;
+}
+
 /** Symbols and their meanings, for help overlays and legends. */
 export const STATUS_LEGEND: readonly { mark: string; means: string }[] = [
   { mark: RUN_STATUS.running.mark, means: 'running' },
   { mark: RUN_STATUS.waiting_approval.mark, means: 'waiting for your approval' },
+  { mark: RUN_STATUS.delegating.mark, means: 'waiting for a delegated Bot' },
   { mark: RUN_STATUS.rate_limited.mark, means: 'usage limit — resumes later' },
   { mark: BOT_PAUSED.mark, means: 'Bot paused' },
   { mark: RUN_STATUS.completed.mark, means: 'done' },

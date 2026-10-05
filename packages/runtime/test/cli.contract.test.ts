@@ -1,9 +1,15 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { CliDriver, HOOK_SCRIPT, buildCliArgs, buildCliSettings } from '../src/drivers/cli';
+import {
+  CliDriver,
+  HOOK_SCRIPT,
+  buildCliArgs,
+  buildCliSettings,
+  writeMcpConfig,
+} from '../src/drivers/cli';
 import { FIXTURES_DIR } from '../src/drivers/fixtures';
 import { HookBridge } from '../src/drivers/hook-bridge';
 import {
@@ -327,5 +333,57 @@ describe('hook bridge', () => {
       encoding: 'utf8',
     });
     expect(result.stdout).toContain('"permissionDecision":"deny"');
+  });
+});
+
+describe('CliDriver: Orbit tools and subagents (M6)', () => {
+  const base = {
+    runId: 'r',
+    prompt: 'p',
+    cwd: '/',
+    model: null,
+    appendSystemPrompt: null,
+    tools: null,
+    maxTurns: null,
+    resumeSessionId: null,
+    sessionId: 's',
+    permission: readOnlyPolicy,
+    signal: new AbortController().signal,
+  };
+
+  it('passes the MCP config as a private file path (never the token) and subagents with --agents', () => {
+    const token = 'a'.repeat(64);
+    const dir = mkdtempSync(join(tmpdir(), 'orbit-run-'));
+    const mcp = writeMcpConfig(dir, { url: 'http://127.0.0.1:7420/mcp/orbit', token });
+    const args = buildCliArgs(
+      { ...base, agents: { scan: { description: 'd', prompt: 'p', tools: ['Read'] } } },
+      '{}',
+      mcp.path,
+    );
+    expect(args[args.indexOf('--mcp-config') + 1]).toBe(mcp.path);
+    expect(args.join(' ')).not.toContain(token);
+    expect(args).toContain('--strict-mcp-config');
+    expect(JSON.parse(args[args.indexOf('--agents') + 1]!)).toEqual({
+      scan: { description: 'd', prompt: 'p', tools: ['Read'] },
+    });
+    expect(statSync(mcp.path).mode & 0o777).toBe(0o600);
+    expect(statSync(dirname(mcp.path)).mode & 0o777).toBe(0o700);
+    const config = JSON.parse(readFileSync(mcp.path, 'utf8')) as {
+      mcpServers: Record<string, { type: string; url: string; headers: Record<string, string> }>;
+    };
+    expect(Object.keys(config.mcpServers)).toEqual(['orbit']);
+    expect(config.mcpServers.orbit).toMatchObject({
+      type: 'http',
+      url: 'http://127.0.0.1:7420/mcp/orbit',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    mcp.dispose();
+    expect(existsSync(mcp.path)).toBe(false);
+  });
+
+  it('adds no MCP config or agents when the Run has none', () => {
+    const args = buildCliArgs(base, '{}');
+    expect(args).not.toContain('--mcp-config');
+    expect(args).not.toContain('--agents');
   });
 });

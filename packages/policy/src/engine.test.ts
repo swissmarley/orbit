@@ -42,6 +42,7 @@ function card(toolName: string, tier: Tier): ApprovalCard {
     runId: 'run_1',
     untrusted: [],
     risk: 'r',
+    delegatedBy: null,
   };
 }
 

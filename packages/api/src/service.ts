@@ -1,7 +1,11 @@
 import { arch, platform } from 'node:os';
+import { join } from 'node:path';
 import {
   type Bot,
+  type BotProposal,
+  BotSpec,
   type BotSpecInput,
+  type Memory,
   type OrbitConfig,
   OrbitError,
   Redactor,
@@ -11,7 +15,25 @@ import {
   errorMessage,
   event,
   humanPrincipalCount,
+  slugify,
 } from '@orbit/core';
+import {
+  MemoryStore,
+  PROPOSAL_SYSTEM,
+  SUMMARY_SYSTEM,
+  TriageLedger,
+  type TriageUsage,
+  WorkspaceTaint,
+  type TaintedPath,
+  approvalFeedback,
+  parseProposal,
+  parseSummary,
+  proposalPrompt,
+  resultSummary,
+  runTranscript,
+  summaryPrompt,
+  thumbsFeedback,
+} from '@orbit/memory';
 import {
   type Approval,
   ApprovalQueue,
@@ -31,6 +53,9 @@ import {
   type Env,
   type MockDriverOptions,
   Orchestrator,
+  OrbitSessions,
+  OrbitToolset,
+  type OrbitRunSession,
   type QueryFn,
   type QueueJob,
   RateLimitManager,
@@ -41,7 +66,11 @@ import {
   buildChildEnv,
   createDriver,
   createSandboxManager,
+  driverTriage,
+  mockTriage,
+  remainingBudget,
   resolveAuth,
+  TriagePath,
   sandboxWorkspaces,
   systemProbes,
   validateTriggers,
@@ -72,8 +101,11 @@ const IN_FLIGHT: readonly RunState['status'][] = [
   'queued',
   'running',
   'waiting_approval',
+  'delegating',
   'rate_limited',
 ];
+
+const ENDED: readonly RunState['status'][] = ['completed', 'failed', 'cancelled'];
 
 export type Logger = (level: 'info' | 'warn' | 'error', message: string) => void;
 
@@ -93,6 +125,8 @@ export interface ServiceOptions {
   killPollMs?: number;
   /** Where the vault key lives; default 'auto' (keychain, else a 0600 file). Tests use 'file'. */
   vaultKeySource?: 'auto' | 'keychain' | 'file';
+  /** Markdown mirror of memories; default $ORBIT_HOME/memory, null = none (tests). */
+  memoryDir?: string | null;
   log?: Logger;
   now?: () => Date;
 }
@@ -116,6 +150,11 @@ export class OrbitService {
   readonly queue: RunQueue;
   readonly scheduler: Scheduler;
   readonly rateLimits: RateLimitManager;
+  readonly memory: MemoryStore;
+  readonly workspaceTaint: WorkspaceTaint;
+  readonly orbitTools: OrbitToolset;
+  readonly orbitSessions: OrbitSessions;
+  readonly triage: TriagePath;
   readonly startedAt: string;
   readonly version: string;
   /** Base URL once orbitd listens (shown by doctor). */
@@ -127,6 +166,9 @@ export class OrbitService {
   private readonly resumeOptions = new Map<string, { prompt?: string; mockFixture?: string }>();
   private ticker: NodeJS.Timeout | undefined;
   private unsubscribe: (() => void) | undefined;
+  private unsubscribeRuns: (() => void) | undefined;
+  /** Post-run summaries run one at a time, after the Run's outcome is final. */
+  private summaries: Promise<void> = Promise.resolve();
   private readonly log: Logger;
   private readonly now: () => Date;
 
@@ -160,6 +202,36 @@ export class OrbitService {
       ...(opts.vaultKeySource ? { keySource: opts.vaultKeySource } : {}),
     });
     for (const v of this.vault.values()) this.redactor.addSecret(v);
+    this.memory = new MemoryStore(db, {
+      redactor: this.redactor,
+      dir: opts.memoryDir === undefined ? join(config.home, 'memory') : opts.memoryDir,
+      now: this.now,
+    });
+    this.workspaceTaint = new WorkspaceTaint(db, this.now);
+    this.orbitSessions = new OrbitSessions();
+    this.orbitTools = new OrbitToolset({
+      memory: this.memory,
+      store: this.store,
+      delegate: (session, target, task) => this.delegate(session, target, task),
+    });
+    this.triage = new TriagePath({
+      ledger: new TriageLedger(db, this.now),
+      engine: async () => {
+        const { resolution, handle } = await this.ensureEngine();
+        return resolution.driver === 'mock'
+          ? mockTriage
+          : driverTriage(handle.driver, {
+              model: config.models.triage,
+              cwd: join(config.home, 'triage'),
+            });
+      },
+      maxCallsPerDay: () => config.triage.maxCallsPerDay,
+      hold: () => {
+        const kill = this.controls.globalKill();
+        if (kill) return `the global kill switch is engaged (by ${kill})`;
+        return this.rateLimits.hold();
+      },
+    });
 
     this.orchestrator = new Orchestrator({
       config,
@@ -185,6 +257,11 @@ export class OrbitService {
         ),
       ...(opts.killPollMs ? { killPollMs: opts.killPollMs } : {}),
       now: this.now,
+      memory: this.memory,
+      workspaceTaint: this.workspaceTaint,
+      orbitTools: this.orbitTools,
+      orbitSessions: this.orbitSessions,
+      mcpUrl: () => this.url || null,
     });
 
     this.rateLimits = new RateLimitManager({
@@ -231,6 +308,16 @@ export class OrbitService {
   /** Rebuild the queue and usage-limit state from the log, then start housekeeping. */
   start(): void {
     this.unsubscribe = this.rateLimits.start();
+    // Delegation and memory follow the log: a child that ends reports to its
+    // parent; a parent that parks may already have all its answers; a Run
+    // that completes gets its summary.
+    this.unsubscribeRuns = this.store.subscribe((e) => {
+      if (e.type === 'run.completed' || e.type === 'run.failed' || e.type === 'run.cancelled') {
+        queueMicrotask(() => this.onRunEnded(e.runId, e.type === 'run.completed'));
+      } else if (e.type === 'run.parked' && e.data.delegations.length > 0) {
+        queueMicrotask(() => this.maybeAutoResume(e.runId));
+      }
+    });
     // Runs that were executing when the previous daemon died cannot continue.
     for (const run of this.store.listRuns({ status: ['running'], limit: 1000 })) {
       this.approvals.cancelForRun(run.runId, 'system', 'expired');
@@ -252,6 +339,14 @@ export class OrbitService {
       });
     }
     for (const run of this.store.listRuns({ status: ['waiting_approval'], limit: 1000 })) {
+      this.maybeAutoResume(run.runId);
+    }
+    // Children that ended while the daemon was down still report to their parents.
+    for (const run of this.store.listRuns({ status: ['delegating'], limit: 1000 })) {
+      for (const c of run.children) {
+        const child = this.store.getRun(c.runId);
+        if (child && ENDED.includes(child.status)) this.reportToParent(child);
+      }
       this.maybeAutoResume(run.runId);
     }
     this.rateLimits.recover();
@@ -279,6 +374,7 @@ export class OrbitService {
   async stop(): Promise<void> {
     clearInterval(this.ticker);
     this.unsubscribe?.();
+    this.unsubscribeRuns?.();
     this.queue.freeze();
     this.orchestrator.shutdown();
     await this.orchestrator.drain(15_000);
@@ -426,6 +522,23 @@ export class OrbitService {
 
   private checkSpec(spec: BotSpecInput): void {
     validateTriggers((spec.triggers ?? []) as TriggerSpec[]);
+    const parsed = BotSpec.parse(spec);
+    // A subagent never gets a tool its Bot does not have.
+    if (parsed.tools) {
+      for (const [name, a] of Object.entries(parsed.subagents)) {
+        const extra = (a.tools ?? []).filter((t) => !parsed.tools?.includes(t));
+        if (extra.length > 0) {
+          throw new OrbitError(
+            'invalid_input',
+            `Subagent "${name}" lists tools the Bot does not have: ${extra.join(', ')}`,
+          );
+        }
+      }
+    }
+    const self = slugify(parsed.name);
+    if (parsed.delegation.allowedBots.some((b) => slugify(b) === self)) {
+      throw new OrbitError('invalid_input', 'A Bot cannot delegate to itself');
+    }
   }
 
   createBot(spec: BotSpecInput): Bot {
@@ -464,7 +577,7 @@ export class OrbitService {
   private closeWaiting(botId?: string): void {
     const waiting = this.store.listRuns({
       ...(botId ? { botId } : {}),
-      status: ['queued', 'waiting_approval', 'rate_limited'],
+      status: ['queued', 'waiting_approval', 'delegating', 'rate_limited'],
       limit: 10_000,
     });
     for (const run of waiting) {
@@ -527,6 +640,12 @@ export class OrbitService {
     body: { prompt?: string | undefined; fixture?: string | undefined },
   ): Promise<RunState> {
     const run = this.requireRun(runId);
+    if (run.status === 'delegating') {
+      throw new OrbitError(
+        'invalid_input',
+        `Run ${runId} waits for the Bots it delegated to; it resumes when they answer`,
+      );
+    }
     if (run.status !== 'waiting_approval' && run.status !== 'rate_limited') {
       throw new OrbitError(
         run.status === 'running' || run.status === 'queued' ? 'conflict' : 'invalid_input',
@@ -563,13 +682,455 @@ export class OrbitService {
     });
   }
 
-  /** Resume a parked Run whose approvals are all decided, if its Bot auto-resumes. */
+  /**
+   * Resume a parked Run whose approvals are all decided (if its Bot
+   * auto-resumes) or whose delegated Runs have all answered (always).
+   */
   private maybeAutoResume(runId: string, force?: boolean, fixture?: string): boolean {
     const run = this.store.getRun(runId);
-    if (run?.status !== 'waiting_approval' || run.pendingApprovals.length > 0) return false;
+    if (!run || run.pendingApprovals.length > 0 || run.pendingDelegations.length > 0) return false;
+    if (run.status === 'delegating') return this.pushResume(run);
+    if (run.status !== 'waiting_approval') return false;
     const bot = this.bots.find(run.botId);
     if (!(force ?? bot?.spec.approvals.autoResume ?? false)) return false;
     return this.pushResume(run, fixture ? { mockFixture: fixture } : {});
+  }
+
+  // ── delegation ────────────────────────────────────────────────────────────
+
+  /** `delegate_to_bot`: start a child Run of a peer Bot the parent may delegate to. */
+  private delegate(
+    session: OrbitRunSession,
+    target: string,
+    task: string,
+  ): { childRunId: string; botName: string } {
+    const parent = this.requireRun(session.runId);
+    const parentBot = this.bots.get(session.botId);
+    const child = this.bots.find(target) ?? this.bots.find(slugify(target));
+    const allowed = parentBot.spec.delegation.allowedBots;
+    if (!child) {
+      throw new OrbitError(
+        'not_found',
+        `No Bot named "${target}". You may delegate to: ${allowed.join(', ')}`,
+      );
+    }
+    const permitted = allowed.some(
+      (a) => a === child.id || slugify(a) === slugify(child.spec.name),
+    );
+    if (!permitted || child.id === parentBot.id) {
+      throw new OrbitError(
+        'forbidden',
+        `Your owner has not allowed delegating to "${child.spec.name}". You may delegate to: ${allowed.join(', ') || 'nobody'}`,
+      );
+    }
+    // No cycles: a Bot already in the chain above cannot be asked again.
+    for (let id: string | null = parent.runId, i = 0; id && i < 10; i++) {
+      const r = this.store.getRun(id);
+      if (!r) break;
+      if (r.botId === child.id) {
+        throw new OrbitError('forbidden', `"${child.spec.name}" is already working on this chain`);
+      }
+      id = r.parentRunId;
+    }
+    const depth = parent.depth + 1;
+    if (depth > this.config.delegation.maxDepth) {
+      throw new OrbitError(
+        'blocked',
+        `Delegation depth limit reached (${this.config.delegation.maxDepth})`,
+      );
+    }
+    if (parent.children.length >= parentBot.spec.delegation.maxChildrenPerRun) {
+      throw new OrbitError(
+        'blocked',
+        `This Run already delegated ${parent.children.length} tasks (limit ${parentBot.spec.delegation.maxChildrenPerRun})`,
+      );
+    }
+    const cap = remainingBudget(parentBot, parent);
+    if (cap.toolCalls <= 0 || cap.tokens === 0 || cap.costUsd === 0) {
+      throw new OrbitError('blocked', 'Not enough budget left in this Run to delegate');
+    }
+    // The child is enqueued with this Run's taint and what is left of its budget.
+    const run = this.orchestrator.enqueue(child, {
+      prompt: task,
+      trigger: { kind: 'delegation', source: parent.runId },
+      priority: parent.priority + 1,
+      parentRunId: parent.runId,
+      depth,
+      inheritedTaint: [...session.taint()],
+      budgetCap: cap,
+    });
+    this.store.append(parent.runId, parent.botId, [
+      event('delegation.started', {
+        childRunId: run.runId,
+        childBotId: child.id,
+        childBotName: child.spec.name,
+        task,
+      }),
+    ]);
+    this.audit.append({
+      actor: `bot:${parentBot.id}`,
+      action: 'delegation.started',
+      subject: parent.runId,
+      data: { childRunId: run.runId, childBotId: child.id, depth, budgetCap: cap },
+    });
+    this.queue.push({ kind: 'start', runId: run.runId, botId: child.id, priority: run.priority });
+    return { childRunId: run.runId, botName: child.spec.name };
+  }
+
+  /** A child Run ended: record its answer and spend on the parent (once) and taint the parent. */
+  private reportToParent(child: RunState): void {
+    if (!child.parentRunId) return;
+    const parent = this.store.getRun(child.parentRunId);
+    const entry = parent?.children.find((c) => c.runId === child.runId);
+    if (!parent || entry?.status !== 'running') return;
+    const status = child.status as 'completed' | 'failed' | 'cancelled';
+    const result =
+      status === 'completed'
+        ? (child.resultText ?? '')
+        : `(${status}) ${child.error?.message ?? 'stopped before it finished'}`;
+    const source = `delegate:${entry.botName}`;
+    this.store.append(parent.runId, parent.botId, [
+      event('delegation.finished', {
+        childRunId: child.runId,
+        childBotId: child.botId,
+        status,
+        result: result.slice(0, 8000),
+        totals: {
+          tokens: child.totals.tokens + child.delegated.tokens,
+          costUsd: child.totals.costUsd + child.delegated.costUsd,
+          toolCalls: child.counts.toolCalls + child.delegated.toolCalls,
+        },
+      }),
+      // Delegated output is untrusted for the parent, whatever the child did.
+      ...(parent.taintSources.includes(source)
+        ? []
+        : [event('run.tainted', { source, toolUseId: null })]),
+    ]);
+    this.maybeAutoResume(parent.runId);
+  }
+
+  private onRunEnded(runId: string, completed: boolean): void {
+    try {
+      const run = this.store.getRun(runId);
+      if (!run || !ENDED.includes(run.status)) return;
+      this.reportToParent(run);
+      if (completed) this.queueSummary(run.runId);
+    } catch (err) {
+      this.log('warn', `after run ${runId}: ${errorMessage(err)}`);
+    }
+  }
+
+  /** The delegation tree a Run belongs to: from its top-level ancestor down. */
+  runTree(runId: string): { root: string; runs: RunState[] } {
+    let top = this.requireRun(runId);
+    for (let i = 0; top.parentRunId && i < 10; i++) {
+      const p = this.store.getRun(top.parentRunId);
+      if (!p) break;
+      top = p;
+    }
+    const runs: RunState[] = [];
+    const walk = (r: RunState, depth: number) => {
+      runs.push(r);
+      if (depth > 10) return;
+      for (const c of r.children) {
+        const child = this.store.getRun(c.runId);
+        if (child) walk(child, depth + 1);
+      }
+    };
+    walk(top, 0);
+    return { root: top.runId, runs };
+  }
+
+  // ── memory and feedback ───────────────────────────────────────────────────
+
+  listMemory(
+    botRef: string | undefined,
+    q: {
+      query?: string | undefined;
+      kind?: Memory['kind'] | undefined;
+      limit?: number | undefined;
+    },
+  ) {
+    return this.memory.list({
+      ...(botRef ? { botId: this.bots.get(botRef).id } : {}),
+      ...(q.query ? { query: q.query } : {}),
+      ...(q.kind ? { kind: q.kind } : {}),
+      limit: q.limit ?? 200,
+    });
+  }
+
+  createMemory(
+    botRef: string,
+    body: { title: string; body: string; kind: 'note' | 'fact'; pinned: boolean },
+  ): Memory {
+    const bot = this.bots.get(botRef);
+    const m = this.memory.create({
+      botId: bot.id,
+      kind: body.kind,
+      source: 'owner',
+      title: body.title,
+      body: body.body,
+      pinned: body.pinned,
+      createdBy: OWNER,
+    });
+    // Audit ids and kinds only: memory text must be deletable, the audit log is not.
+    this.audit.append({
+      actor: OWNER,
+      action: 'memory.created',
+      subject: m.id,
+      data: { botId: bot.id, kind: m.kind, pinned: m.pinned },
+    });
+    return m;
+  }
+
+  updateMemory(
+    id: string,
+    patch: {
+      title?: string | undefined;
+      body?: string | undefined;
+      pinned?: boolean | undefined;
+      trusted?: true | undefined;
+    },
+  ): Memory {
+    const before = this.memory.get(id);
+    const m = this.memory.update(id, patch);
+    this.audit.append({
+      actor: OWNER,
+      action: patch.trusted && before.taint.length > 0 ? 'memory.trusted' : 'memory.updated',
+      subject: m.id,
+      data: {
+        botId: m.botId,
+        fields: Object.keys(patch).filter((k) => patch[k as keyof typeof patch] !== undefined),
+        ...(patch.trusted && before.taint.length > 0 ? { clearedTaint: before.taint } : {}),
+      },
+    });
+    return m;
+  }
+
+  deleteMemory(id: string): void {
+    const m = this.memory.delete(id);
+    this.audit.append({
+      actor: OWNER,
+      action: 'memory.deleted',
+      subject: m.id,
+      data: { botId: m.botId, kind: m.kind, source: m.source },
+    });
+  }
+
+  /** Thumbs up/down on a finished Run: a feedback memory future Runs may see. */
+  feedback(runId: string, body: { rating: 'up' | 'down'; comment?: string | undefined }): Memory {
+    const run = this.requireRun(runId);
+    if (!ENDED.includes(run.status)) {
+      throw new OrbitError('invalid_input', `Run ${runId} is ${run.status}; rate it when it ends`);
+    }
+    const comment = body.comment?.trim() ?? '';
+    const text = thumbsFeedback(run, body.rating, comment === '' ? null : comment);
+    const signal = body.rating === 'up' ? 'thumbs_up' : 'thumbs_down';
+    const m = this.memory.create({
+      botId: run.botId,
+      kind: 'feedback',
+      source: 'feedback',
+      ...text,
+      runId,
+      signal,
+      createdBy: OWNER,
+    });
+    this.store.append(runId, run.botId, [
+      event('feedback.recorded', { signal, memoryId: m.id, approvalId: null, by: OWNER }),
+    ]);
+    this.audit.append({
+      actor: OWNER,
+      action: 'feedback.recorded',
+      subject: runId,
+      data: { signal, memoryId: m.id },
+    });
+    return m;
+  }
+
+  /** Approvals, edits and denials become feedback memories (composed by Orbit). */
+  private recordDecisionFeedback(approval: Approval, always: boolean): void {
+    if (approval.status !== 'approved' && approval.status !== 'denied') return;
+    try {
+      const text = approvalFeedback({
+        toolName: approval.toolName,
+        runId: approval.runId,
+        status: approval.status,
+        reason: approval.decision?.reason ?? null,
+        input: approval.input,
+        editedInput: approval.decision?.editedInput ?? null,
+        always,
+      });
+      const m = this.memory.create({
+        botId: approval.botId,
+        kind: 'feedback',
+        source: 'feedback',
+        title: text.title,
+        body: text.body,
+        runId: approval.runId,
+        approvalId: approval.id,
+        signal: text.signal,
+        createdBy: OWNER,
+      });
+      this.store.append(approval.runId, approval.botId, [
+        event('feedback.recorded', {
+          signal: text.signal,
+          memoryId: m.id,
+          approvalId: approval.id,
+          by: OWNER,
+        }),
+      ]);
+    } catch (err) {
+      this.log('warn', `feedback for ${approval.id}: ${errorMessage(err)}`);
+    }
+  }
+
+  taintedFiles(botRef: string): TaintedPath[] {
+    return this.workspaceTaint.list(this.bots.get(botRef).id);
+  }
+
+  clearTaintedFiles(botRef: string): number {
+    const bot = this.bots.get(botRef);
+    const n = this.workspaceTaint.clearAll(bot.id);
+    this.audit.append({
+      actor: OWNER,
+      action: 'workspace.taint_cleared',
+      subject: bot.id,
+      data: { files: n },
+    });
+    return n;
+  }
+
+  // ── triage path: summaries and proposals ──────────────────────────────────
+
+  triageUsage(): TriageUsage {
+    return this.triage.usage();
+  }
+
+  private queueSummary(runId: string): void {
+    this.summaries = this.summaries
+      .then(() => this.summarize(runId))
+      .catch((err: unknown) => {
+        this.log('warn', `summary of ${runId}: ${errorMessage(err)}`);
+      });
+  }
+
+  /** Wait for queued summaries (tests, graceful stop). */
+  async summariesIdle(): Promise<void> {
+    await this.summaries;
+  }
+
+  private async summarize(runId: string): Promise<void> {
+    const run = this.store.getRun(runId);
+    const bot = run ? this.bots.find(run.botId) : undefined;
+    if (run?.status !== 'completed' || !bot) return;
+    const mode = bot.spec.memory.summarize;
+    if (mode === 'off') return;
+    if (this.memory.forRun(runId).some((m) => m.kind === 'summary')) return;
+    const base = {
+      botId: bot.id,
+      kind: 'summary' as const,
+      source: 'summarizer' as const,
+      runId,
+      // A summary of a tainted Run is as untrusted as the Run.
+      taint: run.taintSources,
+      createdBy: 'orbit',
+    };
+    if (mode === 'result') {
+      if (!run.resultText?.trim()) return;
+      const m = this.memory.create({ ...base, ...resultSummary(run) });
+      this.store.append(runId, run.botId, [
+        event('memory.written', {
+          memoryId: m.id,
+          kind: m.kind,
+          source: m.source,
+          title: m.title,
+          tainted: m.taint.length > 0,
+        }),
+        event('memory.summarized', {
+          memoryId: m.id,
+          mode: 'result',
+          model: null,
+          inputTokens: 0,
+          outputTokens: 0,
+          costUsd: 0,
+          error: null,
+        }),
+      ]);
+      return;
+    }
+    try {
+      const r = await this.triage.call({
+        purpose: 'summary',
+        botId: bot.id,
+        runId,
+        system: SUMMARY_SYSTEM,
+        prompt: summaryPrompt(runTranscript(run, this.store.listRunEvents(runId))),
+      });
+      const parsed = parseSummary(r.text) ?? resultSummary(run);
+      const m = this.memory.create({ ...base, ...parsed });
+      this.store.append(runId, run.botId, [
+        event('memory.written', {
+          memoryId: m.id,
+          kind: m.kind,
+          source: m.source,
+          title: m.title,
+          tainted: m.taint.length > 0,
+        }),
+        event('memory.summarized', {
+          memoryId: m.id,
+          mode: 'triage',
+          model: r.model,
+          inputTokens: r.inputTokens,
+          outputTokens: r.outputTokens,
+          costUsd: r.costUsd,
+          error: null,
+        }),
+      ]);
+    } catch (err) {
+      this.store.append(runId, run.botId, [
+        event('memory.summarized', {
+          memoryId: null,
+          mode: 'triage',
+          model: this.config.models.triage,
+          inputTokens: 0,
+          outputTokens: 0,
+          costUsd: null,
+          error: errorMessage(err).slice(0, 500),
+        }),
+      ]);
+    }
+  }
+
+  /** The Create Bot wizard's "Ask Claude": one metered triage call; the owner reviews the result. */
+  async proposeBot(goal: string): Promise<{
+    proposal: BotProposal;
+    usage: TriageUsage;
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number | null;
+  }> {
+    const r = await this.triage.call({
+      purpose: 'bot_proposal',
+      botId: null,
+      runId: null,
+      system: PROPOSAL_SYSTEM,
+      prompt: proposalPrompt(goal),
+    });
+    const proposal = parseProposal(r.text);
+    if (!proposal) {
+      throw new OrbitError('engine_error', 'Claude did not return a usable proposal', {
+        hint: 'Try again, or fill in the wizard yourself.',
+      });
+    }
+    return {
+      proposal,
+      usage: this.triage.usage(),
+      model: r.model,
+      inputTokens: r.inputTokens,
+      outputTokens: r.outputTokens,
+      costUsd: r.costUsd,
+    };
   }
 
   private cancelWaiting(runId: string): void {
@@ -628,6 +1189,7 @@ export class OrbitService {
       editedInput: body.editedInput ?? null,
       always: body.always ?? null,
     });
+    this.recordDecisionFeedback(approval, Boolean(body.always));
     return this.decided(approval, body.resume, body.fixture);
   }
 
@@ -637,6 +1199,7 @@ export class OrbitService {
       by: OWNER,
       reason: body.reason ?? null,
     });
+    this.recordDecisionFeedback(approval, false);
     return this.decided(approval, body.resume, body.fixture);
   }
 

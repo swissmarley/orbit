@@ -30,6 +30,8 @@ export const RunStatus = z.enum([
   'queued',
   'running',
   'waiting_approval',
+  /** Parked until the peer Bots it delegated to finish. */
+  'delegating',
   'rate_limited',
   'paused',
   'completed',

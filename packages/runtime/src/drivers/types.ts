@@ -15,6 +15,30 @@ export type {
   ToolResultRequest,
 } from '@orbit/core';
 
+/** A subagent as the engine takes it (`agents` / `--agents`). */
+export interface EngineAgent {
+  description: string;
+  prompt: string;
+  tools?: string[];
+  model?: string;
+  maxTurns?: number;
+}
+
+/** Orbit's own tools (memory, delegation) for one driver segment (ADR-012). */
+export interface OrbitToolBinding {
+  /** CliDriver: the loopback endpoint and this segment's bearer token (`--mcp-config`). */
+  http: { url: string; token: string } | null;
+  tools: {
+    name: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+    /** zod object (the SDK's in-process server takes its shape). */
+    schema: { shape: Record<string, unknown> };
+  }[];
+  /** Execute a tool (SDK in-process server, MockDriver); checked against policy inside. */
+  call(name: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }>;
+}
+
 export interface DriverRunRequest {
   runId: string;
   prompt: string;
@@ -43,6 +67,10 @@ export interface DriverRunRequest {
   spawnEngine?: unknown;
   /** MockDriver scenario. */
   mockFixture?: string | undefined;
+  /** Orbit's MCP tools for this segment; null/omitted = none. */
+  orbitTools?: OrbitToolBinding | null | undefined;
+  /** Subagents by name; null/omitted = none. */
+  agents?: Record<string, EngineAgent> | null | undefined;
 }
 
 /**

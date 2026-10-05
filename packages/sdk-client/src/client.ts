@@ -239,6 +239,32 @@ export class OrbitClient {
     stop: (run: string) => this.call('stopRun', { params: { run } }),
     resume: (run: string, body: RouteBody<'resumeRun'> = {}) =>
       this.call('resumeRun', { params: { run }, body }),
+    /** The delegation tree the Run belongs to (top-level Run first). */
+    tree: (run: string) => this.call('runTree', { params: { run } }),
+    /** Thumbs up or down on a finished Run. */
+    feedback: (run: string, body: RouteBody<'runFeedback'>) =>
+      this.call('runFeedback', { params: { run }, body }),
+    /** Memories the Run wrote. */
+    memory: (run: string) => this.call('runMemory', { params: { run } }),
+  };
+
+  readonly memory = {
+    list: (q: RouteQuery<'listMemory'> = {}) => this.call('listMemory', { query: q }),
+    get: (memory: string) => this.call('getMemory', { params: { memory } }),
+    create: (bot: string, body: RouteBody<'createMemory'>) =>
+      this.call('createMemory', { params: { bot }, body }),
+    update: (memory: string, body: RouteBody<'updateMemory'>) =>
+      this.call('updateMemory', { params: { memory }, body }),
+    remove: (memory: string) => this.call('deleteMemory', { params: { memory } }),
+    /** Workspace files written while untrusted content was in a Run. */
+    taint: (bot: string) => this.call('botTaint', { params: { bot } }),
+    clearTaint: (bot: string) => this.call('clearBotTaint', { params: { bot } }),
+  };
+
+  readonly triage = {
+    usage: () => this.call('triageUsage'),
+    /** One metered triage-model call: a Bot config proposal for the owner to review. */
+    proposeBot: (goal: string) => this.call('proposeBot', { body: { goal } }),
   };
 
   readonly approvals = {

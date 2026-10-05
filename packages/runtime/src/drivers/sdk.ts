@@ -1,6 +1,7 @@
 import type {
   CanUseTool,
   HookCallback,
+  McpServerConfig,
   Options,
   PermissionResult,
   SDKMessage,
@@ -36,6 +37,33 @@ async function defaultQuery(): Promise<QueryFn> {
   return sdk.query as QueryFn;
 }
 
+/**
+ * Orbit's tools as an in-process MCP server: the engine talks to it over the
+ * SDK's own stdio control channel, so no token or port is involved (and
+ * nothing secret ends up in the engine's `--mcp-config` argument).
+ */
+export async function orbitSdkServer(
+  binding: NonNullable<DriverRunRequest['orbitTools']>,
+): Promise<McpServerConfig> {
+  const sdk = await import('@anthropic-ai/claude-agent-sdk');
+  return sdk.createSdkMcpServer({
+    name: 'orbit',
+    version: '0.1.0',
+    tools: binding.tools.map((t) =>
+      sdk.tool(
+        t.name,
+        t.description,
+        t.schema.shape as Parameters<typeof sdk.tool>[2],
+        async (args) => {
+          const r = await binding.call(t.name, args);
+          return { content: [{ type: 'text', text: r.text }], isError: r.isError };
+        },
+        { alwaysLoad: true },
+      ),
+    ),
+  });
+}
+
 /** Build Agent SDK options for a Run (exported for tests). */
 export function buildSdkOptions(
   req: DriverRunRequest,
@@ -48,6 +76,7 @@ export function buildSdkOptions(
   },
   abortController: AbortController,
   onStderr: (line: string) => void,
+  orbitServer: McpServerConfig | null = null,
 ): Options {
   // CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: the engine strips API credentials from
   // the environment of its own children (Bash, hooks, MCP servers) — ADR-005.
@@ -60,7 +89,7 @@ export function buildSdkOptions(
     permissionMode: 'default',
     settingSources: [],
     strictMcpConfig: true,
-    mcpServers: {},
+    mcpServers: orbitServer ? { orbit: orbitServer } : {},
     hooks: {
       PreToolUse: [{ hooks: [hooks.preToolUse] }],
       ...(hooks.postToolUse ? { PostToolUse: [{ hooks: [hooks.postToolUse] }] } : {}),
@@ -83,6 +112,7 @@ export function buildSdkOptions(
   else if (req.sessionId) options.sessionId = req.sessionId;
   if (req.maxBudgetUsd) options.maxBudgetUsd = req.maxBudgetUsd;
   if (req.engineSandbox) options.sandbox = req.engineSandbox;
+  if (req.agents && Object.keys(req.agents).length > 0) options.agents = req.agents;
   if (typeof req.spawnEngine === 'function') {
     options.spawnClaudeCodeProcess = req.spawnEngine as NonNullable<
       Options['spawnClaudeCodeProcess']
@@ -194,6 +224,10 @@ export class SdkDriver implements AgentDriver {
 
     const consume = async () => {
       try {
+        const orbitServer =
+          req.orbitTools && req.orbitTools.tools.length > 0
+            ? await orbitSdkServer(req.orbitTools)
+            : null;
         const options = buildSdkOptions(
           req,
           this.opts,
@@ -203,6 +237,7 @@ export class SdkDriver implements AgentDriver {
             stderrTail.push(...d.split('\n').filter((l) => l.trim()));
             stderrTail.splice(0, Math.max(0, stderrTail.length - 20));
           },
+          orbitServer,
         );
         const queryFn = this.opts.queryFn ?? (await defaultQuery());
         for await (const message of queryFn({ prompt: req.prompt, options })) {

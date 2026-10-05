@@ -21,6 +21,8 @@ export interface ApprovalCard {
   /** Untrusted sources that influenced this Run before the call. */
   untrusted: string[];
   risk: string;
+  /** Set when the Run was delegated by another Bot: who asked, top-level first. */
+  delegatedBy: string | null;
 }
 
 const RISK: Record<Tier, string> = {
@@ -101,6 +103,8 @@ export function buildApprovalCard(args: {
   runId: string;
   workspace: string;
   untrusted: readonly string[];
+  /** Delegation chain above this Run ("Inbox Bot › Research Bot"), if any. */
+  delegatedBy?: string | null;
 }): ApprovalCard {
   return {
     what: describe(args.toolName, args.input),
@@ -114,6 +118,9 @@ export function buildApprovalCard(args: {
     runId: args.runId,
     untrusted: [...args.untrusted],
     risk:
-      RISK[args.tier] + (args.untrusted.length ? ' Untrusted content influenced this Run.' : ''),
+      RISK[args.tier] +
+      (args.untrusted.length ? ' Untrusted content influenced this Run.' : '') +
+      (args.delegatedBy ? ` Another Bot delegated this Run (${args.delegatedBy}).` : ''),
+    delegatedBy: args.delegatedBy ?? null,
   };
 }

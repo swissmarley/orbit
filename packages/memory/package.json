@@ -10,5 +10,10 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@orbit/core": "workspace:*",
+    "@orbit/store": "workspace:*",
+    "zod": "4.6.5"
   }
 }

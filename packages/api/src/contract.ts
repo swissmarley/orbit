@@ -1,12 +1,20 @@
 import {
   AuthMethod,
   Bot,
+  BotProposal,
   BotSpec,
+  CreateMemoryBody,
   DriverKind,
+  FeedbackBody,
+  Memory,
+  MemoryHit,
+  MemoryKind,
   RunEvent,
   RunState,
   RunStatus,
   Tier,
+  TriageUsage,
+  UpdateMemoryBody,
 } from '@orbit/core/browser';
 import { z } from 'zod';
 
@@ -57,6 +65,8 @@ export const ApprovalCard = z.object({
   runId: z.string(),
   untrusted: z.array(z.string()),
   risk: z.string(),
+  /** Delegation chain when another Bot delegated the Run (M6); null otherwise. */
+  delegatedBy: z.string().nullable().default(null),
 });
 
 export const ApprovalStatus = z.enum(['pending', 'approved', 'denied', 'expired', 'cancelled']);
@@ -221,6 +231,30 @@ export const DoctorReport = z.object({
 });
 export type DoctorReport = z.infer<typeof DoctorReport>;
 
+export const RunTree = z.object({
+  /** The top-level Run of the delegation tree. */
+  root: z.string(),
+  /** Every Run in the tree, parents before their children. */
+  runs: z.array(RunState),
+});
+
+export const TaintedFile = z.object({
+  path: z.string(),
+  sources: z.array(z.string()),
+  runId: z.string(),
+  updatedAt: z.string(),
+});
+
+export const ProposeBotBody = z.object({ goal: z.string().trim().min(3).max(4000) });
+export const BotProposalResult = z.object({
+  proposal: BotProposal,
+  model: z.string(),
+  inputTokens: z.int(),
+  outputTokens: z.int(),
+  costUsd: z.number().nullable(),
+  usage: TriageUsage,
+});
+
 // ── request bodies and queries ─────────────────────────────────────────────
 
 /** MockDriver scenario; only honoured when the daemon runs the mock driver. */
@@ -319,6 +353,13 @@ export const ListAuditQuery = z.object({
   limit: limitQuery(10_000),
 });
 export const SchedulesQuery = z.object({ bot: z.string().optional() });
+export const ListMemoryQuery = z.object({
+  bot: z.string().optional(),
+  /** Full-text search over titles and bodies. */
+  q: z.string().trim().max(200).optional(),
+  kind: MemoryKind.optional(),
+  limit: limitQuery(500),
+});
 export const EventsQuery = z.object({
   run: z.string().optional(),
   bot: z.string().optional(),
@@ -631,6 +672,97 @@ export const routes = {
     tag: 'runs',
     query: SchedulesQuery,
     response: z.array(ScheduleEntry),
+  },
+  listMemory: {
+    method: 'GET',
+    path: '/v1/memory',
+    summary: 'Memories (of one Bot, or all), newest first; `q` searches the full text',
+    tag: 'memory',
+    query: ListMemoryQuery,
+    response: z.array(MemoryHit),
+  },
+  createMemory: {
+    method: 'POST',
+    path: '/v1/bots/{bot}/memory',
+    summary: 'Write a memory for a Bot (trusted: written by you)',
+    tag: 'memory',
+    body: CreateMemoryBody,
+    status: 201,
+    response: Memory,
+  },
+  getMemory: {
+    method: 'GET',
+    path: '/v1/memory/{memory}',
+    summary: 'One memory with its provenance',
+    tag: 'memory',
+    response: Memory,
+  },
+  updateMemory: {
+    method: 'PUT',
+    path: '/v1/memory/{memory}',
+    summary: 'Edit a memory (title, body, pin); `trusted: true` clears its taint after your review',
+    tag: 'memory',
+    body: UpdateMemoryBody,
+    response: Memory,
+  },
+  deleteMemory: {
+    method: 'DELETE',
+    path: '/v1/memory/{memory}',
+    summary: 'Delete a memory (and its markdown file)',
+    tag: 'memory',
+    response: ok,
+  },
+  runMemory: {
+    method: 'GET',
+    path: '/v1/runs/{run}/memory',
+    summary: 'Memories a Run wrote (notes, its summary, feedback about it)',
+    tag: 'memory',
+    response: z.array(Memory),
+  },
+  runFeedback: {
+    method: 'POST',
+    path: '/v1/runs/{run}/feedback',
+    summary: 'Thumbs up or down on a finished Run (becomes feedback memory)',
+    tag: 'memory',
+    body: FeedbackBody,
+    status: 201,
+    response: Memory,
+  },
+  runTree: {
+    method: 'GET',
+    path: '/v1/runs/{run}/tree',
+    summary: 'The delegation tree a Run belongs to (top-level Run and every child Run)',
+    tag: 'runs',
+    response: RunTree,
+  },
+  botTaint: {
+    method: 'GET',
+    path: '/v1/bots/{bot}/taint',
+    summary: 'Workspace files written while untrusted content was in a Run',
+    tag: 'memory',
+    response: z.array(TaintedFile),
+  },
+  clearBotTaint: {
+    method: 'DELETE',
+    path: '/v1/bots/{bot}/taint',
+    summary: 'Forget workspace taint after you reviewed the files',
+    tag: 'memory',
+    response: z.object({ cleared: z.int() }),
+  },
+  triageUsage: {
+    method: 'GET',
+    path: '/v1/triage',
+    summary: 'Triage-model calls today (summaries, proposals) against the daily limit',
+    tag: 'memory',
+    response: TriageUsage,
+  },
+  proposeBot: {
+    method: 'POST',
+    path: '/v1/triage/bot-proposal',
+    summary: 'Ask the triage model to propose a Bot config from a goal (one metered call)',
+    tag: 'bots',
+    body: ProposeBotBody,
+    response: BotProposalResult,
   },
   events: {
     method: 'GET',

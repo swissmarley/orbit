@@ -17,6 +17,7 @@
   "dependencies": {
     "@hono/node-server": "2.1.3",
     "@orbit/core": "workspace:*",
+    "@orbit/memory": "workspace:*",
     "@orbit/policy": "workspace:*",
     "@orbit/runtime": "workspace:*",
     "@orbit/sandbox": "workspace:*",

@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import type { HookCallback, Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import { FIXTURES_DIR } from '../src/drivers/fixtures';
 import { type QueryFn, SdkDriver } from '../src/drivers/sdk';
 import { type Harness, collect, expectWellFormed, runDriverContract } from './driver-contract';
@@ -170,5 +171,42 @@ describe('SdkDriver specifics', () => {
     const events = await collect(driver(empty), {});
     expectWellFormed(events);
     expect(events.at(-1)!.type === 'run.failed').toBe(true);
+  });
+});
+
+describe('SdkDriver: Orbit tools and subagents (M6)', () => {
+  it('serves Orbit tools in-process (no token, no port) and passes subagents as `agents`', async () => {
+    const seen: Options[] = [];
+    const calls: string[] = [];
+    await collect(
+      driver(fakeQuery(FIXTURE('pong'), seen)),
+      {},
+      {
+        orbitTools: {
+          http: null,
+          tools: [
+            {
+              name: 'memory_search',
+              description: 'search',
+              inputSchema: { type: 'object' },
+              schema: z.object({ query: z.string() }),
+            },
+          ],
+          call: (name) => {
+            calls.push(name);
+            return Promise.resolve({ text: 'ok', isError: false });
+          },
+        },
+        agents: { scan: { description: 'd', prompt: 'p', tools: ['Read'], model: 'haiku' } },
+      },
+    );
+    const o = seen[0]!;
+    const orbit = o.mcpServers?.orbit as { type: string; name: string } | undefined;
+    expect(orbit?.type).toBe('sdk');
+    expect(orbit?.name).toBe('orbit');
+    expect(JSON.stringify(Object.keys(o.mcpServers ?? {}))).toBe('["orbit"]');
+    expect(o.agents).toEqual({
+      scan: { description: 'd', prompt: 'p', tools: ['Read'], model: 'haiku' },
+    });
   });
 });

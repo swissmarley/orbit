@@ -17,6 +17,8 @@ type Msg = Record<string, unknown>;
 const isAborted = (signal: AbortSignal): boolean => signal.aborted;
 const isObj = (v: unknown): v is Msg => typeof v === 'object' && v !== null && !Array.isArray(v);
 
+const ORBIT_PREFIX = 'mcp__orbit__';
+
 /** Fixtures are recorded in `/workspace`; replay them inside the Run's real workspace. */
 export const FIXTURE_WORKSPACE = '/workspace';
 
@@ -80,7 +82,11 @@ export class MockDriver implements AgentDriver {
     const name = req.mockFixture ?? this.defaultFixture;
     const sessionId = req.resumeSessionId ?? req.sessionId;
     const cancelled = () => event('run.cancelled', { reason: 'Run was stopped', sessionId });
-    const messages = loadFixture(name, this.fixturesDir);
+    // A resumed segment replays `<name>-resumed` when the scenario has one
+    // (e.g. after a delegation answered), otherwise the same transcript again.
+    const messages =
+      (req.resumeSessionId ? loadFixture(`${name}-resumed`, this.fixturesDir) : null) ??
+      loadFixture(name, this.fixturesDir);
     if (!messages) {
       yield event('run.failed', {
         code: 'fixture_not_found',
@@ -93,6 +99,8 @@ export class MockDriver implements AgentDriver {
     const denied = recordedDenials(messages);
     const allowed = new Set<string>();
     const calls = new Map<string, { name: string; input: Record<string, unknown> }>();
+    /** Real output of Orbit's own tools, which run for real even in demo mode. */
+    const orbitResults = new Map<string, { text: string; isError: boolean }>();
     const n = new Normalizer();
 
     for (const [index, raw] of messages.entries()) {
@@ -115,6 +123,11 @@ export class MockDriver implements AgentDriver {
       const bodies = n.push(msg);
       for (const raw of bodies) {
         let body = raw;
+        const orbit =
+          body.type === 'tool.result' ? orbitResults.get(body.data.toolUseId) : undefined;
+        if (body.type === 'tool.result' && orbit) {
+          body = { ...body, data: { ...body.data, content: orbit.text, isError: orbit.isError } };
+        }
         // Tool output passes through Orbit's post-processing (redaction), as with real engines.
         if (body.type === 'tool.result' && allowed.has(body.data.toolUseId)) {
           const call = calls.get(body.data.toolUseId);
@@ -158,7 +171,16 @@ export class MockDriver implements AgentDriver {
 
         if (decision.behavior === 'allow') {
           allowed.add(toolUseId);
-          calls.set(toolUseId, { name: toolName, input: isObj(input) ? input : {} });
+          const args = decision.updatedInput ?? (isObj(input) ? input : {});
+          calls.set(toolUseId, { name: toolName, input: args });
+          if (toolName.startsWith(ORBIT_PREFIX)) {
+            orbitResults.set(
+              toolUseId,
+              req.orbitTools
+                ? await req.orbitTools.call(toolName.slice(ORBIT_PREFIX.length), args)
+                : { text: `No such tool: ${toolName}`, isError: true },
+            );
+          }
         }
         if (decision.behavior === 'deny' && decision.interrupt) {
           // Like `continue: false`: the engine stops right after the denial.

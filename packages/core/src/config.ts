@@ -79,6 +79,23 @@ export const OrbitConfig = z.object({
       apiKeyHelper: z.string().min(1).nullable().default(null),
     })
     .prefault({}),
+  /**
+   * The triage path (ORBIT_TRIAGE_MODEL): post-run summaries and the Create
+   * Bot proposal. Every call is metered and shown; this caps them so Orbit
+   * never spends subscription usage the owner did not expect.
+   */
+  triage: z
+    .object({
+      /** Triage calls per local day, all Bots together (`ORBIT_TRIAGE_MAX_CALLS_PER_DAY`). 0 = off. */
+      maxCallsPerDay: z.int().min(0).max(1000).default(20),
+    })
+    .prefault({}),
+  delegation: z
+    .object({
+      /** Longest chain of delegated Runs (A → B → C is depth 2). */
+      maxDepth: z.int().min(1).max(5).default(3),
+    })
+    .prefault({}),
   limits: z
     .object({
       maxConcurrentRuns: z

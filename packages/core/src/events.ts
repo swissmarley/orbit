@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { AuthMethod, DriverKind, Tier } from './enums';
+import { FeedbackSignal, MemoryKind, MemorySource } from './memory';
 
 /**
  * The RunEvent model. Every driver message, policy decision and lifecycle
@@ -52,6 +53,24 @@ export type UsageTotals = z.infer<typeof UsageTotals>;
 
 export const UsageLimitStatus = z.enum(['allowed', 'allowed_warning', 'rejected']);
 
+/**
+ * Limits a delegated (child) Run inherits from its parent: whatever the
+ * parent has left, so a delegation can never spend more than its parent may.
+ */
+export const BudgetCap = z.object({
+  toolCalls: z.int().nonnegative(),
+  tokens: z.number().nonnegative().nullable(),
+  costUsd: z.number().nonnegative().nullable(),
+  wallClockMinutes: z.number().nonnegative(),
+});
+export type BudgetCap = z.infer<typeof BudgetCap>;
+
+export const DelegationTotals = z.object({
+  tokens: z.number().nonnegative(),
+  costUsd: z.number().nonnegative(),
+  toolCalls: z.int().nonnegative(),
+});
+
 export const RunEventBody = z.discriminatedUnion('type', [
   // ── lifecycle (orchestrator) ────────────────────────────────────────────
   ev('run.queued', {
@@ -61,6 +80,14 @@ export const RunEventBody = z.discriminatedUnion('type', [
     priority: z.int().min(-100).max(100).default(0),
     /** MockDriver scenario chosen for this Run (demo mode and tests). */
     fixture: nullableString.default(null),
+    /** The Run that delegated this one (delegate_to_bot); null for top-level Runs. */
+    parentRunId: nullableString.default(null),
+    /** Delegation depth: 0 for top-level Runs. */
+    depth: z.int().min(0).max(10).default(0),
+    /** Untrusted sources the Run starts with (a delegating parent's taint). */
+    inheritedTaint: z.array(z.string()).default([]),
+    /** Budget ceiling inherited from a delegating parent. */
+    budgetCap: BudgetCap.nullable().default(null),
   }),
   ev('run.started', {
     driver: DriverKind,
@@ -137,9 +164,14 @@ export const RunEventBody = z.discriminatedUnion('type', [
   /** Run stopped by a kill switch or budget before/while running (precedes run.cancelled/failed). */
   ev('run.killed', { scope: z.enum(['run', 'bot', 'global']), by: z.string() }),
   /** Driver segment ended while approvals are pending; the Run resumes after decisions. */
-  ev('run.parked', { approvalIds: z.array(z.string()), sessionId: nullableString }),
+  ev('run.parked', {
+    approvalIds: z.array(z.string()),
+    sessionId: nullableString,
+    /** Child Runs this Run waits for (delegate_to_bot). */
+    delegations: z.array(z.string()).default([]),
+  }),
   ev('run.resumed', {
-    reason: z.enum(['approval', 'usage_limit', 'manual']),
+    reason: z.enum(['approval', 'usage_limit', 'manual', 'delegation']),
     sessionId: nullableString,
   }),
   /** The Run will resume by itself at `at` (e.g. when a usage limit resets). */
@@ -172,6 +204,51 @@ export const RunEventBody = z.discriminatedUnion('type', [
     error: nullableString,
   }),
   ev('usage', UsageTotals.shape),
+  // ── memory, feedback, delegation (M6) ──────────────────────────────────
+  ev('memory.written', {
+    memoryId: z.string(),
+    kind: MemoryKind,
+    source: MemorySource,
+    title: z.string(),
+    tainted: z.boolean(),
+  }),
+  /** Memories that entered the Run's context (offered at start, or found/read by a tool). */
+  ev('memory.recalled', {
+    memoryIds: z.array(z.string()),
+    via: z.enum(['context', 'search', 'read']),
+    tainted: z.boolean(),
+  }),
+  /** The post-run summary (after the Run ended; never changes its outcome). */
+  ev('memory.summarized', {
+    memoryId: nullableString,
+    mode: z.enum(['result', 'triage']),
+    model: nullableString,
+    inputTokens: z.int().nonnegative(),
+    outputTokens: z.int().nonnegative(),
+    costUsd: z.number().nonnegative().nullable(),
+    error: nullableString,
+  }),
+  ev('feedback.recorded', {
+    signal: FeedbackSignal,
+    memoryId: nullableString,
+    approvalId: nullableString,
+    by: z.string(),
+  }),
+  /** This Run handed a task to a peer Bot; the child Run is `childRunId`. */
+  ev('delegation.started', {
+    childRunId: z.string(),
+    childBotId: z.string(),
+    childBotName: z.string(),
+    task: z.string(),
+  }),
+  /** A child Run ended; its spend counts against this Run's budgets. */
+  ev('delegation.finished', {
+    childRunId: z.string(),
+    childBotId: z.string(),
+    status: z.enum(['completed', 'failed', 'cancelled']),
+    result: z.string(),
+    totals: DelegationTotals,
+  }),
   ev('diagnostic', { level: z.enum(['info', 'warn', 'error']), message: z.string() }),
   /** Engine message Orbit does not model yet; kept so nothing is silently dropped. */
   ev('raw', { messageType: z.string(), subtype: nullableString }),
