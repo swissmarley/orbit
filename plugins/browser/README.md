@@ -70,7 +70,11 @@ Then list `browser` in a Bot's `plugins`.
 - **Narrow environment.** Chromium gets the plugin's own environment, which
   Orbit builds from an allowlist (never an API key or OAuth token), passed
   explicitly. Chromium's sandbox stays on unless the process runs as root,
-  where Chromium cannot use it.
+  where Chromium cannot use it. On Linux distributions that restrict
+  unprivileged user namespaces (Ubuntu 23.10+ with AppArmor), Chromium refuses
+  to start ("No usable sandbox"); allow them
+  (`sysctl kernel.apparmor_restrict_unprivileged_userns=0`, or an AppArmor
+  profile for Chromium) rather than turning the sandbox off.
 - **Untrusted output.** Page text, titles and links are data, never
   instructions; the tool descriptions say so and Orbit taints the Run.
 
