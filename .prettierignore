@@ -4,3 +4,6 @@ dist
 coverage
 **/fixtures/**/*.jsonl
 packages/api/openapi.json
+storybook-static
+playwright-report
+test-results

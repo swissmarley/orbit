@@ -13,3 +13,4 @@ export type {
   RouteQuery,
   RouteResponse,
 } from '@orbit/api/contract';
+export { CSRF_HEADER } from '@orbit/api/contract';

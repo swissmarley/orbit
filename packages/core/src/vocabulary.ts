@@ -121,6 +121,13 @@ export function formatClock(iso: string, now: number = Date.now()): string {
   return `${d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} ${time}`;
 }
 
+/** Local time of day with seconds ("14:05:09"), for event rows inside one Run. */
+export function formatTimeOfDay(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
 /** Local time with zone, for moments a person acts on ("resumes at Mon 14:05 CET"). */
 export function formatLocalTime(iso: string): string {
   const d = new Date(iso);

@@ -73,6 +73,8 @@ export default tseslint.config(
       '**/dist/**',
       '**/coverage/**',
       '**/storybook-static/**',
+      '**/playwright-report/**',
+      '**/test-results/**',
       '**/src-tauri/target/**',
       '**/*.d.ts',
     ],

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalJson, inputHash } from './hash';
+import { canonicalJson } from './canonical';
+import { inputHash } from './hash';
 
 describe('canonicalJson / inputHash', () => {
   it('is independent of key order at every depth', () => {

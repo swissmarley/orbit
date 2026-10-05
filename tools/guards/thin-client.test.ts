@@ -98,3 +98,37 @@ describe('thin-client invariant (apps/orbit-tui)', () => {
     ]);
   });
 });
+
+/** The App (a browser) may use only the browser-safe entries (ADR-011). */
+const APP_ALLOWED = new Set(['@orbit/core/browser', '@orbit/sdk-client/browser']);
+
+export function appViolations(uses: ImportUse[]): string[] {
+  return uses
+    .filter((u) => u.from.startsWith('@orbit/') && !APP_ALLOWED.has(u.from))
+    .map(
+      (u) =>
+        `${u.file}: imports ${u.from} (the App uses @orbit/core/browser and @orbit/sdk-client/browser only)`,
+    );
+}
+
+describe('thin-client invariant (apps/orbit-app)', () => {
+  it('the App reaches orbitd only through the browser client', () => {
+    const dir = join(ROOT, 'apps/orbit-app/src');
+    const files = sourceFiles(dir).filter((f) => !f.includes(join('src', 'test')));
+    const uses = files.flatMap((f) => importsOf(relative(ROOT, f), readFileSync(f, 'utf8')));
+    expect(uses.some((u) => u.from === '@orbit/sdk-client/browser')).toBe(true);
+    expect(appViolations(uses)).toEqual([]);
+  });
+
+  it('positive control: the guard fires on server or node-only imports', () => {
+    const bad = importsOf(
+      'apps/orbit-app/src/bad.ts',
+      [
+        "import { localClient } from '@orbit/sdk-client';",
+        "import { sha256Hex } from '@orbit/core';",
+        "import { routes } from '@orbit/api/contract';",
+      ].join('\n'),
+    );
+    expect(appViolations(bad)).toHaveLength(3);
+  });
+});

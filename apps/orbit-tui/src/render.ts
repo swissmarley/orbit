@@ -7,24 +7,13 @@ import {
   formatLocalTime,
   formatTokens as tokens,
   formatWhen,
+  scrubControls,
 } from '@orbit/core';
 import { type painter } from './io';
 
 type Paint = ReturnType<typeof painter>;
 
-// C0/C1 controls (but newline and tab), DEL, bidi marks/overrides/isolates,
-// zero-width characters and line/paragraph separators.
-const CONTROLS =
-  // eslint-disable-next-line no-control-regex
-  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/g;
-
-/**
- * Neutralise terminal escapes in text a model, tool or web page wrote: an
- * ESC sequence could move the cursor, recolour or fake a line ("✔ approved").
- */
-export function scrubControls(text: string): string {
-  return text.replace(CONTROLS, '\ufffd');
-}
+export { scrubControls };
 
 /** Every string inside `value` scrubbed (for data shown in a terminal). */
 export function scrubDeep<T>(value: T): T {

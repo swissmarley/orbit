@@ -5,6 +5,7 @@
  * this entry free of Node built-ins.
  */
 export * from './bot';
+export * from './canonical';
 export * from './config';
 export * from './enums';
 export * from './errors';

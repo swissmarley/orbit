@@ -4,6 +4,7 @@
  * every other package depends on it.
  */
 export * from './bot';
+export * from './canonical';
 export * from './config';
 export * from './enums';
 export * from './errors';

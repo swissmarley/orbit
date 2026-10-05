@@ -122,4 +122,40 @@ describe('OrbitClient', () => {
     };
     await expect(consume()).rejects.toMatchObject({ code: 'daemon_unavailable' });
   });
+
+  it('reports each (re)connect through onOpen', async () => {
+    const { client } = await setup();
+    const controller = new AbortController();
+    let opened = 0;
+    const consume = (async () => {
+      for await (const _ of client.events({
+        signal: controller.signal,
+        onOpen: () => (opened += 1),
+      })) {
+        // no events on an idle daemon
+      }
+    })();
+    for (let i = 0; i < 50 && opened === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(opened).toBe(1);
+    controller.abort();
+    await consume;
+  });
+
+  it('browser mode: no token, a credentials mode and extra headers on every call (ADR-011)', async () => {
+    const seen: { headers: Headers; credentials: string | undefined }[] = [];
+    const fake = (_url: string, init?: RequestInit) => {
+      seen.push({ headers: new Headers(init?.headers), credentials: init?.credentials });
+      return Promise.resolve(Response.json({ via: 'session' }));
+    };
+    const client = new OrbitClient({
+      baseUrl: '',
+      credentials: 'same-origin',
+      headers: { 'x-orbit-csrf': '1' },
+      fetch: fake,
+    });
+    expect(await client.call('getSession')).toEqual({ via: 'session' });
+    expect(seen[0]?.headers.get('authorization')).toBeNull();
+    expect(seen[0]?.headers.get('x-orbit-csrf')).toBe('1');
+    expect(seen[0]?.credentials).toBe('same-origin');
+  });
 });

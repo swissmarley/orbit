@@ -9,6 +9,7 @@ import { streamSSE } from 'hono/streaming';
 import { ZodError, z } from 'zod';
 import {
   API_VERSION,
+  CSRF_HEADER,
   type ErrorBody,
   type RouteDef,
   type RouteName,
@@ -62,9 +63,6 @@ function param(params: Record<string, string>, name: string): string {
 }
 
 const MAX_BODY_BYTES = 1024 * 1024;
-
-/** Header every cookie-authenticated request must carry (a page on another origin cannot set it without our CORS consent). */
-export const CSRF_HEADER = 'x-orbit-csrf';
 
 /** Per-port cookie name: cookies ignore ports, and two daemons may share 127.0.0.1. */
 export function sessionCookieName(url: string): string {

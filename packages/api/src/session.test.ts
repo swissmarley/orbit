@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TOKEN, harness, type Harness } from '../test/harness';
-import { APP_CSP, CSRF_HEADER, createApp } from './app';
+import { APP_CSP, createApp } from './app';
+import { CSRF_HEADER } from './contract';
 import { SessionStore } from './session';
 
 const BASE = 'http://127.0.0.1:7420';

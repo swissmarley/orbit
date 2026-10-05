@@ -52,6 +52,8 @@ export interface EventStreamOptions {
   maxReconnects?: number;
   /** First reconnect delay; doubles up to 5 s. Default 250 ms. */
   reconnectDelayMs?: number;
+  /** Called each time the stream is (re)connected, before any event (UIs show "live"). */
+  onOpen?: () => void;
 }
 
 const KNOWN_CODES = new Set<OrbitErrorCode>([
@@ -314,6 +316,7 @@ export class OrbitClient {
       }
       // Auth and validation errors do not get better by retrying.
       if (!res.ok || !res.body) throw await errorFrom(res);
+      opts.onOpen?.();
       failures = 0;
       delay = opts.reconnectDelayMs ?? 250;
       try {

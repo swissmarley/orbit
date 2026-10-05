@@ -19,6 +19,12 @@ import { z } from 'zod';
 
 export const API_VERSION = '1';
 
+/**
+ * Header every cookie-authenticated (App) request carries (ADR-011): a page
+ * on another origin cannot set it without orbitd's CORS consent.
+ */
+export const CSRF_HEADER = 'x-orbit-csrf';
+
 // ── shared schemas ─────────────────────────────────────────────────────────
 
 export const ErrorBody = z.object({
