@@ -191,6 +191,11 @@ export const BotMemorySettings = z.object({
   maxContextChars: z.int().min(0).max(20_000).default(4000),
   /** Give the Bot the Orbit memory tools (search, read, write). */
   tools: z.boolean().default(true),
+  /**
+   * Days this Bot's unpinned notes and run summaries are kept (null = keep);
+   * omitted = the daemon's `memory.retentionDays`.
+   */
+  retentionDays: z.int().min(1).max(3650).nullable().optional(),
 });
 export type BotMemorySettings = z.infer<typeof BotMemorySettings>;
 

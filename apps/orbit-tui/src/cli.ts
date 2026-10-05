@@ -13,7 +13,10 @@ import {
   memoryAdd,
   memoryEdit,
   memoryList,
+  memoryExport,
+  memoryImport,
   memoryRm,
+  memorySweep,
   memoryShow,
   treeCmd,
   triageCmd,
@@ -512,6 +515,29 @@ export async function main(argv: string[], io: Io): Promise<number> {
     .argument('<id>', 'memory id')
     .option('--json', 'machine-readable output')
     .action((id: string, o: { json?: boolean }) => set(memoryRm(context(), id, o)));
+  memory
+    .command('export')
+    .description('Export memories with provenance as JSON Lines (one Bot, or all)')
+    .option('-b, --bot <bot>', 'only this Bot')
+    .option('-o, --out <file>', 'write to a file (mode 0600) instead of stdout')
+    .option('--json', 'machine-readable output')
+    .action((o: Parameters<typeof memoryExport>[1]) => set(memoryExport(context(), o)));
+  memory
+    .command('import')
+    .description('Import an export into a Bot: previews counts and trust, imports with --yes')
+    .argument('<bot>', 'bot name or id')
+    .argument('<file>', 'a file `orbit memory export` wrote')
+    .option('--untrusted', 'mark every imported memory untrusted')
+    .option('-y, --yes', 'import after the preview')
+    .option('--json', 'machine-readable output')
+    .action((b: string, f: string, o: Parameters<typeof memoryImport>[3]) =>
+      set(memoryImport(context(), b, f, o)),
+    );
+  memory
+    .command('sweep')
+    .description('Apply memory retention now (orbitd does it daily)')
+    .option('--json', 'machine-readable output')
+    .action((o: { json?: boolean }) => set(memorySweep(context(), o)));
 
   program
     .command('feedback')

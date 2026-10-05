@@ -90,6 +90,19 @@ export const OrbitConfig = z.object({
       maxCallsPerDay: z.int().min(0).max(1000).default(20),
     })
     .prefault({}),
+  /** Memory bounds and retention (ADR-012). */
+  memory: z
+    .object({
+      /** Memories kept per Bot; when full the oldest unpinned Bot note or summary goes first. */
+      maxPerBot: z.int().min(10).max(10_000).default(1000),
+      /**
+       * Days an unpinned Bot note or run summary is kept; null = keep. Owner
+       * facts, feedback and pinned memories never expire. A Bot's
+       * `memory.retentionDays` overrides it.
+       */
+      retentionDays: z.int().min(1).max(3650).nullable().default(null),
+    })
+    .prefault({}),
   delegation: z
     .object({
       /** Longest chain of delegated Runs (A → B → C is depth 2). */

@@ -4,11 +4,15 @@ import {
   BotProposal,
   BotSpec,
   CreateMemoryBody,
+  ImportMemoryBody,
+  MEMORY_LIMITS,
   DriverKind,
   FeedbackBody,
   Memory,
   MemoryHit,
+  MemoryImportResult,
   MemoryKind,
+  MemorySweepResult,
   PluginStatus,
   RunEvent,
   RunState,
@@ -437,6 +441,7 @@ export const ListMemoryQuery = z.object({
   kind: MemoryKind.optional(),
   limit: limitQuery(500),
 });
+export const ExportMemoryQuery = z.object({ bot: z.string().optional() });
 export const EventsQuery = z.object({
   run: z.string().optional(),
   bot: z.string().optional(),
@@ -461,6 +466,8 @@ export interface RouteDef {
   /** JSON response schema; omitted for streams (`stream` says which). */
   response?: z.ZodType;
   stream?: 'sse' | 'jsonl';
+  /** Request body limit when it must exceed the default 1 MiB (imports). */
+  maxBodyBytes?: number;
 }
 
 const ok = z.object({ ok: z.literal(true) });
@@ -788,6 +795,34 @@ export const routes = {
     body: CreateMemoryBody,
     status: 201,
     response: Memory,
+  },
+  // Before getMemory: `/v1/memory/{memory}` would match `export` too.
+  exportMemory: {
+    method: 'GET',
+    path: '/v1/memory/export',
+    summary:
+      "A Bot's memories (or every Bot's) as JSON Lines with provenance (versioned header first)",
+    tag: 'memory',
+    query: ExportMemoryQuery,
+    stream: 'jsonl',
+  },
+  importMemory: {
+    method: 'POST',
+    path: '/v1/bots/{bot}/memory/import',
+    summary:
+      'Import an export into a Bot (validated, redacted, bounded; provenance kept; `dryRun` previews counts and trust)',
+    tag: 'memory',
+    body: ImportMemoryBody,
+    maxBodyBytes: MEMORY_LIMITS.importBytes,
+    response: MemoryImportResult,
+  },
+  sweepMemory: {
+    method: 'POST',
+    path: '/v1/memory/sweep',
+    summary:
+      'Apply memory retention now (orbitd also does it daily): expire old unpinned Bot notes and summaries, trim to the bound',
+    tag: 'memory',
+    response: MemorySweepResult,
   },
   getMemory: {
     method: 'GET',

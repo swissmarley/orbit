@@ -7,6 +7,8 @@ import {
   BotSpec,
   type BotSpecInput,
   type Memory,
+  type MemoryImportResult,
+  type MemorySweepResult,
   type OrbitConfig,
   OrbitError,
   Redactor,
@@ -30,6 +32,9 @@ import {
   WorkspaceTaint,
   type TaintedPath,
   approvalFeedback,
+  memoryExportHeader,
+  memoryExportLine,
+  parseMemoryImport,
   parseProposal,
   parseSummary,
   proposalPrompt,
@@ -116,6 +121,7 @@ import type {
 
 /** Who acts through the local API: the single local owner (OIDC principals arrive with hosted mode). */
 export const OWNER = 'owner';
+const DAY_MS = 86_400_000;
 
 const IN_FLIGHT: readonly RunState['status'][] = [
   'queued',
@@ -205,6 +211,8 @@ export class OrbitService {
   private summaries: Promise<void> = Promise.resolve();
   private readonly log: Logger;
   private readonly now: () => Date;
+  /** When retention last swept memory (ms); orbitd sweeps at start and once a day. */
+  private memorySweptAt = Number.NEGATIVE_INFINITY;
 
   constructor(private readonly opts: ServiceOptions) {
     const { config, env, db } = opts;
@@ -252,6 +260,7 @@ export class OrbitService {
       redactor: this.redactor,
       dir: opts.memoryDir === undefined ? join(config.home, 'memory') : opts.memoryDir,
       now: this.now,
+      maxPerBot: config.memory.maxPerBot,
     });
     this.workspaceTaint = new WorkspaceTaint(db, this.now);
     this.orbitSessions = new OrbitSessions();
@@ -432,6 +441,7 @@ export class OrbitService {
     }
     this.rateLimits.recover();
     this.syncTriggers();
+    this.sweepMemoryDaily();
     this.ticker = setInterval(() => this.tick(), this.opts.tickMs ?? 1000);
     this.ticker.unref();
   }
@@ -448,6 +458,7 @@ export class OrbitService {
       this.rateLimits.tick();
       this.queue.pump();
       this.syncTriggers();
+      this.sweepMemoryDaily();
     } catch (err) {
       this.log('error', `housekeeping failed: ${errorMessage(err)}`);
     }
@@ -1208,6 +1219,151 @@ export class OrbitService {
       subject: m.id,
       data: { botId: m.botId, kind: m.kind, source: m.source },
     });
+  }
+
+  /**
+   * A Bot's memories (or every Bot's) as JSON Lines with provenance: a
+   * versioned header line, then one memory per line. Audited (count only).
+   */
+  exportMemory(botRef: string | undefined): string {
+    const bot = botRef ? this.bots.get(botRef) : undefined;
+    const bots = bot ? [bot] : this.bots.list();
+    const lines = [...this.memory.each(bot?.id)].map(memoryExportLine);
+    this.audit.append({
+      actor: OWNER,
+      action: 'memory.exported',
+      subject: bot?.id ?? null,
+      data: { count: lines.length },
+    });
+    const header = memoryExportHeader(
+      bots.map((b) => ({ id: b.id, name: b.spec.name })),
+      lines.length,
+      this.now(),
+    );
+    return `${[header, ...lines].join('\n')}\n`;
+  }
+
+  /**
+   * Import an export into a Bot (owner only, ADR-012 M8). Every line is
+   * validated; nothing is written unless all are valid. Provenance is kept:
+   * an untrusted memory stays untrusted, `untrusted` marks every one
+   * untrusted, and a trusted line (even one claiming `source: owner`) is
+   * accepted as trusted only because the owner chose to import the file.
+   * The audit log records counts and ids, never memory text.
+   */
+  importMemory(
+    botRef: string,
+    body: { jsonl: string; untrusted: boolean; dryRun: boolean },
+  ): MemoryImportResult {
+    const bot = this.bots.get(botRef);
+    const parsed = parseMemoryImport(body.jsonl, this.now());
+    const items = parsed.memories;
+    const trusted = body.untrusted ? [] : items.filter((m) => m.taint.length === 0);
+    const bySource: MemoryImportResult['bySource'] = {
+      owner: 0,
+      bot: 0,
+      summarizer: 0,
+      feedback: 0,
+    };
+    for (const m of items) bySource[m.source] += 1;
+    const plan = this.memory.importPlan(bot.id, items.length);
+    const result: MemoryImportResult = {
+      dryRun: body.dryRun,
+      botId: bot.id,
+      total: items.length,
+      trusted: trusted.length,
+      untrusted: items.length - trusted.length,
+      claimsOwner: trusted.filter((m) => m.source === 'owner').length,
+      bySource,
+      pinned: trusted.filter((m) => m.pinned).length,
+      evicts: plan.evicts,
+      imported: [],
+      errors: parsed.errors,
+    };
+    if (body.dryRun) return result;
+    if (parsed.errors.length > 0) {
+      const [first] = parsed.errors;
+      throw new OrbitError(
+        'invalid_input',
+        `The import has invalid lines: line ${first?.line}: ${first?.message}${parsed.errors.length > 1 ? ` (and ${parsed.errors.length - 1} more)` : ''}`,
+        { hint: 'Nothing was imported. Preview it (dry run) to see every problem.' },
+      );
+    }
+    if (items.length === 0) {
+      throw new OrbitError('invalid_input', 'The file holds no memories');
+    }
+    const { imported, evicted } = this.memory.importMany(bot.id, items, {
+      createdBy: OWNER,
+      ...(body.untrusted ? { forceTaint: 'import' } : {}),
+    });
+    this.audit.append({
+      actor: OWNER,
+      action: 'memory.imported',
+      subject: bot.id,
+      data: {
+        count: imported.length,
+        trusted: result.trusted,
+        untrusted: result.untrusted,
+        forcedUntrusted: body.untrusted,
+        ids: imported.map((m) => m.id),
+        ...(evicted.length > 0 ? { evicted: evicted.map((m) => m.id) } : {}),
+      },
+    });
+    return { ...result, imported: imported.map((m) => m.id), evicts: evicted.length };
+  }
+
+  /**
+   * Retention (ADR-012 M8): delete unpinned Bot notes and run summaries older
+   * than the Bot's `memory.retentionDays` (else the daemon's), and trim every
+   * Bot to `memory.maxPerBot`. Owner facts, feedback and pinned memories are
+   * never expired. Audited per Bot (ids only).
+   */
+  sweepMemory(actor: string): MemorySweepResult {
+    const now = this.now();
+    this.memorySweptAt = now.getTime();
+    const out: MemorySweepResult = {
+      expired: 0,
+      trimmed: 0,
+      bots: [],
+      maxPerBot: this.memory.maxPerBot,
+      retentionDays: this.config.memory.retentionDays,
+    };
+    const known = new Map(this.bots.list().map((b) => [b.id, b]));
+    for (const botId of this.memory.botIds()) {
+      const bot = known.get(botId);
+      const own = bot?.spec.memory.retentionDays;
+      const days = own === undefined ? this.config.memory.retentionDays : own;
+      const expired =
+        days === null
+          ? []
+          : this.memory.expire(botId, new Date(now.getTime() - days * DAY_MS).toISOString());
+      const trimmed = this.memory.trim(botId);
+      if (expired.length === 0 && trimmed.length === 0) continue;
+      out.expired += expired.length;
+      out.trimmed += trimmed.length;
+      out.bots.push({ botId, expired: expired.length, trimmed: trimmed.length });
+      this.audit.append({
+        actor,
+        action: 'memory.expired',
+        subject: botId,
+        data: {
+          retentionDays: days,
+          maxPerBot: this.memory.maxPerBot,
+          ...(expired.length > 0 ? { expired: expired.map((m) => m.id) } : {}),
+          ...(trimmed.length > 0 ? { trimmed: trimmed.map((m) => m.id) } : {}),
+        },
+      });
+    }
+    return out;
+  }
+
+  private sweepMemoryDaily(): void {
+    if (this.now().getTime() - this.memorySweptAt < DAY_MS) return;
+    try {
+      this.sweepMemory('system');
+    } catch (err) {
+      this.log('error', `memory retention sweep failed: ${errorMessage(err)}`);
+    }
   }
 
   /** Thumbs up/down on a finished Run: a feedback memory future Runs may see. */

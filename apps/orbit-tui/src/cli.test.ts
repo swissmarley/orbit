@@ -775,6 +775,65 @@ describe('orbit CLI', () => {
   });
 
   describe('M6: memory, feedback, delegation, triage', () => {
+    it('exports and imports memories (preview, --yes, --untrusted) and sweeps retention', async () => {
+      const h = harness(mockEnv());
+      await h.run('bot', 'create', '--name', 'Notes', '--goal', 'x');
+      await h.run('bot', 'create', '--name', 'Copy', '--goal', 'y');
+      const body = join(home, 'fact.md');
+      writeFileSync(body, 'Ada owns the launch.\n');
+      await h.run('memory', 'add', 'notes', '--title', 'Owner', '--body-file', body);
+      h.reset();
+      const out = join(home, 'notes.jsonl');
+      expect(await h.run('memory', 'export', '--bot', 'notes', '--out', out, '--json')).toBe(0);
+      expect(h.json<{ count: number }>()).toEqual({ out, count: 1 });
+      if (process.platform !== 'win32') expect(statSync(out).mode & 0o777).toBe(0o600);
+      h.reset();
+      expect(await h.run('memory', 'export')).toBe(0);
+      expect(JSON.parse(h.text().split('\n')[0]!)).toMatchObject({
+        kind: 'orbit-memory-export',
+        count: 1,
+      });
+
+      h.reset();
+      expect(await h.run('memory', 'import', 'copy', out)).toBe(ExitCode.usage);
+      expect(h.text()).toMatch(/1 memory: 1 trusted, 0 untrusted/);
+      expect(h.text()).toMatch(
+        /1 claims to be written by you; they are trusted only because you chose to import/,
+      );
+      expect(h.err.join('\n')).toMatch(/Re-run with --yes/);
+      h.reset();
+      expect(await h.run('memory', 'list', 'copy', '--json')).toBe(0);
+      expect(h.json<unknown[]>()).toEqual([]);
+
+      h.reset();
+      expect(await h.run('memory', 'import', 'copy', out, '--yes')).toBe(0);
+      expect(h.text()).toMatch(/✔ Imported 1 into copy/);
+      h.reset();
+      expect(await h.run('memory', 'import', 'copy', out, '--untrusted', '--yes', '--json')).toBe(
+        0,
+      );
+      const forced = h.json<{ imported: string[]; trusted: number; untrusted: number }>();
+      expect(forced).toMatchObject({ trusted: 0, untrusted: 1 });
+      h.reset();
+      expect(await h.run('memory', 'show', forced.imported[0]!, '--json')).toBe(0);
+      expect(h.json<{ taint: string[] }>().taint).toEqual(['import']);
+
+      writeFileSync(out, 'garbage\n');
+      h.reset();
+      expect(await h.run('memory', 'import', 'copy', out, '--yes')).toBe(ExitCode.usage);
+      expect(h.text()).toMatch(/✘ line 1: not JSON/);
+
+      h.reset();
+      expect(await h.run('memory', 'sweep', '--json')).toBe(0);
+      expect(h.json<{ expired: number; retentionDays: number | null }>()).toMatchObject({
+        expired: 0,
+        retentionDays: null,
+      });
+      h.reset();
+      expect(await h.run('memory', 'sweep')).toBe(0);
+      expect(h.text()).toMatch(/keep forever, at most 1000 per Bot/);
+    });
+
     it('lists, shows, adds, edits and deletes memories; rates Runs; shows the triage budget', async () => {
       const h = harness(mockEnv());
       await h.run(

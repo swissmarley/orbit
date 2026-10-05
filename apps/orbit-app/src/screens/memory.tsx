@@ -6,12 +6,25 @@ import {
   MEMORY_SOURCE_WORD,
   MEMORY_TRUST,
   type Memory,
+  type MemoryImportResult,
   type MemoryKind,
   memoryTrust,
   scrubControls,
+  slugify,
 } from '@orbit/core/browser';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
-import { Brain, Pencil, Pin, PinOff, Plus, Search, ShieldCheck, Trash2 } from 'lucide-react';
+import {
+  Brain,
+  Download,
+  Pencil,
+  Pin,
+  PinOff,
+  Plus,
+  Search,
+  ShieldCheck,
+  Trash2,
+  Upload,
+} from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { confirmAction } from '../components/confirm';
 import { EmptyState, ErrorState, ListSkeleton, PageHeader } from '../components/states';
@@ -23,6 +36,7 @@ import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog';
 import { Field, Input, Label, Select, Textarea } from '../components/ui/input';
 import { Kbd } from '../components/ui/misc';
 import { useActions } from '../lib/actions';
+import { errorText, useClient } from '../lib/api';
 import { cn } from '../lib/cn';
 import { memoryListKey } from '../lib/memory-list';
 import { useBots, useMemoryList } from '../lib/queries';
@@ -428,6 +442,187 @@ function Detail({
   );
 }
 
+/** Save `text` as a file the browser downloads. */
+function saveFile(name: string, type: string, text: string): void {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** What an import would do, before it does it (ADR-012, M8). */
+function ImportPreview({ r, untrusted }: { r: MemoryImportResult; untrusted: boolean }) {
+  if (r.errors.length > 0) {
+    return (
+      <div
+        role="alert"
+        className="rounded-md border border-danger/40 px-3 py-2 text-sm text-danger"
+      >
+        <p className="font-medium">
+          <span aria-hidden>✘</span> This file cannot be imported; nothing will be written.
+        </p>
+        <ul className="mt-1 list-disc pl-5">
+          {r.errors.map((e) => (
+            <li key={e.line}>
+              line {e.line}: {scrubControls(e.message)}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-2 text-sm" data-testid="import-preview">
+      <p>
+        {r.total} {r.total === 1 ? 'memory' : 'memories'}:{' '}
+        <span aria-hidden>{MEMORY_TRUST.trusted.mark}</span> {r.trusted} trusted,{' '}
+        <span aria-hidden>{MEMORY_TRUST.untrusted.mark}</span> {r.untrusted} untrusted
+        {untrusted ? ' (all marked untrusted)' : ''}.
+      </p>
+      {r.claimsOwner > 0 ? (
+        <p className="rounded-md border border-warning/40 bg-warning-bg px-3 py-2 text-warning">
+          {r.claimsOwner} {r.claimsOwner === 1 ? 'says it was' : 'say they were'} written by you.
+          They count as trusted only because you choose to import this file, and trusted memories
+          can be offered to Runs. Mark everything untrusted if you did not write it.
+        </p>
+      ) : null}
+      {r.evicts > 0 ? (
+        <p className="text-fg-muted">
+          To stay within the per-Bot limit, the Bot's {r.evicts} oldest notes and summaries will be
+          dropped.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function ImportDialog({
+  bots,
+  initialBot,
+  open,
+  onOpenChange,
+}: {
+  bots: Bot[];
+  initialBot: string;
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+}) {
+  const ids = useId();
+  const client = useClient();
+  const actions = useActions();
+  const [botId, setBotId] = useState(initialBot);
+  const [file, setFile] = useState<{ name: string; text: string } | null>(null);
+  const [untrusted, setUntrusted] = useState(false);
+  const [preview, setPreview] = useState<MemoryImportResult | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (open) {
+      setBotId(initialBot !== '' ? initialBot : (bots[0]?.id ?? ''));
+      setFile(null);
+      setUntrusted(false);
+      setPreview(null);
+      setProblem(null);
+    }
+  }, [open, initialBot, bots]);
+  // Every change of Bot, file or trust choice previews again (a dry run: nothing is written).
+  useEffect(() => {
+    setPreview(null);
+    setProblem(null);
+    if (!file || !botId) return;
+    let live = true;
+    client.memory
+      .import(botId, { jsonl: file.text, untrusted, dryRun: true })
+      .then((r) => {
+        if (live) setPreview(r);
+      })
+      .catch((err: unknown) => {
+        if (live) setProblem(errorText(err));
+      });
+    return () => {
+      live = false;
+    };
+  }, [client, botId, file, untrusted]);
+  const bot = bots.find((b) => b.id === botId);
+  const ready = preview !== null && preview.errors.length === 0 && preview.total > 0;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        title="Import memories"
+        description="A file exported from Orbit. You see what it holds before anything is written."
+        wide
+      >
+        <form
+          className="flex flex-col gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!bot || !file || !ready) return;
+            setBusy(true);
+            void actions
+              .importMemory(bot, { jsonl: file.text, untrusted })
+              .then(() => onOpenChange(false))
+              .catch(() => undefined)
+              .finally(() => setBusy(false));
+          }}
+        >
+          <Field id={`${ids}-bot`} label="Into Bot">
+            <Select id={`${ids}-bot`} value={botId} onChange={(e) => setBotId(e.target.value)}>
+              {bots.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {scrubControls(b.spec.name)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field id={`${ids}-file`} label="Export file (.jsonl)">
+            <input
+              id={`${ids}-file`}
+              type="file"
+              accept=".jsonl,application/x-ndjson,application/json,text/plain"
+              className="text-sm"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                void f.text().then((text) => setFile({ name: f.name, text }));
+              }}
+            />
+          </Field>
+          <label className="flex items-start gap-2 text-sm text-fg">
+            <input
+              type="checkbox"
+              checked={untrusted}
+              onChange={(e) => setUntrusted(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              Mark everything untrusted: never offered to Runs automatically, whatever the file
+              says.
+            </span>
+          </label>
+          {problem ? (
+            <p role="alert" className="text-sm text-danger">
+              <span aria-hidden>✘</span> {problem}
+            </p>
+          ) : null}
+          {preview ? <ImportPreview r={preview} untrusted={untrusted} /> : null}
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" disabled={busy || !ready}>
+              {preview && ready
+                ? `Import ${preview.total} ${preview.total === 1 ? 'memory' : 'memories'}`
+                : 'Import'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /** The memory browser: what Bots remember, with provenance; view, edit, delete. */
 export function MemoryScreen() {
   const search: {
@@ -441,6 +636,8 @@ export function MemoryScreen() {
   const bots = useBots();
   const [query, setQuery] = useState(search.q ?? '');
   const [adding, setAdding] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const client = useClient();
   const searchRef = useRef<HTMLInputElement>(null);
   const kind = KINDS.some((k) => k.value === search.kind) ? (search.kind as MemoryKind) : undefined;
   const list = useMemoryList({
@@ -503,9 +700,34 @@ export function MemoryScreen() {
         title="Memory"
         description="What your Bots remember — their notes, run summaries and your feedback — and who wrote each one."
         actions={
-          <Button variant="primary" onClick={() => setAdding(true)} disabled={!bots.data?.length}>
-            <Plus aria-hidden /> Add memory
-          </Button>
+          <>
+            <Button
+              onClick={() =>
+                void client.memory
+                  .export(search.bot)
+                  .then((text) => {
+                    const slug = search.bot
+                      ? slugify(bots.data?.find((b) => b.id === search.bot)?.spec.name ?? 'bot')
+                      : 'all';
+                    saveFile(
+                      `orbit-memory-${slug}-${new Date().toISOString().slice(0, 10)}.jsonl`,
+                      'application/x-ndjson',
+                      text,
+                    );
+                  })
+                  .catch(() => undefined)
+              }
+              disabled={!bots.data?.length}
+            >
+              <Download aria-hidden /> {search.bot ? 'Export this Bot' : 'Export all'}
+            </Button>
+            <Button onClick={() => setImporting(true)} disabled={!bots.data?.length}>
+              <Upload aria-hidden /> Import…
+            </Button>
+            <Button variant="primary" onClick={() => setAdding(true)} disabled={!bots.data?.length}>
+              <Plus aria-hidden /> Add memory
+            </Button>
+          </>
         }
       />
       <div className="flex flex-wrap items-end gap-3">
@@ -631,6 +853,12 @@ export function MemoryScreen() {
         initialBot={search.bot ?? ''}
         open={adding}
         onOpenChange={setAdding}
+      />
+      <ImportDialog
+        bots={bots.data ?? []}
+        initialBot={search.bot ?? ''}
+        open={importing}
+        onOpenChange={setImporting}
       />
     </div>
   );

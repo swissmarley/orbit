@@ -13,6 +13,7 @@ import {
   newId,
 } from '@orbit/core';
 import type { OrbitDb } from '@orbit/store';
+import type { ImportedMemory } from './portable';
 
 interface Row {
   seq: number;
@@ -121,6 +122,9 @@ export function stripControls(text: string): string {
   return text.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '');
 }
 
+/** Memories the per-Bot bound and retention may drop: unpinned Bot notes and run summaries. */
+const DROPPABLE = "source IN ('bot', 'summarizer') AND pinned = 0";
+
 function clip(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
 }
@@ -170,9 +174,19 @@ export class MemoryStore {
       /** Directory of the markdown mirror; omitted = no mirror (tests). */
       dir?: string | null;
       now?: () => Date;
+      /** Memories kept per Bot (config `memory.maxPerBot`); default MEMORY_LIMITS.perBot. */
+      maxPerBot?: number;
     } = {},
   ) {
     this.now = opts.now ?? (() => new Date());
+  }
+
+  /** Memories kept per Bot. */
+  get maxPerBot(): number {
+    return Math.max(
+      1,
+      Math.min(this.opts.maxPerBot ?? MEMORY_LIMITS.perBot, MEMORY_LIMITS.perBotCeiling),
+    );
   }
 
   private get redactor(): Redactor {
@@ -245,56 +259,209 @@ export class MemoryStore {
       updatedAt: ts,
       editedAt: null,
     };
-    const evicted: Memory[] = [];
-    this.db.sqlite.transaction(() => {
-      // Keep the store bounded: make room by dropping the oldest Bot note or
-      // summary, untrusted ones first. Never the owner's facts or feedback,
-      // never a pinned memory (review M6 M4).
-      let over = this.count(m.botId) - MEMORY_LIMITS.perBot + 1;
-      while (over > 0) {
-        const old = this.db.sqlite
-          .prepare(
-            `SELECT * FROM memories WHERE bot_id = ? AND source IN ('bot', 'summarizer') AND pinned = 0
-             ORDER BY (taint = '[]') ASC, seq ASC LIMIT 1`,
-          )
-          .get(m.botId) as Row | undefined;
-        if (!old) {
-          throw new OrbitError(
-            'blocked',
-            `This Bot keeps ${MEMORY_LIMITS.perBot} memories and none of them can be dropped automatically (yours, your feedback, pinned)`,
-            { hint: 'Delete some in the memory browser.' },
-          );
-        }
-        this.db.sqlite.prepare('DELETE FROM memories WHERE seq = ?').run(old.seq);
-        evicted.push(toMemory(old));
-        over -= 1;
-      }
-      this.db.sqlite
-        .prepare(
-          `INSERT INTO memories (id, bot_id, kind, source, title, body, taint, run_id, approval_id,
-             signal, pinned, created_by, created_at, updated_at, edited_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
-        )
-        .run(
-          m.id,
-          m.botId,
-          m.kind,
-          m.source,
-          m.title,
-          m.body,
-          JSON.stringify(m.taint),
-          m.runId,
-          m.approvalId,
-          m.signal,
-          m.pinned ? 1 : 0,
-          m.createdBy,
-          ts,
-          ts,
-        );
+    const evicted = this.db.sqlite.transaction(() => {
+      const dropped = this.makeRoom(m.botId, 1);
+      this.insert(m);
+      return dropped;
     })();
     for (const e of evicted) this.unmirror(e);
     this.mirror(m);
     return m;
+  }
+
+  /**
+   * Keep the store bounded: drop the oldest Bot notes or summaries, untrusted
+   * ones first, until `incoming` more fit. Never the owner's facts or
+   * feedback, never a pinned memory (review M6 M4). Call inside a transaction.
+   */
+  private makeRoom(botId: string, incoming: number): Memory[] {
+    const evicted: Memory[] = [];
+    let over = this.count(botId) - this.maxPerBot + incoming;
+    while (over > 0) {
+      const old = this.db.sqlite
+        .prepare(
+          `SELECT * FROM memories WHERE bot_id = ? AND ${DROPPABLE}
+           ORDER BY (taint = '[]') ASC, seq ASC LIMIT 1`,
+        )
+        .get(botId) as Row | undefined;
+      if (!old) {
+        throw new OrbitError(
+          'blocked',
+          `This Bot keeps ${this.maxPerBot} memories and none of them can be dropped automatically (yours, your feedback, pinned)`,
+          { hint: 'Delete some in the memory browser, or raise memory.maxPerBot.' },
+        );
+      }
+      this.db.sqlite.prepare('DELETE FROM memories WHERE seq = ?').run(old.seq);
+      evicted.push(toMemory(old));
+      over -= 1;
+    }
+    return evicted;
+  }
+
+  private insert(m: Memory): void {
+    this.db.sqlite
+      .prepare(
+        `INSERT INTO memories (id, bot_id, kind, source, title, body, taint, run_id, approval_id,
+           signal, pinned, created_by, created_at, updated_at, edited_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        m.id,
+        m.botId,
+        m.kind,
+        m.source,
+        m.title,
+        m.body,
+        JSON.stringify(m.taint),
+        m.runId,
+        m.approvalId,
+        m.signal,
+        m.pinned ? 1 : 0,
+        m.createdBy,
+        m.createdAt,
+        m.updatedAt,
+        m.editedAt,
+      );
+  }
+
+  /** Memories the bound may never drop: the owner's, feedback, pinned. */
+  private countKept(botId: string): number {
+    const row = this.db.sqlite
+      .prepare(`SELECT COUNT(*) AS n FROM memories WHERE bot_id = ? AND NOT (${DROPPABLE})`)
+      .get(botId) as { n: number };
+    return row.n;
+  }
+
+  /**
+   * What importing `n` memories into a Bot would do to the bound: how many
+   * existing Bot notes and summaries go, or why it cannot fit.
+   */
+  importPlan(botId: string, n: number): { evicts: number; fits: boolean } {
+    return {
+      evicts: Math.max(0, this.count(botId) + n - this.maxPerBot),
+      fits: n + this.countKept(botId) <= this.maxPerBot,
+    };
+  }
+
+  /**
+   * Import memories into a Bot (owner only, ADR-012 M8): ids are new, the
+   * provenance (source, taint, Run, pinned, timestamps) is kept, the text
+   * goes through the same redaction and control stripping as any write.
+   * `forceTaint` marks every memory untrusted with that source. An
+   * untrusted memory is never pinned. All or nothing: room is made by
+   * dropping existing Bot notes and summaries only, never other imports.
+   */
+  importMany(
+    botId: string,
+    items: readonly ImportedMemory[],
+    opts: { createdBy: string; forceTaint?: string },
+  ): { imported: Memory[]; evicted: Memory[] } {
+    const plan = this.importPlan(botId, items.length);
+    if (!plan.fits) {
+      throw new OrbitError(
+        'blocked',
+        `This Bot keeps ${this.maxPerBot} memories; ${items.length} more do not fit next to the ones that cannot be dropped automatically (yours, your feedback, pinned)`,
+        { hint: 'Delete some in the memory browser, import fewer, or raise memory.maxPerBot.' },
+      );
+    }
+    const base = this.now().getTime();
+    const imported = items.map((item, i): Memory => {
+      const taint = mergeTaint(item.taint, opts.forceTaint ? [opts.forceTaint] : []);
+      const { title, body } = this.clean(item.title, item.body);
+      return {
+        id: newId('mem', base + i),
+        botId,
+        kind: item.kind,
+        source: item.source,
+        title,
+        body,
+        taint,
+        runId: item.runId,
+        approvalId: item.approvalId,
+        signal: item.signal,
+        pinned: item.pinned && taint.length === 0,
+        createdBy: opts.createdBy,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+        editedAt: item.editedAt,
+      };
+    });
+    const evicted = this.db.sqlite.transaction(() => {
+      const dropped = this.makeRoom(botId, imported.length);
+      for (const m of imported) this.insert(m);
+      return dropped;
+    })();
+    for (const e of evicted) this.unmirror(e);
+    for (const m of imported) this.mirror(m);
+    return { imported, evicted };
+  }
+
+  /**
+   * Retention: delete a Bot's unpinned notes and run summaries written
+   * before `beforeIso`. Owner facts, feedback and pinned memories never expire.
+   */
+  expire(botId: string, beforeIso: string): Memory[] {
+    const rows = this.db.sqlite.transaction(() => {
+      const old = this.db.sqlite
+        .prepare(`SELECT * FROM memories WHERE bot_id = ? AND ${DROPPABLE} AND created_at < ?`)
+        .all(botId, beforeIso) as Row[];
+      const del = this.db.sqlite.prepare('DELETE FROM memories WHERE seq = ?');
+      for (const r of old) del.run(r.seq);
+      return old;
+    })();
+    const out = rows.map(toMemory);
+    for (const m of out) this.unmirror(m);
+    return out;
+  }
+
+  /** Drop memories over the bound (after the owner lowered `memory.maxPerBot`). */
+  trim(botId: string): Memory[] {
+    const rows = this.db.sqlite.transaction(() => {
+      const over = this.count(botId) - this.maxPerBot;
+      if (over <= 0) return [];
+      // Best effort: what cannot be dropped stays (the next write is refused).
+      const old = this.db.sqlite
+        .prepare(
+          `SELECT * FROM memories WHERE bot_id = ? AND ${DROPPABLE}
+           ORDER BY (taint = '[]') ASC, seq ASC LIMIT ?`,
+        )
+        .all(botId, over) as Row[];
+      const del = this.db.sqlite.prepare('DELETE FROM memories WHERE seq = ?');
+      for (const r of old) del.run(r.seq);
+      return old;
+    })();
+    const out = rows.map(toMemory);
+    for (const m of out) this.unmirror(m);
+    return out;
+  }
+
+  /** Bots that have memories. */
+  botIds(): string[] {
+    return (
+      this.db.sqlite.prepare('SELECT DISTINCT bot_id FROM memories ORDER BY bot_id').all() as {
+        bot_id: string;
+      }[]
+    ).map((r) => r.bot_id);
+  }
+
+  /** Every memory of one Bot (or all Bots), oldest first, read a page at a time. */
+  *each(botId?: string): Generator<Memory> {
+    let after = 0;
+    for (;;) {
+      const rows = (
+        botId
+          ? this.db.sqlite
+              .prepare('SELECT * FROM memories WHERE bot_id = ? AND seq > ? ORDER BY seq LIMIT 500')
+              .all(botId, after)
+          : this.db.sqlite
+              .prepare('SELECT * FROM memories WHERE seq > ? ORDER BY seq LIMIT 500')
+              .all(after)
+      ) as Row[];
+      for (const r of rows) yield toMemory(r);
+      const last = rows.at(-1);
+      if (!last || rows.length < 500) return;
+      after = last.seq;
+    }
   }
 
   find(id: string): Memory | undefined {
