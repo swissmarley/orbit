@@ -73,7 +73,7 @@ function MemoryRow({
               <Pin className="inline size-3" aria-hidden /> pinned
             </span>
           ) : null}
-          <span className="ml-auto text-xs text-fg-subtle">
+          <span className="ml-auto text-xs text-fg-muted">
             <Time iso={m.createdAt} />
           </span>
         </span>

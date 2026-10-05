@@ -37,7 +37,7 @@ test.describe('memory and teams (M6)', () => {
       (r) => r.status === 'completed',
       30_000,
     );
-    await expect(page.getByText('done', { exact: true }).first()).toBeVisible();
+    await expect(tree.getByText(/done/).first()).toBeVisible();
 
     // Thumbs down with a comment → a feedback memory.
     await page.getByRole('button', { name: /Not good/ }).click();
@@ -55,7 +55,9 @@ test.describe('memory and teams (M6)', () => {
     await expect(list.getByText('Owner disliked a result')).toBeVisible();
     await expect(list.getByText('untrusted').first()).toBeVisible(); // the summary of a tainted Run
     const axe = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
-    expect(axe.violations.map((v) => v.id)).toEqual([]);
+    expect(
+      axe.violations.map((v) => `${v.id} ${v.nodes.map((n) => n.target.join(' ')).join(' | ')}`),
+    ).toEqual([]);
     await list.getByText('Owner disliked a result').click();
     const detail = page.getByRole('region', { name: 'Selected memory' });
     await detail.getByRole('button', { name: 'Edit' }).click();

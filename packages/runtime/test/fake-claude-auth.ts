@@ -108,7 +108,8 @@ else finish();
       return JSON.parse(readFileSync(file, 'utf8')) as Received;
     },
     cleanup() {
-      rmSync(dir, { recursive: true, force: true });
+      // The fake CLI may still be finishing a write when the probe returns.
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     },
   };
 }
