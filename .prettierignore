@@ -7,3 +7,4 @@ packages/api/openapi.json
 storybook-static
 playwright-report
 test-results
+.claude/worktrees

@@ -16,3 +16,5 @@ test-results/
 .orbit/
 # Tauri
 apps/orbit-app/src-tauri/target/
+# Agent worktrees (Claude Code)
+.claude/worktrees/
