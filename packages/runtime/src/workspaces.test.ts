@@ -59,6 +59,19 @@ describe('keyProxyCredential (where the key proxies get the key, ADR-018)', () =
     });
     expect(keyProxyCredential({}, null)).toEqual({ kind: 'none' });
   });
+
+  it("hands the apiKeyHelper's output to onKey (orbitd's redactor)", async () => {
+    const seen: string[] = [];
+    const helper = keyProxyCredential(
+      { PATH: process.env.PATH ?? '' },
+      'printf sk-ant-api03-HELPER-OUT',
+      (k) => seen.push(k),
+    );
+    expect(helper.kind === 'key' ? await helper.source.get() : null).toBe(
+      'sk-ant-api03-HELPER-OUT',
+    );
+    expect(seen).toEqual(['sk-ant-api03-HELPER-OUT']);
+  });
 });
 
 describe('sandboxWorkspaces — docker without the experimental gate', () => {

@@ -273,6 +273,8 @@ export class OrbitService {
   private readonly sandbox: SandboxManager;
   /** Where orbitd's key proxies (host engines and Docker sandboxes) get the key. */
   private readonly keyCredential: EngineCredential;
+  /** Set at start when the audit key predates a log without keyed records (doctor shows it). */
+  private auditKeyWarning: string | null = null;
   /** When retention last swept memory (ms); orbitd sweeps at start and once a day. */
   private memorySweptAt = Number.NEGATIVE_INFINITY;
 
@@ -302,6 +304,13 @@ export class OrbitService {
         'error',
         'a new audit key was created but the audit log has keyed records: `orbit audit verify` will report them; restore the original audit key',
       );
+    }
+    // A key from an earlier log but no keyed record in this one: the database
+    // was reset — or replaced by a log written without the key (M8 review L3).
+    if (!auditKey.created && !this.audit.status().keyedSince) {
+      this.auditKeyWarning =
+        'The audit key already existed, but the audit log had no keyed records when orbitd started: the database was reset or replaced. If you did not do that, treat the records before this start as unverified (`orbit audit verify` shows where keyed records begin).';
+      this.log('warn', this.auditKeyWarning);
     }
     this.audit.ensureKeyed({ keySource: auditKey.source });
     this.rules = new RuleStore(db, this.now);
@@ -385,7 +394,10 @@ export class OrbitService {
     });
 
     // One key source for both key proxies (one apiKeyHelper cache, ADR-018).
-    this.keyCredential = keyProxyCredential(env, config.sdk.apiKeyHelper);
+    // apiKeyHelper output is redacted like the static key (M8 review L1).
+    this.keyCredential = keyProxyCredential(env, config.sdk.apiKeyHelper, (k) =>
+      this.redactor.addSecret(k),
+    );
     this.sandbox = createSandboxManager(config.home, env, {
       legacyName: (bot) => this.m2WorkspaceName(bot),
       apiKeyHelper: config.sdk.apiKeyHelper,
@@ -2238,6 +2250,9 @@ export class OrbitService {
           code: w.code,
           message: this.redactor.redactString(w.message),
         })),
+        ...(this.auditKeyWarning
+          ? [{ code: 'audit_key_without_keyed_log', message: this.auditKeyWarning }]
+          : []),
         // The key stayed in orbitd's own environment, readable by every
         // process of the same user (/proc/<pid>/environ, ps eww).
         ...(this.opts.apiKeyOrigin === 'environment' && r.apiCredential === 'api_key'

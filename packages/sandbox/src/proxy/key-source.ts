@@ -36,6 +36,8 @@ export interface ApiKeyHelperOptions {
   ttlMs?: number;
   timeoutMs?: number;
   now?: () => number;
+  /** Called with every key the helper prints (orbitd registers it with its redactor). */
+  onKey?: (key: string) => void;
 }
 
 /**
@@ -67,6 +69,7 @@ export function apiKeyHelper(opts: ApiKeyHelperOptions): ApiKeySource {
         { hint: 'Check ORBIT_API_KEY_HELPER: it must print only the key on stdout.' },
       );
     }
+    opts.onKey?.(key);
     cached = { key, at: now() };
     return key;
   };

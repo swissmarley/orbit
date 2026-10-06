@@ -33,6 +33,17 @@ describe('apiKeyHelper', () => {
     expect(run.calls).toHaveLength(2);
   });
 
+  it('reports every key it fetches (so orbitd can redact it), once per helper run', async () => {
+    let n = 0;
+    const run = fakeRunner(() => ({ stdout: `sk-ant-helper-${++n}\n` }));
+    const seen: string[] = [];
+    const source = apiKeyHelper({ command: 'helper', run, onKey: (k) => seen.push(k) });
+    await Promise.all([source.get(), source.get()]);
+    source.invalidate();
+    await source.get();
+    expect(seen).toEqual(['sk-ant-helper-1', 'sk-ant-helper-2']);
+  });
+
   it('refreshes after invalidate (a 401) and shares one run between concurrent requests', async () => {
     let n = 0;
     const run = fakeRunner(() => ({ stdout: `sk-ant-key-${++n}` }));

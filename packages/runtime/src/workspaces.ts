@@ -58,7 +58,11 @@ function helperTtl(env: Env): number | undefined {
  * on the host with the env the SDK engine would have given it. Bedrock and
  * Vertex cannot use the proxies.
  */
-export function keyProxyCredential(env: Env, apiKeyHelperCommand: string | null): EngineCredential {
+export function keyProxyCredential(
+  env: Env,
+  apiKeyHelperCommand: string | null,
+  onKey?: (key: string) => void,
+): EngineCredential {
   if (truthy(env.CLAUDE_CODE_USE_BEDROCK)) return { kind: 'unsupported', provider: 'bedrock' };
   if (truthy(env.CLAUDE_CODE_USE_VERTEX)) return { kind: 'unsupported', provider: 'vertex' };
   const key = env.ANTHROPIC_API_KEY?.trim();
@@ -71,6 +75,7 @@ export function keyProxyCredential(env: Env, apiKeyHelperCommand: string | null)
         command: apiKeyHelperCommand,
         run: defaultRunner(buildChildEnv('sdk-engine', env)),
         ...(ttlMs !== undefined ? { ttlMs } : {}),
+        ...(onKey ? { onKey } : {}),
       }),
     };
   }
