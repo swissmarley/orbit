@@ -74,8 +74,11 @@ export interface SdkDriverOptions {
    * never enters an engine on the host); unused for Bedrock / Vertex.
    */
   keyProxy?: EngineKeyProxy | null;
-  /** Told each segment's key-proxy token, so the redactor hides it (like hook tokens). */
-  secrets?: { addSecret(value: string): void };
+  /**
+   * Told each segment's key-proxy token, so the redactor hides it (like hook
+   * tokens), and told to forget it once the segment's events are consumed.
+   */
+  secrets?: { addSecret(value: string): void; removeSecret?(value: string): void };
   /** Injected in tests; defaults to the Agent SDK's `query`. */
   queryFn?: QueryFn;
   /** Tests: the host platform and where bubblewrap is (see `subprocessScrub`). */
@@ -283,6 +286,8 @@ export class SdkDriver implements AgentDriver {
     const stderrTail: string[] = [];
     /** Ends this segment's key-proxy lease: forwarding stops at once (stop, kill, budget, end). */
     let closeKeyLease: () => void = () => undefined;
+    /** This segment's key-proxy token, forgotten by the redactor once its events are consumed. */
+    let segmentToken: string | null = null;
     let finished = false;
     const finish = (body?: RunEventBody) => {
       if (finished) return;
@@ -382,6 +387,7 @@ export class SdkDriver implements AgentDriver {
             lease.close();
           };
           this.opts.secrets?.addSecret(lease.token);
+          segmentToken = lease.token;
           if (req.signal.aborted) {
             finish(
               event('run.cancelled', {
@@ -501,6 +507,32 @@ export class SdkDriver implements AgentDriver {
       }
     };
     void consume();
-    return out;
+    // The token stays registered until the consumer has taken (and recorded,
+    // redacted) every event of the segment; then it is dead and forgotten,
+    // so the redactor does not grow with every segment (M8 review L9).
+    const forget = () => {
+      if (segmentToken === null) return;
+      this.opts.secrets?.removeSecret?.(segmentToken);
+      segmentToken = null;
+    };
+    return {
+      [Symbol.asyncIterator]: () => {
+        const it = out[Symbol.asyncIterator]();
+        return {
+          next: async () => {
+            const r = await it.next();
+            if (r.done === true) forget();
+            return r;
+          },
+          return: async (value?: unknown): Promise<IteratorResult<RunEventBody>> => {
+            const r = it.return
+              ? await it.return(value)
+              : { value: undefined, done: true as const };
+            forget();
+            return r;
+          },
+        };
+      },
+    };
   }
 }

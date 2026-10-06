@@ -69,6 +69,7 @@ function driver(
   bare = true,
   keyProxy: EngineKeyProxy = new FakeKeyProxy(),
   secrets: string[] = [],
+  forgotten: string[] = [],
 ): SdkDriver {
   return new SdkDriver({
     authMethod: 'api_key',
@@ -76,7 +77,7 @@ function driver(
     bare,
     apiKeyHelper: null,
     keyProxy,
-    secrets: { addSecret: (v) => secrets.push(v) },
+    secrets: { addSecret: (v) => secrets.push(v), removeSecret: (v) => forgotten.push(v) },
     queryFn,
     // The host check below has its own tests; the contract runs on any host.
     findBwrap: () => '/usr/bin/bwrap',
@@ -96,8 +97,9 @@ describe('SdkDriver specifics', () => {
     const seen: Options[] = [];
     const proxy = new FakeKeyProxy();
     const secrets: string[] = [];
+    const forgotten: string[] = [];
     const events = await collect(
-      driver(fakeQuery(FIXTURE('pong'), seen), true, proxy, secrets),
+      driver(fakeQuery(FIXTURE('pong'), seen), true, proxy, secrets, forgotten),
       {},
     );
     expect(events.at(-1)?.type).toBe('run.completed');
@@ -122,6 +124,8 @@ describe('SdkDriver specifics', () => {
     }
     // The segment token is a secret too: the redactor learns it, events never carry it.
     expect(secrets).toEqual([lease.token]);
+    // …and forgets it once every event of the segment was taken (M8 review L9).
+    expect(forgotten).toEqual([lease.token]);
     expect(JSON.stringify(events)).not.toContain(lease.token);
     expect(JSON.stringify(events)).not.toContain(PLANTED.ANTHROPIC_API_KEY);
     expect(lease.closed).toBe(true);
