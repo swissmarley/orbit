@@ -206,6 +206,21 @@ export function moduleRoots(pluginDir: string, maxDepth = 3): string[] {
   return [...roots];
 }
 
+/**
+ * What of Node's installation a plugin sandbox shows: the install prefix
+ * when `node` sits in one (`<prefix>/bin/node` beside `lib/node_modules` or
+ * `include/node`: nvm, Volta, Homebrew, the official tarball), otherwise the
+ * binary alone — never the parent of an arbitrary folder (`~/.local/bin/node`
+ * would otherwise bring in `~/.local`, keyrings and all; M8 review L8).
+ */
+export function nodeRuntimePath(nodeReal: string): string {
+  const prefix = dirname(dirname(nodeReal));
+  const isPrefix =
+    lstatOrNull(join(prefix, 'lib', 'node_modules'))?.isDirectory() === true ||
+    lstatOrNull(join(prefix, 'include', 'node'))?.isDirectory() === true;
+  return isPrefix && prefix !== dirname(prefix) ? prefix : nodeReal;
+}
+
 /** Linux system locations that exist, as binds or symlinks (merged /usr). */
 export function linuxSystemPaths(paths: readonly string[] = LINUX_SYSTEM_PATHS): SystemPath[] {
   return paths.flatMap((p) => {
@@ -346,7 +361,7 @@ export function prepareSandboxedCommand(
     system.some((s) => s.symlink === undefined && isWithin(p, s.path));
   const runtime: string[] = [];
   const nodeReal = realOrNull(req.paths.node);
-  if (nodeReal) runtime.push(dirname(dirname(nodeReal)));
+  if (nodeReal) runtime.push(nodeRuntimePath(nodeReal));
   if (usesTsx && req.paths.tsx.startsWith('file:')) {
     const store = outermostNodeModules(fileURLToPath(req.paths.tsx));
     if (store) runtime.push(store);

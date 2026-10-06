@@ -67,7 +67,8 @@ context, never from the plugin at run time; the wrapper only adds arguments
   and `/tmp`;
 - the owner's `$HOME` replaced in place by an empty tmpfs: `~/.ssh`,
   `~/.claude`, `~/.aws`, gcloud, netrc and keychains are simply not there;
-- read-only: Node's install prefix, the plugin's directory, and the package
+- read-only: Node's install prefix (only when `node` sits in one — beside
+  `lib/node_modules` or `include/node` — else the binary alone), the plugin's directory, and the package
   stores its `node_modules` links point into (a pnpm workspace's store and
   sibling packages, followed a few levels; a link target counts only if it is
   a store or a folder with a `package.json`); `${tsx}`'s store when used; the

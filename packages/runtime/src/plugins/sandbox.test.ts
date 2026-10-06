@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { createServer as createHttpServer } from 'node:http';
 import { type Server, createServer } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { PluginManifest, type PluginManifestInput } from '@orbit/core';
 import { SecretVault } from '@orbit/policy';
 import { type PluginSandboxSupport, detectPluginSandbox } from '@orbit/sandbox';
@@ -304,6 +304,36 @@ describe('prepareSandboxedCommand', () => {
     );
     expect(ws.args).toContain('--share-net');
     expect(ws.args).toContain('/home/owner/.orbit/workspaces/bot_1');
+  });
+
+  it("binds Node's install prefix only when it is one; a lone binary (~/.local/bin/node) alone", () => {
+    const root = mkdtempSync(join(tmpdir(), 'orbit-node-prefix-'));
+    try {
+      const lone = join(root, 'home', '.local', 'bin', 'node');
+      mkdirSync(dirname(lone), { recursive: true });
+      mkdirSync(join(root, 'home', '.local', 'share', 'keyrings'), { recursive: true });
+      writeFileSync(lone, '');
+      const roBinds = (node: string) => {
+        const w = prepareSandboxedCommand(
+          { mode: 'auto', support: () => BWRAP },
+          req({ paths: { node, tsx: 'tsx' } }),
+        );
+        return w.args.flatMap((a, i) => (a === '--ro-bind' ? [w.args[i + 1] ?? ''] : []));
+      };
+      const loneBinds = roBinds(lone);
+      expect(loneBinds).toContain(lone);
+      expect(loneBinds).not.toContain(join(root, 'home', '.local'));
+      expect(loneBinds).not.toContain(join(root, 'home', '.local', 'bin'));
+
+      // nvm, Volta, Homebrew, the official tarball: bin/node beside lib/node_modules or include/node.
+      const prefix = join(root, 'nvm', 'versions', 'node', 'v22.22.0');
+      mkdirSync(join(prefix, 'bin'), { recursive: true });
+      mkdirSync(join(prefix, 'lib', 'node_modules'), { recursive: true });
+      writeFileSync(join(prefix, 'bin', 'node'), '');
+      expect(roBinds(join(prefix, 'bin', 'node'))).toContain(prefix);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
