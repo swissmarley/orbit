@@ -5,7 +5,7 @@ You are lead engineer on **Orbit** (repo `swissmarley/orbit`): a self-hostable p
 ## State
 
 - `main` and `claude/orbit-build` point at the same commit. M0–M8 are complete; each passed a safety review, and M4–M8 a UI review. The engineering plan's milestones are done; what remains is in PLAN §7.
-- `pnpm check` passes (format, lint, typecheck, 3194 tests); `pnpm test:e2e` passes 16 Playwright tests (real orbitd, mock driver, axe in both themes). CI (`.github/workflows/ci.yml`) runs four jobs with `ORBIT_DRIVER=mock` and no credentials: check (with bubblewrap installed, so the real plugin-sandbox tests run), app e2e (plus the Browser plugin's Chromium tests and Chromium inside bwrap), package (`pnpm smoke`), docker (build, `compose up`, the CLI in the container).
+- `pnpm check` passes (format, lint, typecheck, 3252 tests); `pnpm test:e2e` passes 16 Playwright tests (real orbitd, mock driver, axe in both themes). CI (`.github/workflows/ci.yml`) runs four jobs with `ORBIT_DRIVER=mock` and no credentials: check (with bubblewrap installed, so the real plugin-sandbox tests run), app e2e (plus the Browser plugin's Chromium tests and Chromium inside bwrap), package (`pnpm smoke`), docker (build, `compose up`, the CLI in the container).
 - CI sets `NODE_OPTIONS=--max-old-space-size=6144`; `pnpm lint` runs ESLint in three processes. Ubuntu 24 runners need `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` for bwrap and Chromium's sandbox (the workflow does it).
 - `release.yml` (on `v*` tags; workflow_dispatch is a dry run) publishes `orbit-bots` to npm only when an `NPM_TOKEN` secret exists, pushes `ghcr.io/swissmarley/orbit`, builds desktop bundles through `desktop.yml` and creates the GitHub Release. Nothing has been tagged yet.
 - Work on `claude/orbit-build`. Conventional Commits with the attribution lines. Fast-forward `main` when CI is green.
@@ -33,13 +33,14 @@ set -o pipefail; pnpm typecheck | tail           # never pipe typecheck without 
 
 - **Security corpus** (`packages/api/test/corpus`): 38 payloads × ten injection channels, budgets in every dimension, kill switches × Run states; it found and fixed six real bugs. **Load test** (`apps/orbitd/scripts/load-test.ts`).
 - **Hosted mode** (ADR-015): OIDC sign-in (PKCE, `jose`), TLS in orbitd or behind a local proxy, roles (`viewer`/`operator`/`owner`) on every contract route (`roles.test.ts`), actors from the request's principal; container bind for Compose.
-- **Keys never in a child process** (ADR-018 + amendment): host SDK engines use orbitd's loopback `HostKeyProxy` (per-segment token); Docker engines a Unix-socket key proxy with `--network none` and a DNS-checked egress allowlist proxy; Bedrock/Vertex are the only credentials that reach an engine (Linux then needs bwrap).
+- **Keys never in a child process** (ADR-018 + amendment): host SDK engines use orbitd's loopback `HostKeyProxy` (per-segment token); Docker engines a Unix-socket key proxy with `--network none` and a DNS-checked egress allowlist proxy; Bedrock/Vertex are the only credentials that reach an engine (Linux then needs bwrap). orbitd keeps the key out of its own environment too (`ORBIT_API_KEY_FILE`, stdin hand-over from the CLI, a re-exec without the variable); key files are denied to Bots, the engine sandbox and plugins.
 - **Plugins** (ADR-019): OS sandbox (bwrap / sandbox-exec) from the manifest's `sandbox` section; Browser DNS checks; catalog/npm installs with SRI and a strict extractor.
 - **Run controls** (ADR-016): per-Run pause, safe automatic retry of interrupted Runs, `orbit shell` take-over.
 - **Audit and memory**: keyed audit chain with signed checkpoints; memory export/import and retention.
 - **Clients**: roles in the App, TUI mouse, dynamic completion, pause/take-over everywhere.
 - **Packaging** (ADR-017): npm `orbit-bots`, Docker image + Compose, Tauri desktop shell, release workflow.
 - **Docs**: README (diagram, screenshots), quickstart, compliance note, security model, architecture.
+- **Reviews**: the safety review found no CRITICAL/HIGH; its four MEDIUM findings (plugin git hooks, the take-over shell over a Bot-written `.git`, the key in orbitd's environment, the npm token in the release job) and eleven LOW ones are fixed, and a re-review confirmed them. The UI review's 21 findings (incl. role gating in the App and the TUI pause banner) are fixed.
 
 ## User's hard security constraints (never relax)
 
