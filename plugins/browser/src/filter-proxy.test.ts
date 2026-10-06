@@ -1,5 +1,5 @@
 import { type IncomingMessage, type Server, createServer, request } from 'node:http';
-import { type AddressInfo, connect } from 'node:net';
+import { type AddressInfo, connect, createServer as createNetServer } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { addressRefusal } from './address';
 import { isIpLiteral, parseAllowlist, requestVerdict } from './allowlist';
@@ -127,6 +127,34 @@ describe('filter proxy', () => {
     } finally {
       await chained.close();
       await stop(upstream);
+    }
+  });
+
+  it('sends the owner proxy the authority it checked, not the browser’s raw one', async () => {
+    const seen: string[] = [];
+    const upstream = createNetServer((s) => {
+      s.once('data', (d: Buffer) => {
+        seen.push(d.toString().split('\r\n')[0] ?? '');
+        s.end('HTTP/1.1 200 Connection Established\r\n\r\n');
+      });
+    });
+    await new Promise<void>((done) => upstream.listen(0, '127.0.0.1', done));
+    const upPort = (upstream.address() as AddressInfo).port;
+    const allow = parseAllowlist('example.com');
+    const chained = await startFilterProxy({
+      allowed: (url) => requestVerdict(allow, url).allowed,
+      onBlocked: () => undefined,
+      upstream: { server: `http://127.0.0.1:${upPort}`, bypass: '' },
+      resolve: () => Promise.resolve([{ address: '93.184.215.14', family: 4 }]),
+    });
+    try {
+      expect(await tunnel(chained.port, 'EXAMPLE.com:0443')).toBe(
+        'HTTP/1.1 200 Connection Established',
+      );
+      expect(seen).toEqual(['CONNECT example.com:443 HTTP/1.1']);
+    } finally {
+      await chained.close();
+      await new Promise<void>((done) => upstream.close(() => done()));
     }
   });
 

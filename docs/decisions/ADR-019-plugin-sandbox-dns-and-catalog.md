@@ -67,7 +67,8 @@ context, never from the plugin at run time; the wrapper only adds arguments
   and `/tmp`;
 - the owner's `$HOME` replaced in place by an empty tmpfs: `~/.ssh`,
   `~/.claude`, `~/.aws`, gcloud, netrc and keychains are simply not there;
-- read-only: Node's install prefix, the plugin's directory, and the package
+- read-only: Node's install prefix (only when `node` sits in one — beside
+  `lib/node_modules` or `include/node` — else the binary alone), the plugin's directory, and the package
   stores its `node_modules` links point into (a pnpm workspace's store and
   sibling packages, followed a few levels; a link target counts only if it is
   a store or a folder with a `package.json`); `${tsx}`'s store when used; the
@@ -80,9 +81,18 @@ context, never from the plugin at run time; the wrapper only adds arguments
   for a file), before the workspace is bound — `$ORBIT_HOME` is absent even
   when the Bot's workspace inside it is shown;
 - the workspace read-only or read-write only as declared; for a worktree Bot,
-  the owner repository's common git directory with the same access, its
-  `config`, `hooks` and `info` bound read-only on top (a plugin cannot plant
-  a hook or filter for the owner's own git);
+  the owner repository's common git directory **read-only**, and with
+  `workspace: write` only what a commit and a push write bound read-write on
+  top: `objects`, `refs`, `logs` (created when missing) and `reftable`, and
+  the Bot's own `worktrees/<name>` entry (found by its `gitdir` back-pointer,
+  never through the workspace's `.git`) with its `commondir`, `gitdir` and
+  `config.worktree` (an empty one is created) read-only again. So a plugin
+  cannot plant a hook, config, filter or pointer for the owner's own git:
+  `config`, `config.worktree`, `hooks`, `info`, `modules/*` (submodules'
+  config and hooks), `commondir`, `packed-refs` and other worktrees' entries
+  can be neither changed nor created, whether they exist or not (M8 safety
+  review: an earlier profile bound the whole directory read-write and
+  protected only `config`, `hooks` and `info` when they existed);
 - working directory: the workspace when bound, else the empty home;
   `TMPDIR=/tmp`.
 
@@ -92,8 +102,9 @@ does not matter): reads everywhere except the home, `$ORBIT_HOME`, the denied
 paths and the shared temporary folders, plus the plugin, its runtime and
 folders, the workspace and a private directory; metadata reads everywhere
 (path resolution needs them); writes only to the private directory and to
-writable folders and the workspace (a git directory without config, hooks
-and info); network only when declared; a short list of system services.
+writable folders and the workspace (in a git directory only the folders
+listed above, minus the Bot entry's pointers); network only when declared; a
+short list of system services.
 macOS cannot hide `$HOME` in place, so HOME and TMPDIR point at the private
 directory (removed when the process exits).
 
@@ -199,8 +210,23 @@ the database, so no migration is needed.
   there, a plugin that fails shows the error at enable and `off` is the
   escape hatch), and npm installs against the real registry (a local fake
   registry serves tarballs built in the tests).
-- Residual: a sandboxed GitHub plugin sees the owner repository's whole git
-  directory read-write (objects and other branches' refs), except its config,
-  hooks and info; narrowing that to the Bot's own refs is future work. Linux
+- Residual: a sandboxed GitHub plugin can write the owner repository's
+  objects, every ref (other branches' too) and reflogs; narrowing that to the
+  Bot's own refs is future work. Its own worktree entry is writable, so it
+  could leave rebase or merge state there (e.g. a `rebase-merge/` todo with
+  `exec` lines) that runs only if the owner continues that rebase themselves
+  in the Bot's workspace. Git operations that rewrite a file at the top of
+  the common dir (`packed-refs` when deleting a packed ref, `shallow`,
+  `gc.pid` for an automatic gc) fail inside the sandbox; the plugin's tools
+  (add, commit, push) need none of them. A plugin with `network: true`
+  shares the host's network namespace (`--share-net`), and with it the
+  host's abstract Unix sockets: an X11 server listening on
+  `@/tmp/.X11-unix/X<n>` (keystroke injection, screen reads) or a D-Bus
+  session bus on an abstract address is reachable even though their socket
+  files are not bound (M8 safety review). bubblewrap has no option to keep
+  the network but drop abstract sockets (that needs a seccomp filter on
+  `connect`/`bind` to `sun_path[0] == 0`, or a separate network namespace
+  with forwarded egress); not done, documented in docs/security.md.
+  Plugins without network get their own namespace and reach none. Linux
   system folders (`/etc`, `/usr`) stay readable. A link in an owner-added
   folder's `node_modules` can make a package folder outside it readable.

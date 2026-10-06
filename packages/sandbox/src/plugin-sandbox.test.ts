@@ -171,8 +171,9 @@ describe('bwrapArgs', () => {
     expect(args.lastIndexOf(ws)).toBeGreaterThan(mask);
   });
 
-  it("binds a worktree Bot's git directory with its config, hooks and info read-only on top", () => {
+  it("binds a worktree Bot's git directory read-only, with only what a commit writes writable", () => {
     const git = '/home/owner/src/repo/.git';
+    const entry = `${git}/worktrees/bot_1`;
     const args = bwrapArgs(
       pluginSandboxSpec(
         input({
@@ -180,25 +181,38 @@ describe('bwrapArgs', () => {
           git: {
             dir: git,
             access: 'write',
-            protect: [`${git}/config`, `${git}/hooks`, `${git}/info`],
+            writable: [`${git}/objects`, `${git}/refs`, `${git}/logs`, entry],
+            protect: [`${entry}/commondir`, `${entry}/gitdir`, `${entry}/config.worktree`],
           },
         }),
       ),
     );
     const at = args.indexOf(git);
-    expect(args[at - 1]).toBe('--bind');
-    expect(after(args, '--ro-bind')).toEqual(
+    // The common dir itself (config, hooks, info, modules, commondir, …) is never writable.
+    expect(args[at - 1]).toBe('--ro-bind');
+    expect(after(args, '--bind')).toEqual(
       expect.arrayContaining([
-        `${git}/config ${git}/config`,
-        `${git}/hooks ${git}/hooks`,
-        `${git}/info ${git}/info`,
+        `${git}/objects ${git}/objects`,
+        `${git}/refs ${git}/refs`,
+        `${git}/logs ${git}/logs`,
+        `${entry} ${entry}`,
       ]),
     );
-    expect(args.indexOf(`${git}/config`)).toBeGreaterThan(at);
+    expect(after(args, '--bind').some((b) => /\/(config|hooks|info|modules)\b/.test(b))).toBe(
+      false,
+    );
+    // The entry's pointers go read-only after (on top of) the entry's writable bind.
+    expect(args.indexOf(`${entry}/commondir`)).toBeGreaterThan(args.indexOf(entry));
+    expect(args[args.indexOf(`${entry}/commondir`) - 1]).toBe('--ro-bind');
     const ro = bwrapArgs(
-      pluginSandboxSpec(input({ git: { dir: git, access: 'read', protect: [] } })),
+      pluginSandboxSpec(
+        input({
+          git: { dir: git, access: 'read', writable: [`${git}/objects`], protect: [] },
+        }),
+      ),
     );
     expect(ro[ro.indexOf(git) - 1]).toBe('--ro-bind');
+    expect(ro).not.toContain(`${git}/objects`);
   });
 
   it('never carries environment values (the env stays buildPluginEnv)', () => {
@@ -264,20 +278,28 @@ describe('seatbeltProfile', () => {
     expect(p).toContain('(global-name "com.apple.dnssd.service")');
   });
 
-  it('writes to writable folders and the workspace; a git directory without config, hooks and info', () => {
+  it('writes to writable folders and the workspace; in a git directory only what a commit writes', () => {
     const ws = '/Users/owner/.orbit/workspaces/bot_1';
     const git = '/Users/owner/src/repo/.git';
+    const entry = `${git}/worktrees/bot_1`;
     const p = seatbeltProfile(
       mac({
         folders: [{ path: '/Volumes/data', access: 'write' }],
         workspace: { path: ws, access: 'write' },
-        git: { dir: git, access: 'write', protect: [`${git}/config`, `${git}/hooks`] },
+        git: {
+          dir: git,
+          access: 'write',
+          writable: [`${git}/objects`, entry],
+          protect: [`${entry}/commondir`, `${entry}/config.worktree`],
+        },
       }),
     );
     expect(p).toContain(`(subpath "/Volumes/data") (subpath "${ws}"))`);
     expect(p).toContain(
-      `(allow file-write* (require-all (subpath "${git}") (require-not (subpath "${git}/config")) (require-not (subpath "${git}/hooks"))))`,
+      `(allow file-write* (subpath "${git}/objects") (require-all (subpath "${entry}") (require-not (subpath "${entry}/commondir")) (require-not (subpath "${entry}/config.worktree"))))`,
     );
+    expect(p).not.toContain(`(allow file-write* (subpath "${git}")`);
+    expect(p).not.toMatch(new RegExp(`file-write\\* [^\\n]*\\(subpath "${git}"\\)`));
   });
 
   it('keeps denied paths out of a readable folder that contains them', () => {

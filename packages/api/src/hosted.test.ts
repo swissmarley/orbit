@@ -510,6 +510,9 @@ describe('hosted mode: roles and actors (ADR-015)', () => {
       ['secret.set', 'ada'],
       ['secret.removed', 'owner'],
     ]);
+    // An audit checkpoint names who took it, too (M8 review L2).
+    expect((await t.as(owner, 'POST', '/v1/audit/checkpoint')).status).toBe(200);
+    expect(t.service.auditTail('audit.checkpoint', 5).at(-1)?.actor).toBe('ada');
     // Feedback is the operator's, and names Bob.
     const fb = await t.as(operator, 'POST', `/v1/runs/${run.runId}/feedback`, { rating: 'up' });
     expect(fb.status).toBe(201);

@@ -61,6 +61,8 @@ if (control.behavior === 'hang') {
     new Promise((resolve) => {
       const child = spawn(command, {
         shell: true,
+        // The fake engine hands its own env to the hook, as the real claude does.
+        // eslint-disable-next-line no-restricted-syntax
         env: process.env,
         stdio: ['pipe', 'pipe', 'inherit'],
       });

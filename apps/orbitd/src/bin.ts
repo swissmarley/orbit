@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { ExitCode, OrbitError, defaultRedactor, errorMessage } from '@orbit/core';
 import { startDaemon } from './daemon';
+import { receiveApiKey, reexecWithoutKey } from './key-handover';
 
 /**
  * `orbitd` — run the Orbit daemon in the foreground until SIGINT/SIGTERM or
@@ -12,9 +13,16 @@ async function main(): Promise<void> {
       `${new Date().toISOString()} [orbitd] ${level}: ${defaultRedactor.redactString(message)}\n`,
     );
   let stopping = false;
+  // ANTHROPIC_API_KEY in our own environment: re-execute without it (same
+  // PID), the key travelling on a pipe. Returns only when that cannot be done.
+  await reexecWithoutKey(log);
+  // orbitd reads its own environment for credentials; children get allowlists.
+  // A handed-over key lives only in this in-memory copy.
+  const received = receiveApiKey(process.env);
+  defaultRedactor.addSecret(received.env.ANTHROPIC_API_KEY);
   const daemon = await startDaemon({
-    // orbitd reads its own environment for credentials; children get allowlists.
-    env: process.env,
+    env: received.env,
+    ...(received.handedOver ? { apiKeyOrigin: 'handed_over' as const } : {}),
     log,
     onStopRequested: () => void shutdown('stop requested'),
   });

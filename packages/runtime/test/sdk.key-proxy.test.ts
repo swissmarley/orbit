@@ -213,10 +213,11 @@ describe('SdkDriver behind the real HostKeyProxy (no bubblewrap, docker compose)
       expect.objectContaining({ method: 'POST', url: '/v1/messages?beta=true' }),
     ]);
     expect(api.seen[0]!.headers['x-api-key']).toBe(KEY);
-    // The token is redacted wherever it might show up, and the segment's end killed it.
-    expect(redactor.redactString(`base ${env.ANTHROPIC_BASE_URL!}`)).not.toContain(token);
+    // The token never shows in events; the segment's end killed it, and once
+    // its events were consumed the redactor forgot it (M8 review L9).
     expect(JSON.stringify(events)).not.toContain(token);
     expect(await engineRequest(env)).toBe(403);
+    expect(redactor.redactString(`base ${env.ANTHROPIC_BASE_URL!}`)).toContain(token);
     expect(api.seen).toHaveLength(1);
     expect(proxy.status()).toMatchObject({ activeSegments: 0, api: { forwarded: 1, refused: 1 } });
   });

@@ -71,10 +71,19 @@ person, or in hosted mode.
 ## 2. An API key
 
 ```sh
-export ANTHROPIC_API_KEY=sk-ant-…   # or ORBIT_API_KEY_HELPER='command that prints a key'
-orbit daemon restart                # orbitd reads credentials from its own environment
-orbit doctor                        # engine: API key (SdkDriver)
+install -m 0600 /dev/null ~/.orbit-api-key && printf %s 'sk-ant-…' > ~/.orbit-api-key
+export ORBIT_API_KEY_FILE=~/.orbit-api-key   # or ANTHROPIC_API_KEY=sk-ant-…, or ORBIT_API_KEY_HELPER='command that prints a key'
+orbit daemon restart                         # orbitd reads credentials when it starts
+orbit doctor                                 # engine: API key (SdkDriver)
 ```
+
+`ORBIT_API_KEY_FILE` (a file only you can read; orbitd refuses one others
+can) keeps the key out of every process environment. `ANTHROPIC_API_KEY`
+works too: the `orbit` CLI hands it to the orbitd it starts on a pipe, and
+an orbitd you start yourself with the key in its environment re-executes
+itself once without it on Linux; elsewhere `orbit doctor` warns
+(`api_key_in_environment`), since any process of your user could read it
+there.
 
 Amazon Bedrock (`CLAUDE_CODE_USE_BEDROCK=1`) and Google Vertex
 (`CLAUDE_CODE_USE_VERTEX=1`) work too, with your cloud credentials. An API
@@ -127,12 +136,19 @@ machine only.
 
 ```sh
 git clone https://github.com/swissmarley/orbit && cd orbit
-echo 'ANTHROPIC_API_KEY=sk-ant-…' > .env          # never commit .env
+install -m 0600 /dev/null ~/.orbit-api-key && printf %s 'sk-ant-…' > ~/.orbit-api-key
+sudo chown 10001 ~/.orbit-api-key                 # Linux: the container's orbit user reads it (or setfacl -m u:10001:r)
+export ORBIT_API_KEY_SECRET=~/.orbit-api-key
 docker compose up -d --build                      # or ORBIT_IMAGE=ghcr.io/swissmarley/orbit:latest … --no-build
 docker compose exec orbitd orbit app --no-open    # prints a one-time sign-in link for http://127.0.0.1:7420
 docker compose exec orbitd orbit doctor
 docker compose exec orbitd orbit bot create --template inbox-triage
 ```
+
+The key reaches orbitd as a Compose secret: the file is mounted at
+`/run/secrets/anthropic_api_key` and orbitd reads it (`ORBIT_API_KEY_FILE`),
+so neither PID 1 nor orbitd ever has it in its environment. Do not put
+`ANTHROPIC_API_KEY` in `.env` — compose.yaml no longer passes it on.
 
 No key at hand? `ORBIT_DRIVER=mock docker compose up -d` runs the demo. The
 port is published on `127.0.0.1` only — keep it that way: the local API is
@@ -183,7 +199,7 @@ write `$ORBIT_HOME/config.json`:
 ```
 
 ```sh
-export ANTHROPIC_API_KEY=sk-ant-…
+export ORBIT_API_KEY_FILE=/etc/orbit/anthropic-api-key   # 0600, owned by the user orbitd runs as
 orbit secret set oidc_client_secret < client-secret.txt   # if your client has a secret (PKCE works without)
 orbitd                                                    # or run it under systemd
 ```

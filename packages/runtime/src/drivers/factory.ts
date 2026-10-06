@@ -48,7 +48,7 @@ export async function createDriver(
   deps: {
     queryFn?: QueryFn;
     mock?: MockDriverOptions;
-    secrets?: { addSecret(value: string): void };
+    secrets?: { addSecret(value: string): void; removeSecret?(value: string): void };
     /** Where the key proxy gets the key (shared with the Docker sandbox's; default: from env). */
     credential?: EngineCredential;
     /** Told about requests the host key proxy refused (route and reason only). */

@@ -23,7 +23,14 @@ import {
   createApp,
 } from '@orbit/api';
 import { type OrbitConfig, OrbitError, isLoopbackHost } from '@orbit/core';
-import { type Env, GUARD_API_KEY_HOWTO, appDir as layoutAppDir, loadConfig } from '@orbit/runtime';
+import {
+  type ApiKeyOrigin,
+  type Env,
+  GUARD_API_KEY_HOWTO,
+  appDir as layoutAppDir,
+  loadConfig,
+  resolveApiKey,
+} from '@orbit/runtime';
 import { type DaemonInfo, daemonFiles } from '@orbit/sdk-client';
 import { openDatabase } from '@orbit/store';
 
@@ -34,6 +41,12 @@ export const OIDC_CLIENT_SECRET = 'oidc_client_secret';
 
 export interface DaemonOptions {
   env: Env;
+  /**
+   * The bin received ANTHROPIC_API_KEY on a pipe (`handed_over`): it is in
+   * `env` but not in this process's environment. Default: a key in `env` is
+   * taken to be in the environment (doctor warns).
+   */
+  apiKeyOrigin?: ApiKeyOrigin;
   /** Override the configured port (0 = any free port; tests). */
   port?: number;
   log?: Logger;
@@ -247,8 +260,13 @@ function acquireLock(path: string): () => void {
  * the Orbit database while it runs.
  */
 export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
-  const config = loadConfig(opts.env);
-  const plan = planListen(config, opts.env, opts.inContainer);
+  // ORBIT_API_KEY_FILE becomes ANTHROPIC_API_KEY in this in-memory copy only (never a process env).
+  const { env, origin: apiKeyOrigin } = resolveApiKey(
+    opts.env,
+    opts.apiKeyOrigin ? { origin: opts.apiKeyOrigin } : {},
+  );
+  const config = loadConfig(env);
+  const plan = planListen(config, env, opts.inContainer);
   mkdirSync(config.home, { recursive: true, mode: 0o700 });
   const files = daemonFiles(config.home);
   const releaseLock = acquireLock(files.lock);
@@ -264,7 +282,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     };
     const service = new OrbitService({
       config,
-      env: opts.env,
+      env,
+      apiKeyOrigin,
       db,
       version: ORBITD_VERSION,
       ...(opts.log ? { log: opts.log } : {}),
@@ -272,7 +291,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       ...opts.service,
     });
     service.redactor.addSecret(token);
-    const envClientSecret = opts.env.ORBIT_OIDC_CLIENT_SECRET?.trim() ?? '';
+    const envClientSecret = env.ORBIT_OIDC_CLIENT_SECRET?.trim() ?? '';
     const clientSecretFromEnv = envClientSecret === '' ? null : envClientSecret;
     if (clientSecretFromEnv !== null) service.redactor.addSecret(clientSecretFromEnv);
 
@@ -306,7 +325,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       allowedHosts: hosts,
       allowedOrigins: config.api.allowedOrigins,
       sessions,
-      appRoot: appDir(opts.env),
+      appRoot: appDir(env),
       hosted:
         plan.publicUrl !== null
           ? { publicUrl: plan.publicUrl, oidc, tls: plan.tls !== null }

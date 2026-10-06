@@ -20,6 +20,22 @@ describe('scanner positive controls', () => {
     expect(v.map((x) => x.rule)).toEqual(['no-credential-file']);
   });
 
+  it('flags an API key passed to a compose service as env (list or map form), not elsewhere', () => {
+    for (const line of [
+      '      ANTHROPIC_API_KEY:',
+      '      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}',
+      '      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}',
+    ]) {
+      expect(scanText('compose.yaml', line).map((x) => x.rule)).toEqual([
+        'no-api-key-env-in-compose',
+      ]);
+    }
+    expect(scanText('deploy/docker-compose.prod.yml', '  ANTHROPIC_API_KEY: x')).toHaveLength(1);
+    // CI clears it explicitly; a comment in compose.yaml may name it.
+    expect(scanText('.github/workflows/ci.yml', "      ANTHROPIC_API_KEY: ''")).toEqual([]);
+    expect(scanText('compose.yaml', '      # Never set ANTHROPIC_API_KEY here')).toEqual([]);
+  });
+
   it('flags keychain lookups in shell and config files', () => {
     const v = scanText(
       'scripts/x.sh',

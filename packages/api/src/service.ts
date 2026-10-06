@@ -108,15 +108,18 @@ import {
   sandboxWorkspaces,
   systemProbes,
   validateTriggers,
+  type ApiKeyOrigin,
 } from '@orbit/runtime';
 import {
   type EngineCredential,
   type PluginSandboxSupport,
   SandboxManager,
+  type TakeoverGit,
   defaultRunner,
   detectPluginSandbox,
   detectSandboxSupport,
   parseUpstream,
+  prepareTakeoverGit,
 } from '@orbit/sandbox';
 import {
   BotRepo,
@@ -177,6 +180,8 @@ export interface ServiceOptions {
   config: OrbitConfig;
   /** The daemon's own environment: read for credentials, never spread into children. */
   env: Env;
+  /** Where `env.ANTHROPIC_API_KEY` came from; `environment` makes doctor warn. */
+  apiKeyOrigin?: ApiKeyOrigin | null;
   db: OrbitDb;
   version: string;
   /** Tests: fake `claude` probes, an injected SDK query(), mock pacing, plain directories. */
@@ -268,6 +273,8 @@ export class OrbitService {
   private readonly sandbox: SandboxManager;
   /** Where orbitd's key proxies (host engines and Docker sandboxes) get the key. */
   private readonly keyCredential: EngineCredential;
+  /** Set at start when the audit key predates a log without keyed records (doctor shows it). */
+  private auditKeyWarning: string | null = null;
   /** When retention last swept memory (ms); orbitd sweeps at start and once a day. */
   private memorySweptAt = Number.NEGATIVE_INFINITY;
 
@@ -297,6 +304,13 @@ export class OrbitService {
         'error',
         'a new audit key was created but the audit log has keyed records: `orbit audit verify` will report them; restore the original audit key',
       );
+    }
+    // A key from an earlier log but no keyed record in this one: the database
+    // was reset — or replaced by a log written without the key (M8 review L3).
+    if (!auditKey.created && !this.audit.status().keyedSince) {
+      this.auditKeyWarning =
+        'The audit key already existed, but the audit log had no keyed records when orbitd started: the database was reset or replaced. If you did not do that, treat the records before this start as unverified (`orbit audit verify` shows where keyed records begin).';
+      this.log('warn', this.auditKeyWarning);
     }
     this.audit.ensureKeyed({ keySource: auditKey.source });
     this.rules = new RuleStore(db, this.now);
@@ -380,7 +394,10 @@ export class OrbitService {
     });
 
     // One key source for both key proxies (one apiKeyHelper cache, ADR-018).
-    this.keyCredential = keyProxyCredential(env, config.sdk.apiKeyHelper);
+    // apiKeyHelper output is redacted like the static key (M8 review L1).
+    this.keyCredential = keyProxyCredential(env, config.sdk.apiKeyHelper, (k) =>
+      this.redactor.addSecret(k),
+    );
     this.sandbox = createSandboxManager(config.home, env, {
       legacyName: (bot) => this.m2WorkspaceName(bot),
       apiKeyHelper: config.sdk.apiKeyHelper,
@@ -932,8 +949,17 @@ export class OrbitService {
     // The Bot-pause hold: no Run of the Bot starts or resumes while it lasts.
     if (!bot.pausedAt) this.bots.setPaused(bot.id, true);
     let workspace: string;
+    let git: TakeoverGit | null;
     try {
-      workspace = await this.orchestrator.workspacePath(bot);
+      const ws = await this.orchestrator.hostWorkspace(bot);
+      workspace = ws.path;
+      // The workspace's .git must be Orbit's (worktree Bots) or absent
+      // (directory Bots) before the owner's git-aware shell opens there.
+      git = prepareTakeoverGit({
+        kind: bot.spec.sandbox.kind === 'worktree' ? 'worktree' : 'directory',
+        workspace,
+        repo: ws.git?.repo,
+      });
     } catch (err) {
       if (!wasPaused) this.bots.setPaused(bot.id, false);
       if (existing) this.controls.clearTakeover(bot.id);
@@ -948,6 +974,14 @@ export class OrbitService {
       by: this.actor(),
     };
     this.controls.setTakeover(t);
+    if (git?.restored) {
+      this.audit.append({
+        actor: this.actor(),
+        action: 'takeover.git_restored',
+        subject: bot.id,
+        data: { workspace, was: git.restored.was, movedTo: git.restored.movedTo },
+      });
+    }
     this.audit.append({
       actor: this.actor(),
       action: 'takeover.started',
@@ -958,6 +992,9 @@ export class OrbitService {
       botId: bot.id,
       botName: bot.spec.name,
       workspace,
+      git: git
+        ? { dir: git.gitDir, workTree: git.workTree, restored: git.restored !== null }
+        : null,
       pid,
       startedAt: t.startedAt,
       wasPaused,
@@ -2213,6 +2250,20 @@ export class OrbitService {
           code: w.code,
           message: this.redactor.redactString(w.message),
         })),
+        ...(this.auditKeyWarning
+          ? [{ code: 'audit_key_without_keyed_log', message: this.auditKeyWarning }]
+          : []),
+        // The key stayed in orbitd's own environment, readable by every
+        // process of the same user (/proc/<pid>/environ, ps eww).
+        ...(this.opts.apiKeyOrigin === 'environment' && r.apiCredential === 'api_key'
+          ? [
+              {
+                code: 'api_key_in_environment',
+                message:
+                  "The API key is in orbitd's process environment, where any process of the same user can read it — including Bash and plugins on a host without an OS sandbox. Put it in a file only you can read and set ORBIT_API_KEY_FILE (chmod 600), or let the orbit CLI start orbitd (it hands the key over on a pipe).",
+              },
+            ]
+          : []),
         ...(upstreamProblem
           ? [
               {

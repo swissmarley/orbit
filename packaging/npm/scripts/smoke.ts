@@ -11,6 +11,7 @@ import { type SpawnSyncOptions, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { toolEnv as allowlistedToolEnv } from './lib';
 
 const PKG = resolve(import.meta.dirname, '..');
 const args = process.argv.slice(2);
@@ -36,15 +37,8 @@ function check(cond: unknown, message: string): asserts cond {
   if (!cond) throw new SmokeError(message);
 }
 
-/** npm and the build need the developer's own setup (registry, proxy), not pnpm's script variables. */
-function toolEnv(): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(process.env).filter(
-      (e): e is [string, string] =>
-        e[1] !== undefined && !/^(npm_|PNPM_|pnpm_)/.test(e[0]) && e[0] !== 'NODE_OPTIONS',
-    ),
-  );
-}
+/** npm and the build need the developer's own setup (registry, proxy) — an allowlist of it. */
+const toolEnv = () => allowlistedToolEnv(process.env);
 
 /** What the installed `orbit` sees: an allowlist, the MockDriver, no credentials at all. */
 function orbitEnv(): Record<string, string> {

@@ -141,3 +141,63 @@ export const ESM_SHIM = [
   'const __filename = __orbitFileURLToPath(import.meta.url);',
   'const __dirname = __orbitDirname(__filename);',
 ].join('\n');
+
+/** What pnpm and npm need from the developer's environment (registry, proxy, locale, temp). */
+const TOOL_ENV_NAMES = new Set([
+  'PATH',
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'LANG',
+  'LANGUAGE',
+  'TERM',
+  'TZ',
+  'TMPDIR',
+  'TEMP',
+  'TMP',
+  'CI',
+  'NO_COLOR',
+  'FORCE_COLOR',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
+  'NODE_EXTRA_CA_CERTS',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  'NPM_CONFIG_REGISTRY',
+  'NPM_CONFIG_USERCONFIG',
+  'NPM_CONFIG_CAFILE',
+  'PNPM_HOME',
+  // Windows essentials
+  'SYSTEMROOT',
+  'SYSTEMDRIVE',
+  'COMSPEC',
+  'PATHEXT',
+  'WINDIR',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'USERPROFILE',
+  'PROGRAMDATA',
+]);
+const TOOL_ENV_PREFIXES = ['LC_', 'XDG_', 'COREPACK_'];
+
+/**
+ * The environment of the pnpm and npm processes the build and the smoke test
+ * start — and so of every install script they run: an allowlist, never the
+ * developer's whole environment (an ANTHROPIC_API_KEY or OAuth token there
+ * must not reach a dependency's postinstall; M8 review L7).
+ */
+export function toolEnv(
+  source: Readonly<Record<string, string | undefined>>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(source)) {
+    if (v === undefined) continue;
+    if (TOOL_ENV_NAMES.has(k) || TOOL_ENV_PREFIXES.some((p) => k.startsWith(p))) out[k] = v;
+  }
+  return out;
+}

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type Harness, harness } from '../test/harness';
+import type { DoctorReport } from './contract';
 
 let current: Harness | undefined;
 afterEach(async () => {
@@ -59,6 +60,32 @@ describe('keyed audit chain over the API (ADR-007, M8)', () => {
       expect(dbBytes).not.toContain(form);
       expect(exported).not.toContain(form);
       expect(lines.join('\n')).not.toContain(form);
+    }
+  });
+
+  it('warns (log and doctor) when the audit key predates a log without keyed records', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'orbit-api-replaced-'));
+    try {
+      const first = harness({ home });
+      first.service.audit.append({ actor: 'owner', action: 'bot.created' });
+      await first.close();
+      // A normal restart: keyed records exist, nothing to say.
+      const again = harness({ home });
+      const quiet = await again.json<DoctorReport>('GET', '/v1/doctor');
+      expect(quiet.body.warnings.map((w) => w.code)).not.toContain('audit_key_without_keyed_log');
+      await again.close();
+      // The database replaced by one written without the key (here: a fresh one).
+      for (const f of readdirSync(home).filter((n) => n.startsWith('orbit.db'))) {
+        rmSync(join(home, f));
+      }
+      const lines: string[] = [];
+      const h = (current = harness({ home, service: { log: (l, m) => lines.push(`${l} ${m}`) } }));
+      const doctor = await h.json<DoctorReport>('GET', '/v1/doctor');
+      const warning = doctor.body.warnings.find((w) => w.code === 'audit_key_without_keyed_log');
+      expect(warning?.message).toMatch(/already existed, but the audit log had no keyed records/);
+      expect(lines.some((l) => l.startsWith('warn The audit key already existed'))).toBe(true);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
     }
   });
 

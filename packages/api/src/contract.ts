@@ -436,6 +436,19 @@ export const Takeover = z.object({
   botName: z.string(),
   /** Where the shell starts: the Bot's workspace. */
   workspace: z.string(),
+  /**
+   * Worktree Bots: the shell's GIT_DIR (the worktree entry Orbit created in
+   * the owner's repository) and GIT_WORK_TREE, so git never consults the
+   * workspace's `.git`; `restored` when that `.git` had been changed and
+   * Orbit put its own back. Null for directory Bots (no repository).
+   */
+  git: z
+    .object({
+      dir: z.string(),
+      workTree: z.string(),
+      restored: z.boolean(),
+    })
+    .nullable(),
   pid: z.int(),
   startedAt: z.string(),
   /** The Bot was paused before: it stays paused when the take-over ends. */

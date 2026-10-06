@@ -1,9 +1,17 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { ExitCode, type RunEvent } from '@orbit/core';
 import { type Daemon, startDaemon } from '@orbit/orbitd';
@@ -1200,6 +1208,81 @@ describe('orbit CLI', () => {
       expect(await h.run('audit', '--json')).toBe(0);
       const actions = h.json<{ action: string }[]>().map((a) => a.action);
       expect(actions).toEqual(expect.arrayContaining(['takeover.started', 'takeover.ended']));
+    });
+
+    it("orbit shell: git in the shell uses Orbit's worktree entry and never walks up; a rewritten .git is put back", async () => {
+      const gitEnv = {
+        PATH: process.env.PATH ?? '',
+        HOME: home,
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_AUTHOR_NAME: 'Owner',
+        GIT_AUTHOR_EMAIL: 'owner@example.test',
+        GIT_COMMITTER_NAME: 'Owner',
+        GIT_COMMITTER_EMAIL: 'owner@example.test',
+      };
+      const git = (cwd: string, ...args: string[]) => {
+        const r = spawnSync('git', args, { cwd, env: gitEnv, encoding: 'utf8' });
+        expect(r.status, r.stderr).toBe(0);
+        return r.stdout.trim();
+      };
+      const repo = join(realpathSync(home), 'repo');
+      git(home, 'init', '-q', '-b', 'main', repo);
+      git(repo, 'commit', '-q', '--allow-empty', '-m', 'init');
+      const seen: { cwd: string; env: Record<string, string> }[] = [];
+      const h = harness(
+        // An inherited GIT_DIR must not survive into a directory Bot's shell.
+        { ...mockEnv(), SHELL: '/bin/sh-test', GIT_DIR: '/elsewhere/.git' },
+        {
+          io: {
+            spawnShell: (o) => {
+              seen.push(o);
+              return Promise.resolve(0);
+            },
+          },
+        },
+      );
+      const spec = writeSpec(
+        home,
+        'coder.json',
+        JSON.stringify({
+          name: 'Coder',
+          goal: 'x',
+          mock: { fixture: 'pong' },
+          sandbox: { kind: 'worktree', repo },
+        }),
+      );
+      expect(await h.run('bot', 'create', '--file', spec)).toBe(0);
+      expect(await h.run('shell', 'coder')).toBe(0);
+      const [wt] = seen;
+      const admin = readFileSync(join(wt!.cwd, '.git'), 'utf8')
+        .replace(/^gitdir: /, '')
+        .trim();
+      expect(admin).toMatch(/[/\\]repo[/\\]\.git[/\\]worktrees[/\\]/);
+      expect(wt!.env).toMatchObject({
+        GIT_DIR: admin,
+        GIT_WORK_TREE: wt!.cwd,
+        GIT_CEILING_DIRECTORIES: dirname(wt!.cwd),
+      });
+      expect(h.text()).toContain(`git       GIT_DIR=${admin} (Orbit's worktree entry`);
+      expect(h.text()).not.toContain('was put back');
+
+      // The Bot pointed .git at a repository of its own: the next shell gets Orbit's back.
+      writeFileSync(join(wt!.cwd, '.git'), `gitdir: ${join(home, 'evil')}\n`);
+      h.reset();
+      expect(await h.run('shell', 'coder')).toBe(0);
+      expect(readFileSync(join(wt!.cwd, '.git'), 'utf8')).toBe(`gitdir: ${admin}\n`);
+      expect(seen[1]!.env.GIT_DIR).toBe(admin);
+      expect(h.text()).toContain('a changed .git was put back');
+
+      // A directory Bot: no GIT_DIR at all (not even the inherited one), git stays in the workspace.
+      await h.run('bot', 'create', '--name', 'Notes', '--goal', 'x', '--fixture', 'pong');
+      h.reset();
+      expect(await h.run('shell', 'notes')).toBe(0);
+      const dir = seen[2]!;
+      expect(dir.env.GIT_DIR).toBeUndefined();
+      expect(dir.env.GIT_WORK_TREE).toBeUndefined();
+      expect(dir.env.GIT_CEILING_DIRECTORIES).toBe(dirname(dir.cwd));
+      expect(h.text()).toContain('git       no repository here');
     });
   });
 });

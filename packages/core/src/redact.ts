@@ -82,6 +82,20 @@ export class Redactor {
     }
   }
 
+  /**
+   * Forget a value added for a limited time (a Run segment's key-proxy
+   * token) once nothing that could carry it is still being recorded. Only
+   * for values Orbit generated itself: a value registered for two reasons
+   * would stop being redacted for both.
+   */
+  removeSecret(value: string | undefined | null): void {
+    if (!value) return;
+    for (const v of new Set([value, value.trim()])) {
+      this.secrets.delete(v);
+      this.shortSecrets.delete(v);
+    }
+  }
+
   redactString(input: string): string {
     let out = input;
     // Exact secrets first, longest first so overlapping values redact fully.

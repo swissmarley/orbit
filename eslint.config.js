@@ -25,7 +25,10 @@ const credentialSelectors = [
   },
 ];
 
-const envSelectors = [
+/** Functions that start a child process (node:child_process, execa, cross-spawn). */
+const SPAWNERS = '/^(spawn|spawnSync|exec|execSync|execFile|execFileSync|fork|execa|execaSync)$/';
+
+export const envSelectors = [
   {
     selector:
       "MemberExpression[object.object.name='process'][object.property.name='env'][property.name='CLAUDE_CODE_OAUTH_TOKEN']",
@@ -48,6 +51,17 @@ const envSelectors = [
   },
   {
     selector: "SpreadElement[argument.object.name='process'][argument.property.name='env']",
+    message:
+      'Child processes must not inherit process.env wholesale (ADR-005). Build the env from an allowlist.',
+  },
+  // `spawn(cmd, args, { env: process.env })` is the same leak without a spread (M8 review L7).
+  {
+    selector: `CallExpression[callee.name=${SPAWNERS}] ObjectExpression > Property[key.name='env'][value.object.name='process'][value.property.name='env']`,
+    message:
+      'Child processes must not inherit process.env wholesale (ADR-005). Build the env from an allowlist.',
+  },
+  {
+    selector: `CallExpression[callee.property.name=${SPAWNERS}] ObjectExpression > Property[key.name='env'][value.object.name='process'][value.property.name='env']`,
     message:
       'Child processes must not inherit process.env wholesale (ADR-005). Build the env from an allowlist.',
   },

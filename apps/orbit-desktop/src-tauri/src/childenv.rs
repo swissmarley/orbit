@@ -87,9 +87,16 @@ fn same(a: &str, b: &str) -> bool {
     }
 }
 
+/// `prefix` (ASCII) starts `name`, ignoring ASCII case. Never slices inside a
+/// character: a name that is not ASCII where the prefix ends simply does not match.
+fn starts_ignore_case(name: &str, prefix: &str) -> bool {
+    name.get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+}
+
 fn starts(name: &str, prefix: &str) -> bool {
     if cfg!(windows) {
-        name.len() >= prefix.len() && name[..prefix.len()].eq_ignore_ascii_case(prefix)
+        starts_ignore_case(name, prefix)
     } else {
         name.starts_with(prefix)
     }
@@ -169,6 +176,17 @@ mod tests {
         assert_eq!(get(&env, "ANTHROPIC_API_KEY"), Some("sk-ant-api03-test"));
         assert_eq!(get(&env, "LC_ALL"), Some("C.UTF-8"));
         assert_eq!(get(&env, "HTTPS_PROXY"), Some("http://proxy:3128"));
+    }
+
+    #[test]
+    fn windows_prefix_match_never_panics_on_non_ascii_names() {
+        assert!(starts_ignore_case("lc_all", "LC_"));
+        assert!(starts_ignore_case("Orbit_Home", "ORBIT_"));
+        // The prefix would end inside a multi-byte character: no match, no panic.
+        assert!(!starts_ignore_case("a\u{20ac}", "LC_"));
+        assert!(!starts_ignore_case("\u{e9}\u{e9}\u{e9}x", "XDG_"));
+        assert!(!starts_ignore_case("LC", "LC_"));
+        assert!(!starts_ignore_case("", "LC_"));
     }
 
     #[test]

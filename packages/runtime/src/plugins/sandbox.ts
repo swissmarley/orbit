@@ -4,12 +4,12 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
   readlinkSync,
   realpathSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path';
@@ -25,6 +25,9 @@ import {
   type HostPath,
   LINUX_SYSTEM_PATHS,
   type PluginSandboxSupport,
+  type GitBind,
+  gitCommonDir,
+  worktreeAdminDir,
   type SandboxBind,
   type SystemPath,
   type WrappedCommand,
@@ -203,6 +206,21 @@ export function moduleRoots(pluginDir: string, maxDepth = 3): string[] {
   return [...roots];
 }
 
+/**
+ * What of Node's installation a plugin sandbox shows: the install prefix
+ * when `node` sits in one (`<prefix>/bin/node` beside `lib/node_modules` or
+ * `include/node`: nvm, Volta, Homebrew, the official tarball), otherwise the
+ * binary alone — never the parent of an arbitrary folder (`~/.local/bin/node`
+ * would otherwise bring in `~/.local`, keyrings and all; M8 review L8).
+ */
+export function nodeRuntimePath(nodeReal: string): string {
+  const prefix = dirname(dirname(nodeReal));
+  const isPrefix =
+    lstatOrNull(join(prefix, 'lib', 'node_modules'))?.isDirectory() === true ||
+    lstatOrNull(join(prefix, 'include', 'node'))?.isDirectory() === true;
+  return isPrefix && prefix !== dirname(prefix) ? prefix : nodeReal;
+}
+
 /** Linux system locations that exist, as binds or symlinks (merged /usr). */
 export function linuxSystemPaths(paths: readonly string[] = LINUX_SYSTEM_PATHS): SystemPath[] {
   return paths.flatMap((p) => {
@@ -231,40 +249,57 @@ export function existingDenied(paths: readonly string[]): HostPath[] {
   });
 }
 
+/** What a commit and a push write in the common git directory (ADR-019). */
+const GIT_WRITABLE = ['objects', 'refs', 'logs', 'reftable'];
+/** Inside the Bot's worktree entry: the pointers and config git follows, read-only. */
+const WORKTREE_PROTECTED = ['commondir', 'gitdir', 'config.worktree'];
+
 /**
- * A worktree Bot's git directory: the owner's repository's common git dir
- * (it holds `worktrees/<name>`, objects and refs), its config, hooks and info
- * protected, and the repository's `.git` file when that is itself a link.
+ * A worktree Bot's git directory: the owner's repository's common git dir,
+ * and the repository's `.git` file when that is itself a link. With write
+ * access only what a commit needs is writable — `objects`, `refs`, `logs`
+ * (and `reftable`), and the Bot's own `worktrees/<name>` entry minus its
+ * `commondir`, `gitdir` and `config.worktree` — and everything else stays
+ * read-only: config, hooks, info, modules (submodules' config and hooks),
+ * `commondir`, packed-refs and other worktrees' entries, so a file git would
+ * follow cannot be created either (M8 safety review). Creates `logs` and an
+ * empty `config.worktree` in the Bot's entry when missing, so they can be
+ * bound.
  */
 export function gitBind(
   repo: string,
   access: 'read' | 'write',
-): { dir: string; access: 'read' | 'write'; protect: string[]; dotGit?: string } | null {
-  const dotGit = join(repo, '.git');
-  const st = lstatOrNull(dotGit);
-  if (!st) return null;
-  let dir: string | null = null;
-  let link: string | undefined;
-  if (st.isDirectory()) dir = realOrNull(dotGit);
-  else if (st.isFile()) {
-    link = dotGit;
-    const m = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, 'utf8'));
-    const gitdir = m?.[1] ? resolve(repo, m[1].trim()) : null;
-    if (gitdir) {
-      let common = gitdir;
-      try {
-        common = resolve(gitdir, readFileSync(join(gitdir, 'commondir'), 'utf8').trim());
-      } catch {
-        // Not a linked worktree: the gitdir is the common dir.
+  workspace?: string | null,
+): GitBind | null {
+  const found = gitCommonDir(repo);
+  if (!found) return null;
+  const common = found.dir;
+  const writable: string[] = [];
+  const protect: string[] = [];
+  if (access === 'write') {
+    const logs = join(common, 'logs');
+    if (!lstatOrNull(logs)) mkdirSync(logs, { mode: 0o755 });
+    // Real folders only: a link could point anywhere.
+    for (const n of GIT_WRITABLE) {
+      if (lstatOrNull(join(common, n))?.isDirectory()) writable.push(join(common, n));
+    }
+    const entry = workspace ? worktreeAdminDir(common, workspace) : null;
+    if (entry) {
+      const cfg = join(entry, 'config.worktree');
+      if (!lstatOrNull(cfg)) writeFileSync(cfg, '', { flag: 'wx', mode: 0o644 });
+      writable.push(entry);
+      for (const n of WORKTREE_PROTECTED) {
+        if (lstatOrNull(join(entry, n))) protect.push(join(entry, n));
       }
-      dir = realOrNull(common);
     }
   }
-  if (!dir) return null;
-  const protect = ['config', 'hooks', 'info']
-    .map((n) => join(dir, n))
-    .filter((p) => lstatOrNull(p) !== null);
-  return { dir, access, protect, ...(link ? { dotGit: link } : {}) };
+  return {
+    dir: common,
+    access,
+    writable,
+    protect,
+    ...(found.dotGit ? { dotGit: found.dotGit } : {}),
+  };
 }
 
 export interface SandboxRequest {
@@ -326,7 +361,7 @@ export function prepareSandboxedCommand(
     system.some((s) => s.symlink === undefined && isWithin(p, s.path));
   const runtime: string[] = [];
   const nodeReal = realOrNull(req.paths.node);
-  if (nodeReal) runtime.push(dirname(dirname(nodeReal)));
+  if (nodeReal) runtime.push(nodeRuntimePath(nodeReal));
   if (usesTsx && req.paths.tsx.startsWith('file:')) {
     const store = outermostNodeModules(fileURLToPath(req.paths.tsx));
     if (store) runtime.push(store);
@@ -353,7 +388,8 @@ export function prepareSandboxedCommand(
     needs.workspace !== 'none' && req.workspace
       ? { path: realOr(req.workspace), access: needs.workspace }
       : null;
-  const git = workspace && req.git ? gitBind(realOr(req.git.repo), workspace.access) : null;
+  const git =
+    workspace && req.git ? gitBind(realOr(req.git.repo), workspace.access, workspace.path) : null;
 
   let privateDir: string | undefined;
   let cleanup: (() => void) | undefined;

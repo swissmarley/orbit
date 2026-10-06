@@ -59,6 +59,15 @@ export const RULES: Rule[] = [
     allow: (p) => p === OAUTH_PRESENCE_HELPER || isTest(p) || isDoc(p) || isLintConfig(p),
   },
   {
+    // A container's environment is readable by every process of its user
+    // (PID 1's and orbitd's /proc/<pid>/environ): the key goes in as a
+    // Compose secret file, read through ORBIT_API_KEY_FILE (M8 review).
+    id: 'no-api-key-env-in-compose',
+    pattern: /^\s*-?\s*['"]?ANTHROPIC_API_KEY['"]?\s*[:=]/,
+    message: 'compose files pass the API key as a secret file (ORBIT_API_KEY_FILE), never as env',
+    allow: (p) => !/(^|\/)(docker-)?compose[^/]*\.ya?ml$/.test(p),
+  },
+  {
     id: 'no-hardcoded-model-id',
     pattern: /claude-(opus|sonnet|haiku|fable|mythos)-\d/,
     message: 'Model IDs come from configuration, never source (ADR-006)',

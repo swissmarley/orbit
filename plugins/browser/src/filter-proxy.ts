@@ -243,12 +243,16 @@ export async function startFilterProxy(opts: FilterProxyOptions): Promise<Filter
       return;
     }
     socket.pause();
-    void tunnel(socket, head, authority, target);
+    void tunnel(socket, head, target);
   });
 
-  const tunnel = async (socket: Socket, head: Buffer, authority: string, target: URL) => {
+  const tunnel = async (socket: Socket, head: Buffer, target: URL) => {
     const host = hostOf(target);
     const port = Number(target.port || 443);
+    // What was checked, normalised (IPv6 keeps its brackets) — never the
+    // browser's raw request target, which the owner's proxy might read
+    // differently (M8 review L6).
+    const authority = `${target.hostname}:${port}`;
     const checked = await checkHost(host, opts, viaUpstream(host));
     if (!checked.ok) {
       opts.onBlocked(target.hostname, checked.reason);

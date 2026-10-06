@@ -85,7 +85,29 @@ prior Orbit decision stops the Run (`policy_bypassed`).
   Linux) and runs without the scrub elsewhere, since there is no secret to
   scrub. Bedrock and Vertex credentials cannot be proxied: they go to the
   engine, which must scrub them (on Linux a Run without bubblewrap is refused
-  before the engine starts).
+  before the engine starts); an Anthropic key orbitd also holds is removed
+  from such an engine's environment.
+- **The key in orbitd itself.** A process's environment stays readable to
+  every process of the same user for as long as it runs
+  (`/proc/<pid>/environ`, `ps eww`), and on a host without bubblewrap the
+  engine's shell commands and the plugins are not OS-sandboxed. So the key
+  is kept out of orbitd's environment too: `ORBIT_API_KEY_FILE` names a file
+  only its owner can read (orbitd refuses anything else; the Compose setup
+  mounts it as a secret at `/run/secrets/anthropic_api_key`, so neither PID
+  1 nor orbitd has it in its environment); the `orbit` CLI starts orbitd
+  without `ANTHROPIC_API_KEY` and writes the key to its standard input; and
+  an orbitd started by hand or by a service manager with the key in its
+  environment re-executes itself once on Linux (same PID) without the
+  variable, the key travelling through a pipe held for a moment by a helper
+  (`cat` and a holder process it then kills). Precisely: the key is never in
+  any child's environment, command line or a file Orbit writes; it passes
+  through that helper's pipe only in the re-exec case; elsewhere (macOS,
+  Windows, or when the helper cannot start) it stays in orbitd's environment
+  and `orbit doctor` warns (`api_key_in_environment`). What remains: a
+  process of the same user can still read orbitd's memory with ptrace or
+  `/proc/<pid>/mem`, which Linux's Yama setting (`ptrace_scope` 1, the
+  default on most distributions) refuses to anything but orbitd's ancestors
+  — the engine's shell and the plugins are its descendants.
 - **Subscription mode** (your own `claude login`): the CliDriver spawns your
   `claude` binary, which reads its own credential store. Orbit never reads,
   copies, stores, logs or forwards Claude OAuth credentials
@@ -98,8 +120,9 @@ prior Orbit decision stops the Run (`policy_bypassed`).
 **Child environments are allowlists.** No child process inherits
 `process.env`. Each kind of child (`cli-engine`, `sdk-engine`, `plugin`,
 `tool`, `orbitd`, …) gets the variables on its list and nothing else; the API
-key stays in orbitd, and only Bedrock / Vertex credentials reach the SDK
-engine (ADR-005, ADR-018).
+key stays in orbitd (the `orbitd` child the CLI starts gets it on standard
+input, not in its environment), and only Bedrock / Vertex credentials reach
+the SDK engine (ADR-005, ADR-018).
 
 **The engine's reported credential source is checked.** The CliDriver stops if
 the engine says it used `ANTHROPIC_API_KEY`; the SdkDriver stops on any login
@@ -173,7 +196,11 @@ CPU, memory and PID limits, all capabilities dropped and `no-new-privileges`
 `~/.ssh`, `~/.claude` and other credential stores simply are not there), no
 `$ORBIT_HOME`, and only the workspace, folders and network the plugin's
 manifest declares. `plugins.sandbox: required` refuses plugins that cannot be
-sandboxed. The Browser plugin resolves every name once, refuses answers that
+sandboxed. A plugin that declares network access shares the host's network
+namespace (Linux): besides the network it can reach abstract Unix sockets
+there — an X11 display (`@/tmp/.X11-unix/X0`), some D-Bus session buses —
+which a file-system sandbox does not cover; a plugin without network gets a
+network namespace of its own and reaches none of them. The Browser plugin resolves every name once, refuses answers that
 point at private or metadata addresses and connects to the address it
 checked, so DNS rebinding cannot reach your network. Plugins installed from
 the catalog are checked against their published integrity before they are
@@ -263,7 +290,16 @@ refused, and nothing restarts by itself after you release it.
   workspace from the terminal only (the bearer token, never a browser
   session), holds the Bot while it is open and is audited. The App shows the
   command instead of opening a shell, because a shell in the browser would
-  bypass the policy engine.
+  bypass the policy engine. A Bot can write anything in its workspace,
+  including a `.git` that leads to a repository configuration of its own
+  (`core.fsmonitor`, hooks), which a git-aware prompt would run as you. So
+  for a worktree Bot orbitd puts its own `.git` file back when it was
+  changed (moving the Bot's version aside, audited) and the shell gets
+  `GIT_DIR`/`GIT_WORK_TREE` naming Orbit's worktree entry, so git in that
+  shell never reads the workspace's `.git` or a repository nested in it; for
+  a directory Bot a `.git` in the workspace refuses the take-over, with the
+  commands to inspect and move it from outside. `GIT_CEILING_DIRECTORIES`
+  keeps git from walking up out of the workspace.
 
 ## Audit
 

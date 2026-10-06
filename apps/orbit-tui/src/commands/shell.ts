@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { constants } from 'node:os';
+import { dirname } from 'node:path';
 import { OrbitError, errorMessage } from '@orbit/core';
 import { buildChildEnv } from '@orbit/runtime';
 import type { Context } from '../context';
@@ -22,6 +23,28 @@ export function spawnInteractiveShell(o: {
 }
 
 /**
+ * The take-over shell's environment: the `tool` allowlist plus
+ * ORBIT_TAKEOVER=1, GIT_CEILING_DIRECTORIES at the workspace's parent (git
+ * never walks up out of it) and, for a worktree Bot, the GIT_DIR and
+ * GIT_WORK_TREE orbitd named, so a git-aware prompt never follows a `.git`
+ * (or a nested repository) the Bot wrote. Inherited GIT_DIR, GIT_WORK_TREE
+ * and GIT_COMMON_DIR are dropped for a directory Bot.
+ */
+export function takeoverShellEnv(
+  source: Readonly<Record<string, string | undefined>>,
+  t: { workspace: string; git: { dir: string; workTree: string } | null },
+): Record<string, string> {
+  const env = buildChildEnv('tool', source, {
+    ORBIT_TAKEOVER: '1',
+    GIT_CEILING_DIRECTORIES: dirname(t.workspace),
+    ...(t.git ? { GIT_DIR: t.git.dir, GIT_WORK_TREE: t.git.workTree } : {}),
+  });
+  const drop = t.git ? ['GIT_COMMON_DIR'] : ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR'];
+  for (const k of drop) Reflect.deleteProperty(env, k);
+  return env;
+}
+
+/**
  * `orbit shell <bot>` (ADR-016): orbitd holds the Bot (no Run of it starts)
  * and hands over its workspace; the owner's `$SHELL` runs there with the
  * `tool` env allowlist (no API key, no Orbit token) plus ORBIT_TAKEOVER=1.
@@ -38,6 +61,12 @@ export async function shell(ctx: Context, botRef: string): Promise<number> {
     `${p('yellow', '⏸')} Holding ${p('bold', name)} while you work: none of its Runs start or resume until you exit this shell.`,
   );
   ctx.io.out(`  workspace ${t.workspace}`);
+  // git in this shell never reads a repository the Bot could have written (ADR-016).
+  ctx.io.out(
+    t.git
+      ? `  git       GIT_DIR=${t.git.dir} (Orbit's worktree entry; the workspace's .git is not used${t.git.restored ? '; a changed .git was put back' : ''})`
+      : '  git       no repository here; git does not look above the workspace',
+  );
   ctx.io.out(
     p(
       'dim',
@@ -59,7 +88,7 @@ export async function shell(ctx: Context, botRef: string): Promise<number> {
     code = await (ctx.io.spawnShell ?? spawnInteractiveShell)({
       shell: userShell === '' ? '/bin/sh' : userShell,
       cwd: t.workspace,
-      env: buildChildEnv('tool', ctx.io.env, { ORBIT_TAKEOVER: '1' }),
+      env: takeoverShellEnv(ctx.io.env, t),
     });
   } catch (err) {
     ctx.io.err(`${p('red', '✘')} Could not start your shell: ${errorMessage(err)}`);

@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import type { Bot, RunState } from '@orbit/core';
 import { type AuthProbes, FIXTURES_DIR, type QueryFn } from '@orbit/runtime';
-import { API_KEY_PLACEHOLDER } from '@orbit/sandbox';
+import { API_KEY_PLACEHOLDER, type EngineCredential } from '@orbit/sandbox';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type Harness, harness } from '../test/harness';
 import type { DoctorReport } from './contract';
@@ -174,5 +174,18 @@ describe('orbitd with an API key and no bubblewrap (docker compose)', () => {
     await h.close();
     h = harness();
     expect((await h.json<DoctorReport>('GET', '/v1/doctor')).body.engineKey).toBeNull();
+  });
+});
+
+describe("the apiKeyHelper's output", () => {
+  it('is redacted everywhere once the helper ran (M8 review L1)', async () => {
+    // A gateway's token: no pattern catches it, only registering it does.
+    const helperKey = 'gw-7f3a9c2e5b1d4a8f9e0c';
+    h = harness({ config: { sdk: { apiKeyHelper: `printf ${helperKey}` } } });
+    const credential = (h.service as unknown as { keyCredential: EngineCredential }).keyCredential;
+    if (credential.kind !== 'key') throw new Error(`expected a key source, got ${credential.kind}`);
+    expect(h.service.redactor.redactString(`k=${helperKey}`)).toContain(helperKey);
+    expect(await credential.source.get()).toBe(helperKey);
+    expect(h.service.redactor.redactString(`k=${helperKey}`)).not.toContain(helperKey);
   });
 });

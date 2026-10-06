@@ -3,6 +3,7 @@
  * SdkDriver / CliDriver / MockDriver implementations, AuthResolver,
  * compliance guard and configuration loading.
  */
+export * from './auth/api-key-file';
 export * from './auth/guard';
 export { hasOAuthTokenEnv } from './auth/oauth-presence';
 export * from './auth/probes';

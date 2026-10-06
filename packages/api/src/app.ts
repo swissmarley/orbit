@@ -690,7 +690,7 @@ export function createApp(opts: AppOptions): Hono {
     },
     verifyAudit: () => service.audit.verify(),
     auditStatus: () => service.audit.status(),
-    auditCheckpoint: () => service.audit.checkpoint('owner'),
+    auditCheckpoint: () => service.audit.checkpoint(service.actor()),
     verifyAuditCheckpoint: ({ body }) =>
       service.audit.verifyCheckpoint(body as z.output<typeof routes.verifyAuditCheckpoint.body>),
     exportAudit: (_i, c) => {

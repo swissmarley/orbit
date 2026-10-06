@@ -98,6 +98,18 @@ describe('Redactor', () => {
     expect(r.redactString('t=token-value-0123456789;')).not.toContain('token-value');
   });
 
+  it('forgets a temporary secret on request (a segment token), keeping the others', () => {
+    const r = new Redactor();
+    r.addSecret('segment-token-0123456789abcdef');
+    r.addSecret('vault-value-0123456789abcdef');
+    r.addSecret('pin1');
+    r.removeSecret('segment-token-0123456789abcdef');
+    r.removeSecret('pin1');
+    expect(r.redactString('a segment-token-0123456789abcdef b')).toContain('segment-token');
+    expect(r.redactString('pin pin1')).toBe('pin pin1');
+    expect(r.redactString('v=vault-value-0123456789abcdef')).not.toContain('vault-value');
+  });
+
   it('deep-redacts objects, arrays and sensitive keys without mutating input', () => {
     const input = {
       tool: 'Bash',

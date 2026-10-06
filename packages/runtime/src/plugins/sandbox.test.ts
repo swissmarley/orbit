@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { createServer as createHttpServer } from 'node:http';
 import { type Server, createServer } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { PluginManifest, type PluginManifestInput } from '@orbit/core';
 import { SecretVault } from '@orbit/policy';
 import { type PluginSandboxSupport, detectPluginSandbox } from '@orbit/sandbox';
@@ -209,15 +209,42 @@ describe('module roots and git directories', () => {
     expect(moduleRoots(plugin).sort()).toEqual([join(repo, 'node_modules'), kit].sort());
   });
 
-  it("names a repository's git directory and protects its config, hooks and info", () => {
+  it("names a repository's git directory; only objects, refs, logs and the Bot's entry are writable", () => {
     const repo = join(root, 'owner-repo');
-    mkdirSync(join(repo, '.git', 'hooks'), { recursive: true });
-    writeFileSync(join(repo, '.git', 'config'), '[core]\n');
-    expect(gitBind(repo, 'write')).toEqual({
-      dir: join(repo, '.git'),
-      access: 'write',
-      protect: [join(repo, '.git', 'config'), join(repo, '.git', 'hooks')],
+    const common = join(repo, '.git');
+    for (const d of ['hooks', 'objects', 'refs', 'modules/sub']) {
+      mkdirSync(join(common, d), { recursive: true });
+    }
+    writeFileSync(join(common, 'config'), '[core]\n');
+    expect(gitBind(repo, 'read')).toEqual({
+      dir: common,
+      access: 'read',
+      writable: [],
+      protect: [],
     });
+    expect(existsSync(join(common, 'logs'))).toBe(false);
+    // The Bot's worktree entry is found by its gitdir back-pointer, not by the workspace's .git.
+    const ws = join(root, 'bot-ws');
+    mkdirSync(ws);
+    writeFileSync(join(ws, '.git'), `gitdir: ${join(common, 'worktrees', 'decoy')}\n`);
+    for (const [name, tree] of [
+      ['decoy', join(root, 'elsewhere')],
+      ['bot', ws],
+    ] as const) {
+      mkdirSync(join(common, 'worktrees', name), { recursive: true });
+      writeFileSync(join(common, 'worktrees', name, 'gitdir'), `${join(tree, '.git')}\n`);
+      writeFileSync(join(common, 'worktrees', name, 'commondir'), '../..\n');
+    }
+    const entry = join(common, 'worktrees', 'bot');
+    expect(gitBind(repo, 'write', ws)).toEqual({
+      dir: common,
+      access: 'write',
+      writable: [join(common, 'objects'), join(common, 'refs'), join(common, 'logs'), entry],
+      protect: [join(entry, 'commondir'), join(entry, 'gitdir'), join(entry, 'config.worktree')],
+    });
+    // logs and an empty config.worktree are created so they can be bound.
+    expect(existsSync(join(common, 'logs'))).toBe(true);
+    expect(readFileSync(join(entry, 'config.worktree'), 'utf8')).toBe('');
     // A repository that is itself a linked worktree: its common dir, and the .git file read-only.
     const linked = join(root, 'linked');
     mkdirSync(join(repo, '.git', 'worktrees', 'linked'), { recursive: true });
@@ -277,6 +304,36 @@ describe('prepareSandboxedCommand', () => {
     );
     expect(ws.args).toContain('--share-net');
     expect(ws.args).toContain('/home/owner/.orbit/workspaces/bot_1');
+  });
+
+  it("binds Node's install prefix only when it is one; a lone binary (~/.local/bin/node) alone", () => {
+    const root = mkdtempSync(join(tmpdir(), 'orbit-node-prefix-'));
+    try {
+      const lone = join(root, 'home', '.local', 'bin', 'node');
+      mkdirSync(dirname(lone), { recursive: true });
+      mkdirSync(join(root, 'home', '.local', 'share', 'keyrings'), { recursive: true });
+      writeFileSync(lone, '');
+      const roBinds = (node: string) => {
+        const w = prepareSandboxedCommand(
+          { mode: 'auto', support: () => BWRAP },
+          req({ paths: { node, tsx: 'tsx' } }),
+        );
+        return w.args.flatMap((a, i) => (a === '--ro-bind' ? [w.args[i + 1] ?? ''] : []));
+      };
+      const loneBinds = roBinds(lone);
+      expect(loneBinds).toContain(lone);
+      expect(loneBinds).not.toContain(join(root, 'home', '.local'));
+      expect(loneBinds).not.toContain(join(root, 'home', '.local', 'bin'));
+
+      // nvm, Volta, Homebrew, the official tarball: bin/node beside lib/node_modules or include/node.
+      const prefix = join(root, 'nvm', 'versions', 'node', 'v22.22.0');
+      mkdirSync(join(prefix, 'bin'), { recursive: true });
+      mkdirSync(join(prefix, 'lib', 'node_modules'), { recursive: true });
+      writeFileSync(join(prefix, 'bin', 'node'), '');
+      expect(roBinds(join(prefix, 'bin', 'node'))).toContain(prefix);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -341,7 +398,8 @@ const chromiumInstalled = (() => {
 /** An MCP server whose one tool runs a probe: read, write, list or connect. */
 const PROBE = `
 import { createInterface } from 'node:readline';
-import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { connect } from 'node:net';
 const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');
 const reply = (id, text) => send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }], isError: false } });
@@ -354,6 +412,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   try {
     if (a.op === 'read') return reply(m.id, 'read:' + readFileSync(a.path, 'utf8'));
     if (a.op === 'write') { writeFileSync(a.path, 'x'); return reply(m.id, 'wrote'); }
+    if (a.op === 'mkwrite') { mkdirSync(dirname(a.path), { recursive: true }); writeFileSync(a.path, 'x'); return reply(m.id, 'wrote'); }
     if (a.op === 'list') return reply(m.id, 'list:' + readdirSync(a.path).join(','));
     if (a.op === 'env') return reply(m.id, JSON.stringify({ home: process.env.HOME, tmp: process.env.TMPDIR, cwd: process.cwd() }));
     if (a.op === 'connect') {
@@ -398,9 +457,17 @@ describe.skipIf(!realSandbox)('a plugin in a real bwrap sandbox', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  const start = (m: PluginManifest, opts: { denied?: string[]; home?: string } = {}) => {
+  const start = (
+    m: PluginManifest,
+    opts: {
+      denied?: string[];
+      home?: string;
+      workspace?: string;
+      git?: { repo: string; branch: string };
+    } = {},
+  ) => {
     const command = { command: process.execPath, args: [join(pluginDir, 'server.mjs')] };
-    const workspace = join(orbitHome, 'workspaces', 'bot_1');
+    const workspace = opts.workspace ?? join(orbitHome, 'workspaces', 'bot_1');
     const cmd = prepareSandboxedCommand(
       { mode: 'required', support: () => support },
       {
@@ -413,6 +480,7 @@ describe.skipIf(!realSandbox)('a plugin in a real bwrap sandbox', () => {
         orbitHome,
         denied: [orbitHome, ...(opts.denied ?? [])],
         workspace,
+        git: opts.git,
         paths: { node: process.execPath, tsx: 'tsx' },
       },
     );
@@ -492,6 +560,74 @@ describe.skipIf(!realSandbox)('a plugin in a real bwrap sandbox', () => {
     expect(await probe({ op: 'read', path: join(root, 'diary.txt') })).toBe('error:ENOENT');
     expect(await probe({ op: 'read', path: join(orbitHome, 'orbit.db') })).toBe('error:ENOENT');
     expect(await probe({ op: 'list', path: join(orbitHome, 'workspaces') })).toBe('list:bot_1');
+  });
+
+  it("cannot plant git hooks, config or pointers for the owner's own git (worktree Bot)", async () => {
+    const env = {
+      PATH: process.env.PATH ?? '',
+      HOME: root,
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_AUTHOR_NAME: 'Owner',
+      GIT_AUTHOR_EMAIL: 'owner@example.test',
+      GIT_COMMITTER_NAME: 'Owner',
+      GIT_COMMITTER_EMAIL: 'owner@example.test',
+    };
+    const git = (cwd: string, ...args: string[]) =>
+      execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: 'pipe' }).trim();
+    const repo = join(root, 'owner-repo');
+    git(root, 'init', '-q', '-b', 'main', repo);
+    git(repo, 'commit', '-q', '--allow-empty', '-m', 'init');
+    const ws = join(orbitHome, 'workspaces', 'bot_2');
+    git(repo, 'worktree', 'add', '-q', '-b', 'orbit/bot_2', ws);
+    git(repo, 'worktree', 'add', '-q', '-b', 'other', join(root, 'other'));
+    const common = join(repo, '.git');
+    // A submodule's git directory, and no hooks or info folder at all.
+    mkdirSync(join(common, 'modules', 'sub', 'hooks'), { recursive: true });
+    writeFileSync(join(common, 'modules', 'sub', 'config'), '[core]\n');
+    rmSync(join(common, 'hooks'), { recursive: true, force: true });
+    rmSync(join(common, 'info'), { recursive: true, force: true });
+
+    const probe = start(manifest({ sandbox: { workspace: 'write' } }), {
+      workspace: ws,
+      git: { repo, branch: 'orbit/bot_2' },
+    });
+    const refused = [
+      join(common, 'hooks', 'post-checkout'),
+      join(common, 'info', 'attributes'),
+      join(common, 'config'),
+      join(common, 'config.worktree'),
+      join(common, 'commondir'),
+      join(common, 'packed-refs'),
+      join(common, 'modules', 'sub', 'hooks', 'x'),
+      join(common, 'modules', 'sub', 'config'),
+      join(common, 'modules', 'other', 'config'),
+      join(common, 'worktrees', 'other', 'config.worktree'),
+      join(common, 'worktrees', 'other', 'commondir'),
+      join(common, 'worktrees', 'bot_2', 'config.worktree'),
+      join(common, 'worktrees', 'bot_2', 'commondir'),
+      join(common, 'worktrees', 'bot_2', 'gitdir'),
+    ];
+    for (const path of refused) {
+      expect(await probe({ op: 'mkwrite', path }), path).toMatch(
+        /^error:(EROFS|EACCES|EPERM|ENOENT)$/,
+      );
+    }
+    for (const path of refused) {
+      // Nothing reached the host (bwrap may leave an empty mount point behind).
+      expect(existsSync(path) && readFileSync(path, 'utf8') === 'x', path).toBe(false);
+    }
+    expect(existsSync(join(common, 'hooks', 'post-checkout'))).toBe(false);
+    expect(existsSync(join(common, 'commondir'))).toBe(false);
+    // What a commit needs stays writable: objects, refs, logs and the Bot's own worktree entry.
+    for (const path of [
+      join(common, 'objects', 'probe'),
+      join(common, 'refs', 'heads', 'orbit', 'probe'),
+      join(common, 'logs', 'probe'),
+      join(common, 'worktrees', 'bot_2', 'probe'),
+      join(ws, 'probe.txt'),
+    ]) {
+      expect(await probe({ op: 'mkwrite', path }), path).toBe('wrote');
+    }
   });
 
   it('has no network unless a tool needs it', async () => {

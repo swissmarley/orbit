@@ -100,7 +100,9 @@ session cookie is `__Host-orbit_session; Secure; HttpOnly; SameSite=Strict;
 Path=/` (the browser sees https even behind a proxy). The CSRF secret from
 ADR-011 is still required. **The bearer token in `daemon.token` stays the
 server operator's credential and acts as the principal `owner`** (role
-owner); it can still mint tickets, which `orbit app` opens on the public
+owner); so in hosted mode no configured principal may have the id `owner`
+(config validation refuses it, M8 safety review), and an audit record's
+`owner` always means the bearer token; it can still mint tickets, which `orbit app` opens on the public
 origin. `/v1/health` (public) says how browsers sign in (`signIn: ticket |
 oidc`) and the public URL, so the App's sign-in screen offers "Sign in" and
 its header names the signed-in principal with Sign out (hosted mode only;
