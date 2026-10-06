@@ -26,7 +26,7 @@ import {
 } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { type BuildOptions, type Plugin, build } from 'esbuild';
-import { ESM_SHIM, EXTERNAL, dependencyDrift, packagedManifest, scanBundle } from './lib';
+import { ESM_SHIM, EXTERNAL, dependencyDrift, packagedManifest, scanBundle, toolEnv } from './lib';
 
 const PKG = resolve(import.meta.dirname, '..');
 const ROOT = resolve(PKG, '../..');
@@ -99,7 +99,7 @@ if (!process.argv.includes('--no-app-build')) {
   const r = spawnSync('pnpm', ['--filter', '@orbit/app', 'build'], {
     cwd: ROOT,
     stdio: 'inherit',
-    env: process.env,
+    env: toolEnv(process.env),
   });
   if (r.status !== 0) fail('the App build failed');
 }

@@ -3,7 +3,14 @@ import { join, relative, resolve } from 'node:path';
 import { resolveLayout } from '../../../packages/runtime/src/layout';
 import { describe, expect, it } from 'vitest';
 import { PluginManifest } from '../../../packages/core/src/plugin';
-import { EXTERNAL, PACKAGED_SERVER, dependencyDrift, packagedManifest, scanBundle } from './lib';
+import {
+  EXTERNAL,
+  PACKAGED_SERVER,
+  dependencyDrift,
+  packagedManifest,
+  scanBundle,
+  toolEnv,
+} from './lib';
 
 const PKG = resolve(import.meta.dirname, '..');
 const ROOT = resolve(PKG, '../..');
@@ -126,5 +133,30 @@ describe('bundle guard', () => {
         line,
       ).toContain(rule);
     }
+  });
+});
+
+describe('toolEnv (pnpm and npm in the build and the smoke test)', () => {
+  it('keeps what installs need and drops credentials and everything else', () => {
+    const env = toolEnv({
+      PATH: '/usr/bin',
+      HOME: '/home/dev',
+      LC_ALL: 'C.UTF-8',
+      HTTPS_PROXY: 'http://proxy:3128',
+      COREPACK_HOME: '/home/dev/.corepack',
+      ANTHROPIC_API_KEY: 'sk-ant-api03-dev-key',
+      CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-dev',
+      GITHUB_TOKEN: 'ghp_dev',
+      NPM_TOKEN: 'npm_dev',
+      NODE_OPTIONS: '--require ./evil.js',
+      npm_lifecycle_event: 'smoke',
+    });
+    expect(env).toEqual({
+      PATH: '/usr/bin',
+      HOME: '/home/dev',
+      LC_ALL: 'C.UTF-8',
+      HTTPS_PROXY: 'http://proxy:3128',
+      COREPACK_HOME: '/home/dev/.corepack',
+    });
   });
 });
