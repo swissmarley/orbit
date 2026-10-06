@@ -7,7 +7,13 @@ import { type AuthMethod, OrbitConfig, OrbitError } from '@orbit/core';
 import { API_KEY_PLACEHOLDER } from '@orbit/sandbox';
 import { resolveAuth } from '../src/auth/resolver';
 import { type EngineKeyProxy, type QueryFn, SdkDriver } from '../src/drivers/sdk';
-import { type Harness, collect, expectWellFormed, runDriverContract } from './driver-contract';
+import {
+  type Harness,
+  collect,
+  expectWellFormed,
+  readOnlyPolicy,
+  runDriverContract,
+} from './driver-contract';
 import { FakeKeyProxy } from './fake-key-proxy';
 import { readFixture, replay } from './fake-engine.mjs';
 
@@ -129,6 +135,45 @@ describe('SdkDriver specifics', () => {
     expect(JSON.stringify(events)).not.toContain(lease.token);
     expect(JSON.stringify(events)).not.toContain(PLANTED.ANTHROPIC_API_KEY);
     expect(lease.closed).toBe(true);
+  });
+
+  it('a consumer that stops reading early ends the lease before the token leaves the redactor', async () => {
+    const proxy = new FakeKeyProxy();
+    let closedWhenForgotten: boolean | null = null;
+    const d = new SdkDriver({
+      authMethod: 'api_key',
+      env: sourceEnv,
+      bare: true,
+      apiKeyHelper: null,
+      keyProxy: proxy,
+      secrets: {
+        addSecret: () => undefined,
+        removeSecret: () => {
+          closedWhenForgotten = proxy.leases[0]?.closed ?? null;
+        },
+      },
+      queryFn: fakeQuery('hang'),
+      findBwrap: () => '/usr/bin/bwrap',
+    });
+    const controller = new AbortController();
+    for await (const e of d.run({
+      runId: 'run_early_stop',
+      prompt: 'hi',
+      cwd: process.cwd(),
+      model: null,
+      appendSystemPrompt: null,
+      tools: null,
+      maxTurns: null,
+      resumeSessionId: null,
+      sessionId: null,
+      permission: readOnlyPolicy,
+      signal: controller.signal,
+    })) {
+      expect(e.type).toBeTruthy();
+      break; // return(): the consumer stops while the engine still runs
+    }
+    expect(closedWhenForgotten).toBe(true);
+    controller.abort();
   });
 
   it('opens one key-proxy lease per segment and ends it on completion, failure and abort', async () => {

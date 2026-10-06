@@ -15,7 +15,7 @@ import { BotRepo, Controls, EventStore, openDatabase } from '@orbit/store';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { AgentDriver, DriverRunRequest } from './drivers/types';
 import { Orchestrator, type PreparedWorkspace } from './orchestrator';
-import { keyProxyCredential, sandboxWorkspaces } from './workspaces';
+import { createSandboxManager, keyProxyCredential, sandboxWorkspaces } from './workspaces';
 
 const root = mkdtempSync(join(tmpdir(), 'orbit-ws-'));
 afterAll(() => {
@@ -282,5 +282,24 @@ describe('Orchestrator with a container workspace', () => {
     expect(run.status).not.toBe('completed');
     expect(releasedAtStop).toBe(1);
     expect(released).toBe(1);
+  });
+});
+
+describe('an API key file is out of reach of the engine sandbox and plugins (M8 safety re-review)', () => {
+  it('lands in the denied paths the engine sandbox and plugin servers get', () => {
+    const home = mkdtempSync(join(tmpdir(), 'orbit-keyfile-'));
+    try {
+      const denied = createSandboxManager(home, {
+        PATH: '/usr/bin',
+        ORBIT_API_KEY_FILE: '/srv/orbit/anthropic.key',
+      }).pluginDeniedPaths();
+      expect(denied).toEqual(expect.arrayContaining(['/srv/orbit/anthropic.key', '/run/secrets']));
+      // Positive control: without the variable the file is not singled out.
+      expect(createSandboxManager(home, { PATH: '/usr/bin' }).pluginDeniedPaths()).not.toContain(
+        '/srv/orbit/anthropic.key',
+      );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

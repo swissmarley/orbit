@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { readApiKeyFile, resolveApiKey } from './api-key-file';
+import { apiKeyFilePaths, readApiKeyFile, resolveApiKey } from './api-key-file';
 
 const KEY = 'sk-ant-api03-FILEKEY-000000';
 const dir = mkdtempSync(join(tmpdir(), 'orbit-keyfile-'));
@@ -81,5 +81,17 @@ describe('ORBIT_API_KEY_FILE', () => {
     expect(resolveApiKey({ ANTHROPIC_API_KEY: KEY, ORBIT_API_KEY_FILE: file }).env).toMatchObject({
       ANTHROPIC_API_KEY: KEY,
     });
+  });
+});
+
+describe('apiKeyFilePaths: what Bots, the engine sandbox and plugins may never read', () => {
+  it('names the configured key file and the container secrets folder', () => {
+    expect(apiKeyFilePaths({ ORBIT_API_KEY_FILE: '/srv/keys/../keys/anthropic.key' })).toEqual([
+      '/run/secrets',
+      '/srv/keys/anthropic.key',
+    ]);
+    expect(apiKeyFilePaths({})).toEqual(['/run/secrets']);
+    // A relative value is refused when the key is read; it adds no path here.
+    expect(apiKeyFilePaths({ ORBIT_API_KEY_FILE: 'key.txt' })).toEqual(['/run/secrets']);
   });
 });

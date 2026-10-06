@@ -86,6 +86,7 @@ import {
   PluginSegments,
   TriggerRouter,
   defaultStoreDir,
+  apiKeyFilePaths,
   buildChildEnv,
   gitRunner,
   triggerKey,
@@ -412,6 +413,7 @@ export class OrbitService {
 
     this.orchestrator = new Orchestrator({
       config,
+      sensitivePaths: apiKeyFilePaths(env),
       store: this.store,
       bots: this.bots,
       controls: this.controls,

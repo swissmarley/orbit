@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { main } from './cli';
 import { waitForDaemonExit } from './daemon-control';
 import type { Io } from './io';
+import { NO_GIT_DIR } from './commands/shell';
 
 const FAKE_CLAUDE = join(import.meta.dirname, '../test/fake-claude-auth.mjs');
 
@@ -1274,15 +1275,16 @@ describe('orbit CLI', () => {
       expect(seen[1]!.env.GIT_DIR).toBe(admin);
       expect(h.text()).toContain('a changed .git was put back');
 
-      // A directory Bot: no GIT_DIR at all (not even the inherited one), git stays in the workspace.
+      // A directory Bot: GIT_DIR names a path that cannot exist (not the inherited one), so git
+      // finds no repository at all — not even one the Bot nested in a subfolder.
       await h.run('bot', 'create', '--name', 'Notes', '--goal', 'x', '--fixture', 'pong');
       h.reset();
       expect(await h.run('shell', 'notes')).toBe(0);
       const dir = seen[2]!;
-      expect(dir.env.GIT_DIR).toBeUndefined();
+      expect(dir.env.GIT_DIR).toBe(NO_GIT_DIR);
       expect(dir.env.GIT_WORK_TREE).toBeUndefined();
       expect(dir.env.GIT_CEILING_DIRECTORIES).toBe(dirname(dir.cwd));
-      expect(h.text()).toContain('git       no repository here');
+      expect(h.text()).toContain(`git       GIT_DIR=${NO_GIT_DIR}`);
     });
   });
 });

@@ -528,6 +528,9 @@ export class SdkDriver implements AgentDriver {
             const r = it.return
               ? await it.return(value)
               : { value: undefined, done: true as const };
+            // A consumer that stops reading early: the token stops working
+            // before it stops being redacted (M8 safety re-review).
+            closeKeyLease();
             forget();
             return r;
           },

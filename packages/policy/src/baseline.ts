@@ -47,6 +47,8 @@ export interface BaselinePolicyOptions {
   home?: string;
   /** Orbit's data directory; never readable except the Bot's own workspace. */
   orbitHome?: string;
+  /** Further paths never readable (an API key file, container secrets). */
+  sensitive?: readonly string[];
 }
 
 /** Resolve symlinks of the longest existing prefix so links cannot escape a root. */
@@ -78,7 +80,11 @@ export function isInside(root: string, target: string): boolean {
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 
-function sensitiveRoots(home: string, orbitHome: string | undefined): string[] {
+function sensitiveRoots(
+  home: string,
+  orbitHome: string | undefined,
+  extra: readonly string[] = [],
+): string[] {
   const roots = [
     '.claude',
     '.claude.json',
@@ -97,6 +103,7 @@ function sensitiveRoots(home: string, orbitHome: string | undefined): string[] {
   ].map((p) => join(home, p));
   roots.push('/proc', '/sys', '/etc/shadow');
   if (orbitHome) roots.push(orbitHome);
+  roots.push(...extra.map((p) => resolve(p)));
   return roots.map((r) => realish(r));
 }
 
@@ -160,7 +167,7 @@ export function fileAccessContext(
   return {
     workspace,
     readRoots: [workspace, ...(o.readRoots ?? []).map((r) => realish(resolve(r)))],
-    sensitive: sensitiveRoots(o.home ?? homedir(), o.orbitHome),
+    sensitive: sensitiveRoots(o.home ?? homedir(), o.orbitHome, o.sensitive),
     mounts: o.mounts && o.mounts.length > 0 ? o.mounts : null,
   };
 }

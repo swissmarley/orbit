@@ -114,6 +114,8 @@ export interface OrchestratorDeps {
   workspaces?: WorkspaceProvider;
   /** Plugin-declared tool tiers (M7). */
   toolTiers?: readonly ToolTierOverride[];
+  /** Paths Bots may never read besides the defaults (an API key file; `apiKeyFilePaths`). */
+  sensitivePaths?: readonly string[];
   /** Kill-switch polling interval. */
   killPollMs?: number;
   now?: () => Date;
@@ -1278,6 +1280,7 @@ export class Orchestrator {
         ? ws.mounts.filter((m) => !m.writable).map((m) => m.host)
         : bot.spec.readRoots,
       orbitHome: config.home,
+      ...(this.deps.sensitivePaths ? { sensitive: this.deps.sensitivePaths } : {}),
       ...(ws.mounts ? { mounts: ws.mounts } : {}),
     });
     // Orbit's own tiers first: no plugin declaration can reach Orbit's tools (ADR-014).

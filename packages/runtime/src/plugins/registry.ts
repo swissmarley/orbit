@@ -16,6 +16,7 @@ import {
 } from '@orbit/core';
 import { type AuditSink, type ToolTierOverride, effectivePluginTier } from '@orbit/policy';
 import { isWithin, pluginDeniedPaths } from '@orbit/sandbox';
+import { apiKeyFilePaths } from '../auth/api-key-file';
 import type { OrbitDb } from '@orbit/store';
 import type { Env } from '../env';
 import { orbitLayout } from '../layout';
@@ -769,6 +770,7 @@ export class PluginRegistry {
         orbitHome: this.deps.home,
         extraDenied: [
           ...(this.deps.env.CLAUDE_CONFIG_DIR ? [this.deps.env.CLAUDE_CONFIG_DIR] : []),
+          ...apiKeyFilePaths(this.deps.env),
           // Installed packages: no plugin may rewrite another one's code (ADR-019).
           ...(store ? [store] : []),
         ],

@@ -7,6 +7,7 @@ import {
   defaultRunner,
   staticApiKey,
 } from '@orbit/sandbox';
+import { apiKeyFilePaths } from './auth/api-key-file';
 import { type Env, buildChildEnv } from './env';
 import type { WorkspaceProvider } from './orchestrator';
 
@@ -121,7 +122,11 @@ export function createSandboxManager(
     // DOCKER_HOST / DOCKER_CONTEXT steer the docker CLI to the owner's daemon.
     run: defaultRunner({ ...buildChildEnv('tool', env), ...dockerClientVars(env) }),
     // A non-default Claude config dir holds the CLI's credentials too.
-    extraDenied: env.CLAUDE_CONFIG_DIR ? [env.CLAUDE_CONFIG_DIR] : [],
+    // …and so does an API key file (M8 safety re-review).
+    extraDenied: [
+      ...(env.CLAUDE_CONFIG_DIR ? [env.CLAUDE_CONFIG_DIR] : []),
+      ...apiKeyFilePaths(env),
+    ],
     credential: extras.credential ?? keyProxyCredential(env, extras.apiKeyHelper ?? null),
     // The key proxy forwards to the API orbitd itself would use.
     apiUpstream: apiUpstream(env),

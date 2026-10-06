@@ -103,11 +103,19 @@ prior Orbit decision stops the Run (`policy_bypassed`).
   any child's environment, command line or a file Orbit writes; it passes
   through that helper's pipe only in the re-exec case; elsewhere (macOS,
   Windows, or when the helper cannot start) it stays in orbitd's environment
-  and `orbit doctor` warns (`api_key_in_environment`). What remains: a
-  process of the same user can still read orbitd's memory with ptrace or
-  `/proc/<pid>/mem`, which Linux's Yama setting (`ptrace_scope` 1, the
-  default on most distributions) refuses to anything but orbitd's ancestors
-  — the engine's shell and the plugins are its descendants.
+  and `orbit doctor` warns (`api_key_in_environment`). What remains:
+  - A key **file** (`ORBIT_API_KEY_FILE`, a Compose secret) is readable by
+    every process of the same user. Orbit denies it — and all of
+    `/run/secrets` — to Bots' file tools, to the engine sandbox and to plugin
+    sandboxes, but where those OS sandboxes are unavailable (no bubblewrap,
+    as inside the Compose container) an approved shell command or an
+    unsandboxed plugin could still read it. The CLI's stdin hand-over leaves
+    no file behind and is the safest way to start orbitd on a host.
+  - A process of the same user can read orbitd's memory with ptrace or
+    `/proc/<pid>/mem` unless the kernel's Yama setting restricts it
+    (`ptrace_scope` 1 allows it only to orbitd's ancestors — the engine's
+    shell and the plugins are descendants; Ubuntu enables it, Debian and
+    Fedora do not by default).
 - **Subscription mode** (your own `claude login`): the CliDriver spawns your
   `claude` binary, which reads its own credential store. Orbit never reads,
   copies, stores, logs or forwards Claude OAuth credentials

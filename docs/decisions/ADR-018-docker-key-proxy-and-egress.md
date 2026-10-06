@@ -415,11 +415,18 @@ ${ORBIT_API_KEY_SECRET:-/dev/null}` at `/run/secrets/anthropic_api_key`)
 - On Linux the key is in no process environment of Orbit's: not orbitd's,
   not PID 1's in the compose container, not any child's. It passes through
   the hand-over helper's pipe for a moment in the re-exec case.
-- What remains: a same-user process can read orbitd's memory only with
-  ptrace or `/proc/<pid>/mem`, which Yama (`ptrace_scope` 1, the default on
-  most distributions) allows only to orbitd's ancestors; the engine's shell
-  and the plugins are its descendants. macOS keeps the key in orbitd's
-  environment unless `ORBIT_API_KEY_FILE` or the CLI is used (doctor says so).
+- What remains: a key file (`ORBIT_API_KEY_FILE`, a Compose secret) is
+  readable by any same-user process; it and `/run/secrets` are denied to
+  file tools, the engine sandbox and plugin sandboxes (`apiKeyFilePaths`),
+  but where no OS sandbox exists (no bubblewrap, e.g. inside the Compose
+  container) an approved shell or an unsandboxed plugin could read it. A
+  same-user process can also read orbitd's memory with ptrace or
+  `/proc/<pid>/mem` unless Yama restricts it (`ptrace_scope` 1 allows only
+  orbitd's ancestors; Ubuntu enables it, Debian and Fedora do not by
+  default). macOS keeps the key in orbitd's environment unless
+  `ORBIT_API_KEY_FILE` or the CLI is used (doctor says so). A root-owned
+  Compose secret handed to orbitd on stdin by a root entrypoint is the
+  follow-up (PLAN §7).
 - Compose users on Linux must make the key file readable by the container's
   `orbit` user (uid 10001: `chown` or an ACL); Compose ignores a secret's
   `uid`/`mode` outside Swarm.

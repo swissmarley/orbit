@@ -28,6 +28,32 @@ const ask = async (toolName: string, input: Record<string, unknown> = {}) =>
 
 describe('baseline default-deny policy', () => {
   describe('reads', () => {
+    it('refuses an API key file even inside a read root; the same file is readable without the entry', async () => {
+      const keyFile = join(shared, 'anthropic.key');
+      const guarded = baselinePolicy({
+        workspace: ws,
+        readRoots: [shared],
+        home,
+        orbitHome,
+        sensitive: [keyFile],
+      });
+      const read = async (p: typeof policy) =>
+        (
+          await p(
+            {
+              toolName: 'Read',
+              input: { file_path: keyFile },
+              toolUseId: 't',
+              parentToolUseId: null,
+            },
+            new AbortController().signal,
+          )
+        ).behavior;
+      expect(await read(guarded)).toBe('deny');
+      // Positive control: only the entry makes the difference.
+      expect(await read(policy)).toBe('allow');
+    });
+
     it('allows reads inside the workspace and explicit read roots', async () => {
       expect(await ask('Read', { file_path: join(ws, 'notes.txt') })).toBe('allow');
       expect(await ask('Read', { file_path: 'notes.txt' })).toBe('allow');

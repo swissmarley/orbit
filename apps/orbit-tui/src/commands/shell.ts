@@ -30,6 +30,13 @@ export function spawnInteractiveShell(o: {
  * (or a nested repository) the Bot wrote. Inherited GIT_DIR, GIT_WORK_TREE
  * and GIT_COMMON_DIR are dropped for a directory Bot.
  */
+/**
+ * GIT_DIR for a directory Bot's take-over: a path that can never exist (no
+ * one can create anything under /dev/null), so git finds no repository at
+ * all — not one the Bot nested in a subfolder (M8 safety re-review).
+ */
+export const NO_GIT_DIR = '/dev/null/orbit-no-repository';
+
 export function takeoverShellEnv(
   source: Readonly<Record<string, string | undefined>>,
   t: { workspace: string; git: { dir: string; workTree: string } | null },
@@ -37,9 +44,9 @@ export function takeoverShellEnv(
   const env = buildChildEnv('tool', source, {
     ORBIT_TAKEOVER: '1',
     GIT_CEILING_DIRECTORIES: dirname(t.workspace),
-    ...(t.git ? { GIT_DIR: t.git.dir, GIT_WORK_TREE: t.git.workTree } : {}),
+    ...(t.git ? { GIT_DIR: t.git.dir, GIT_WORK_TREE: t.git.workTree } : { GIT_DIR: NO_GIT_DIR }),
   });
-  const drop = t.git ? ['GIT_COMMON_DIR'] : ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR'];
+  const drop = t.git ? ['GIT_COMMON_DIR'] : ['GIT_WORK_TREE', 'GIT_COMMON_DIR'];
   for (const k of drop) Reflect.deleteProperty(env, k);
   return env;
 }
@@ -65,7 +72,7 @@ export async function shell(ctx: Context, botRef: string): Promise<number> {
   ctx.io.out(
     t.git
       ? `  git       GIT_DIR=${t.git.dir} (Orbit's worktree entry; the workspace's .git is not used${t.git.restored ? '; a changed .git was put back' : ''})`
-      : '  git       no repository here; git does not look above the workspace',
+      : `  git       GIT_DIR=${NO_GIT_DIR}: git sees no repository here, not even one in a subfolder (unset GIT_DIR to use git yourself)`,
   );
   ctx.io.out(
     p(

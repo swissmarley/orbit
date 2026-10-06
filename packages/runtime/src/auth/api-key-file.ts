@@ -175,3 +175,13 @@ export function resolveApiKey(
     origin: fromEnv ? (opts.origin ?? 'environment') : 'file',
   };
 }
+
+/**
+ * Where an API key file can live (`ORBIT_API_KEY_FILE`, container secrets):
+ * denied to Bots' file tools, the engine sandbox and plugins alike, since a
+ * 0600 file of the owner is readable by every process of the same user.
+ */
+export function apiKeyFilePaths(env: Env): string[] {
+  const file = env.ORBIT_API_KEY_FILE?.trim();
+  return [CONTAINER_SECRETS_DIR, ...(file && isAbsolute(file) ? [resolve(file)] : [])];
+}
