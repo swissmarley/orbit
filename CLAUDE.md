@@ -161,7 +161,11 @@ Plugins depend on `@orbit/plugin-kit` only (they run as separate processes).
   a result; `onInterrupt: fail` opts out). `orbit shell` is the only take-over:
   bearer token only, refused while a Run executes or waits mid-call and for
   Docker Bots, holds the Bot through the Bot-pause hold, its shell gets the
-  `tool` allowlist plus `ORBIT_TAKEOVER=1`, both ends audited.
+  `tool` allowlist plus `ORBIT_TAKEOVER=1`, `GIT_DIR`/`GIT_WORK_TREE` for
+  worktree Bots and `GIT_CEILING_DIRECTORIES`; a changed `.git` pointer is
+  restored (audited), a directory Bot with a `.git` is refused; both ends
+  audited. Plugin sandboxes bind the owner's common git dir read-only (only
+  objects, refs, logs and the Bot's own worktree entry are writable).
 - Roles (ADR-015): every contract route has a least role (GET = viewer, write =
   owner unless the table says `operator`); a new route that differs names it
   in `contract.ts`, and `roles.test.ts` lists every route. Service code records
@@ -214,6 +218,11 @@ Plugins depend on `@orbit/plugin-kit` only (they run as separate processes).
   credentials reach the engine (scrub on; Linux needs bubblewrap, checked
   before start). `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` is 1 where Claude Code can
   enforce it, else 0 (ADR-018 amendment).
+- orbitd keeps the API key out of its own environment: `ORBIT_API_KEY_FILE`
+  (0600, `O_NOFOLLOW`; Compose mounts a file secret), the CLI hands the key to
+  the orbitd it spawns on stdin (`ORBIT_API_KEY_HANDOVER=stdin`), and an orbitd
+  started with `ANTHROPIC_API_KEY` re-execs itself once without it (Linux,
+  Node ≥ 22.15; elsewhere doctor warns `api_key_in_environment`).
 - Plugin servers run under bwrap / `sandbox-exec` built from the manifest's
   `sandbox` section (`plugins.sandbox` auto|required|off, ADR-019): empty
   `$HOME`, no `$ORBIT_HOME`, workspace, network and folders only as declared.
