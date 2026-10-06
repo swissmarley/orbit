@@ -21,8 +21,38 @@ export function scrubControls(text: string): string {
   return text.replace(CONTROLS, '\ufffd');
 }
 
-/** `<` spelled as an HTML entity, a JSON or JavaScript escape, or URL-encoded. */
-const LT_SPELLED = /&(?:lt|#0*60|#x0*3c);?|\\u003c|\\x3c|%3c/iy;
+/**
+ * `<` spelled as an HTML entity (also double-encoded, `&amp;lt;`), a JSON or
+ * JavaScript escape, or URL-encoded (also twice, `%253C`).
+ */
+const LT_SPELLED = /&(?:amp;)*(?:lt|#0*60|#x0*3c);?|\\u003c|\\x3c|%(?:25)*3c/iy;
+/**
+ * Letters from other scripts a reader takes for Latin ones (Cyrillic, Greek,
+ * Armenian and IPA look-alikes, by their visible shape and either case),
+ * so `<оrbіt-…>` with a Cyrillic о and і still reads as Orbit's tag.
+ */
+// prettier-ignore
+const CONFUSABLE: ReadonlyMap<string, string> = new Map(
+  Object.entries({
+    // Cyrillic, upper case
+    'А': 'a', 'В': 'b', 'Е': 'e', 'К': 'k', 'М': 'm', 'Н': 'h',
+    'О': 'o', 'Р': 'p', 'С': 'c', 'Т': 't', 'У': 'y', 'Х': 'x',
+    'Ѕ': 's', 'І': 'i', 'Ј': 'j', 'Ӏ': 'l', 'Ԁ': 'd',
+    // Cyrillic, lower case
+    'а': 'a', 'в': 'b', 'г': 'r', 'е': 'e', 'к': 'k', 'м': 'm',
+    'н': 'h', 'о': 'o', 'р': 'p', 'с': 'c', 'т': 't', 'у': 'y',
+    'х': 'x', 'ѕ': 's', 'і': 'i', 'ј': 'j', 'ь': 'b', 'һ': 'h',
+    'ӏ': 'l', 'ԁ': 'd', 'ԛ': 'q', 'ԝ': 'w',
+    // Greek
+    'Α': 'a', 'Β': 'b', 'Ε': 'e', 'Ζ': 'z', 'Η': 'h', 'Ι': 'i',
+    'Κ': 'k', 'Μ': 'm', 'Ν': 'n', 'Ο': 'o', 'Ρ': 'p', 'Τ': 't',
+    'Υ': 'y', 'Χ': 'x', 'α': 'a', 'ι': 'i', 'κ': 'k', 'ν': 'v',
+    'ο': 'o', 'ρ': 'p', 'τ': 't', 'υ': 'u',
+    // Armenian, IPA and dotless forms
+    'օ': 'o', 'ս': 'u', 'հ': 'h', 'ı': 'i', 'ɩ': 'i', 'ɡ': 'g',
+    'ɑ': 'a',
+  }),
+);
 /** Characters a reader takes for `<`, `/` or nothing that compatibility normalisation keeps. */
 const LT_LOOKALIKES = new Set(['\u02c2', '\u1438', '\u2329', '\u276e', '\u27e8', '\u3008']);
 const SLASH_LOOKALIKES = new Set(['\u2044', '\u2215', '\u2571', '\u29f8']);
@@ -43,11 +73,17 @@ function invisible(cp: number, ch: string): boolean {
 /** How a character reads: compatibility-normalised, lower case, look-alikes folded. */
 function fold(ch: string): string {
   let out = '';
-  for (const c of ch.normalize('NFKC').toLowerCase()) {
+  for (const n of ch.normalize('NFKC')) {
+    const latin = CONFUSABLE.get(n);
+    if (latin !== undefined) {
+      out += latin;
+      continue;
+    }
+    const c = n.toLowerCase();
     if (LT_LOOKALIKES.has(c)) out += '<';
     else if (SLASH_LOOKALIKES.has(c)) out += '/';
     else if (/\p{Pd}/u.test(c)) out += '-';
-    else out += c;
+    else for (const l of c) out += CONFUSABLE.get(l) ?? l;
   }
   return out;
 }
