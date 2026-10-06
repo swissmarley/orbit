@@ -7,7 +7,10 @@ import { describe, expect, it } from 'vitest';
  * snippets, must fire on every way of handing a child the whole environment
  * and stay quiet on an allowlist.
  */
-const { envSelectors } = (await import('../../eslint.config.js')) as {
+// By URL: the config is plain JavaScript without type declarations.
+const { envSelectors } = (await import(
+  new URL('../../eslint.config.js', import.meta.url).href
+)) as {
   envSelectors: { selector: string; message: string }[];
 };
 
