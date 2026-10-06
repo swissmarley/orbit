@@ -338,17 +338,88 @@ on token-free paths and that the engine process's `/proc/<pid>/environ` and
 - The docker compose deployment and Linux hosts without bubblewrap run
   API-key Bots; the key exists only in orbitd.
 - While a segment runs, anything the engine starts (Bash included) inherits
-  the base URL with the token and the placeholder when the scrub is off, so it
-  can make API calls with the owner's key through the proxy — the same
+  the base URL with the token **whether or not the scrub is on**: Claude
+  Code 2.1.289's subprocess scrub removes `ANTHROPIC_API_KEY` (here only the
+  placeholder) and other credential names, but not `ANTHROPIC_BASE_URL`
+  (verified by reading the engine binary's scrub code: its fixed list names
+  `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, cloud and CI credentials, its
+  name patterns match segments such as `TOKEN`, `KEY`, `AUTH`, `SECRET`, and
+  its value check looks for credentials in a URL's user part or query, none
+  of which fits `http://127.0.0.1:<port>/<token>`). The forwarder ignores the
+  client's key, so the token alone is enough: such a child can make API
+  calls with the owner's key through the proxy — the same
   exposure as code in a Docker Bot's container: bounded by the segment
   (wall-clock budget, kill switches, stop), by the forwarder's routes and
   body rules, counted in doctor, not metered in Orbit's token/cost budgets
   (only the engine's reported usage is). Before, the same child could read
   the key itself when the scrub was off, or the Run could not start at all.
 - A process of the same OS user can read the token from the engine's
-  `/proc/<pid>/environ` during a segment; such a process could read orbitd's
-  environment (the key) anyway. Other users cannot.
+  `/proc/<pid>/environ` during a segment and spend the key through the proxy
+  until the segment ends (it cannot read the key itself: see the amendment
+  below on orbitd's own environment). Other users cannot.
 - The key proxy connects to the upstream directly; orbitd's `HTTPS_PROXY` is
   not chained (as for Docker Bots). Hosts that reach the API only through an
   outbound proxy can no longer run API-key SDK Bots; chaining CONNECT through
   `HTTPS_PROXY` in the forwarder is the follow-up.
+
+## Amendment (M8 safety review): the key outside orbitd's own environment
+
+### Context
+
+The key lived only in orbitd — but in orbitd's process environment, which
+every process of the same user can read for orbitd's whole life
+(`/proc/<pid>/environ`; `ps eww` on macOS), and in the compose deployment
+PID 1 (tini) held it as well. On a host without bubblewrap the engine's
+shell commands and plugin servers are not OS-sandboxed, so any of them could
+read the key there.
+
+### Decision
+
+- **`ORBIT_API_KEY_FILE`** names a file holding the key, a source equivalent
+  to `ANTHROPIC_API_KEY` for the AuthResolver and both key proxies. orbitd
+  reads it once at start into its in-memory configuration (never into a
+  process environment). The file must be a regular file only its owner can
+  read (opened with `O_NOFOLLOW`; a mode with any group or other bit is
+  refused, like an SSH key); under `/run/secrets` (container secrets) the
+  runtime decides the mode. An empty file means "no key"; both variables set
+  to different keys is refused.
+- **Hand-over instead of environment.** The `orbit` CLI starts orbitd
+  without `ANTHROPIC_API_KEY` and writes the key to its standard input
+  (`ORBIT_API_KEY_HANDOVER=stdin`; orbitd refuses anything but a pipe there).
+  An orbitd started with the key in its environment (by hand, systemd,
+  `docker run -e`) re-executes itself once on Linux with `process.execve`
+  (Node ≥ 22.15) — same PID, so terminals, service managers and tini keep
+  supervising it — without the variable. The key crosses the exec through a
+  pipe: `cat` copies it from orbitd into a real pipe whose read end belongs
+  to a short-lived holder process (Node's own child pipes are socket pairs,
+  which `/proc` cannot reopen), started in the background so it is not
+  orbitd's child; the new image checks the holder (its environment carries
+  only `ORBIT_API_KEY_HOLDER=1`, its fd 0 is a pipe), reads
+  `/proc/<pid>/fd/0` to end-of-file and kills it
+  (`ORBIT_API_KEY_HANDOVER=pid:<n>`). Never argv, never a file.
+- **Compose** mounts the key as a secret (`file:
+${ORBIT_API_KEY_SECRET:-/dev/null}` at `/run/secrets/anthropic_api_key`)
+  with `ORBIT_API_KEY_FILE` pointing at it, and no longer passes
+  `ANTHROPIC_API_KEY`; a repository guard refuses `ANTHROPIC_API_KEY` in a
+  compose file's service environment. A file secret rather than an
+  `environment:` secret: Compose copies the latter into the container, which
+  a `read_only` root file system refuses. Without a key the secret is
+  `/dev/null` (mock mode, CI).
+- A Bedrock / Vertex engine's environment no longer carries an
+  `ANTHROPIC_API_KEY` orbitd also holds.
+- **Doctor** warns `api_key_in_environment` when the key stayed in orbitd's
+  environment (macOS, Windows, or the holder could not start).
+
+### Consequences
+
+- On Linux the key is in no process environment of Orbit's: not orbitd's,
+  not PID 1's in the compose container, not any child's. It passes through
+  the hand-over helper's pipe for a moment in the re-exec case.
+- What remains: a same-user process can read orbitd's memory only with
+  ptrace or `/proc/<pid>/mem`, which Yama (`ptrace_scope` 1, the default on
+  most distributions) allows only to orbitd's ancestors; the engine's shell
+  and the plugins are its descendants. macOS keeps the key in orbitd's
+  environment unless `ORBIT_API_KEY_FILE` or the CLI is used (doctor says so).
+- Compose users on Linux must make the key file readable by the container's
+  `orbit` user (uid 10001: `chown` or an ACL); Compose ignores a secret's
+  `uid`/`mode` outside Swarm.

@@ -19,6 +19,8 @@ const ALLOWED_RUNTIME_IMPORTS = new Set([
   'orbitLayout',
   // static help text for `orbit login-help`
   'ONBOARDING_STEPS',
+  // the variable naming how orbitd gets its API key (a constant, never the key)
+  'API_KEY_HANDOVER_VAR',
 ]);
 const FORBIDDEN_PACKAGES = ['@orbit/store', '@orbit/policy', '@orbit/sandbox', '@orbit/memory'];
 

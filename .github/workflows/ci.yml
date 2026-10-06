@@ -96,7 +96,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      # compose.yaml passes it through; no API key ever reaches this job.
+      # compose.yaml passes it through. No API key ever reaches this job: without
+      # ORBIT_API_KEY_SECRET the anthropic_api_key secret is /dev/null (no key).
       ORBIT_DRIVER: mock
     steps:
       - uses: actions/checkout@v5

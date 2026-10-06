@@ -192,6 +192,9 @@ export function buildSdkOptions(
     case 'engine':
       env = buildChildEnv('sdk-engine', o.env, { CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1' });
       assertChildEnvSafe('sdk-engine', env);
+      // Bedrock / Vertex: their cloud credentials only. An Anthropic API key
+      // orbitd also holds never enters an engine (M8 safety review).
+      Reflect.deleteProperty(env, 'ANTHROPIC_API_KEY');
       break;
     case 'host_proxy':
       env = proxiedEngineEnv(o.env, o.key.baseUrl, {

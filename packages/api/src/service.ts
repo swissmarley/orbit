@@ -108,6 +108,7 @@ import {
   sandboxWorkspaces,
   systemProbes,
   validateTriggers,
+  type ApiKeyOrigin,
 } from '@orbit/runtime';
 import {
   type EngineCredential,
@@ -179,6 +180,8 @@ export interface ServiceOptions {
   config: OrbitConfig;
   /** The daemon's own environment: read for credentials, never spread into children. */
   env: Env;
+  /** Where `env.ANTHROPIC_API_KEY` came from; `environment` makes doctor warn. */
+  apiKeyOrigin?: ApiKeyOrigin | null;
   db: OrbitDb;
   version: string;
   /** Tests: fake `claude` probes, an injected SDK query(), mock pacing, plain directories. */
@@ -2235,6 +2238,17 @@ export class OrbitService {
           code: w.code,
           message: this.redactor.redactString(w.message),
         })),
+        // The key stayed in orbitd's own environment, readable by every
+        // process of the same user (/proc/<pid>/environ, ps eww).
+        ...(this.opts.apiKeyOrigin === 'environment' && r.apiCredential === 'api_key'
+          ? [
+              {
+                code: 'api_key_in_environment',
+                message:
+                  "The API key is in orbitd's process environment, where any process of the same user can read it — including Bash and plugins on a host without an OS sandbox. Put it in a file only you can read and set ORBIT_API_KEY_FILE (chmod 600), or let the orbit CLI start orbitd (it hands the key over on a pipe).",
+              },
+            ]
+          : []),
         ...(upstreamProblem
           ? [
               {

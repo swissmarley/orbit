@@ -2,16 +2,17 @@ import { spawn } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { OrbitError } from '@orbit/core';
-import { buildChildEnv, defaultHome, orbitLayout } from '@orbit/runtime';
+import { API_KEY_HANDOVER_VAR, buildChildEnv, defaultHome, orbitLayout } from '@orbit/runtime';
 import { type OrbitClient, daemonFiles, localClient, readDaemonInfo } from '@orbit/sdk-client';
 
 const START_TIMEOUT_MS = 15_000;
 
 /**
  * Spawn orbitd detached, logging to $ORBIT_HOME/logs/orbitd.log. Its env is
- * an allowlist ('orbitd': Orbit settings + API credentials, never OAuth
- * tokens). In the dev tree the bin is TypeScript, so tsx is preloaded; the
- * npm package runs its bundled `dist/orbitd.mjs` directly (ADR-017).
+ * an allowlist ('orbitd': Orbit settings + cloud credentials, never OAuth
+ * tokens); the API key goes on its standard input, never in its env. In the
+ * dev tree the bin is TypeScript, so tsx is preloaded; the npm package runs
+ * its bundled `dist/orbitd.mjs` directly (ADR-017).
  */
 export function spawnDaemon(
   env: Record<string, string | undefined>,
@@ -23,12 +24,24 @@ export function spawnDaemon(
   mkdirSync(dirname(files.log), { recursive: true, mode: 0o700 });
   const log = openSync(files.log, 'a', 0o600);
   try {
+    // The API key goes over orbitd's standard input, not its environment:
+    // a process's environment stays readable to the same user for its whole
+    // life (/proc/<pid>/environ), and orbitd lives long.
+    const childEnv = buildChildEnv('orbitd', env);
+    const key = childEnv.ANTHROPIC_API_KEY?.trim();
+    Reflect.deleteProperty(childEnv, 'ANTHROPIC_API_KEY');
+    if (key) childEnv[API_KEY_HANDOVER_VAR] = 'stdin';
+    else Reflect.deleteProperty(childEnv, API_KEY_HANDOVER_VAR);
     const child = spawnFn(process.execPath, args, {
       detached: true,
-      stdio: ['ignore', log, log],
-      env: buildChildEnv('orbitd', env),
+      stdio: [key ? 'pipe' : 'ignore', log, log],
+      env: childEnv,
       cwd: home,
     });
+    if (key) {
+      child.stdin?.on('error', () => undefined);
+      child.stdin?.end(`${key}\n`);
+    }
     child.unref();
   } finally {
     closeSync(log);

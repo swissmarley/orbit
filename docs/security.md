@@ -85,7 +85,29 @@ prior Orbit decision stops the Run (`policy_bypassed`).
   Linux) and runs without the scrub elsewhere, since there is no secret to
   scrub. Bedrock and Vertex credentials cannot be proxied: they go to the
   engine, which must scrub them (on Linux a Run without bubblewrap is refused
-  before the engine starts).
+  before the engine starts); an Anthropic key orbitd also holds is removed
+  from such an engine's environment.
+- **The key in orbitd itself.** A process's environment stays readable to
+  every process of the same user for as long as it runs
+  (`/proc/<pid>/environ`, `ps eww`), and on a host without bubblewrap the
+  engine's shell commands and the plugins are not OS-sandboxed. So the key
+  is kept out of orbitd's environment too: `ORBIT_API_KEY_FILE` names a file
+  only its owner can read (orbitd refuses anything else; the Compose setup
+  mounts it as a secret at `/run/secrets/anthropic_api_key`, so neither PID
+  1 nor orbitd has it in its environment); the `orbit` CLI starts orbitd
+  without `ANTHROPIC_API_KEY` and writes the key to its standard input; and
+  an orbitd started by hand or by a service manager with the key in its
+  environment re-executes itself once on Linux (same PID) without the
+  variable, the key travelling through a pipe held for a moment by a helper
+  (`cat` and a holder process it then kills). Precisely: the key is never in
+  any child's environment, command line or a file Orbit writes; it passes
+  through that helper's pipe only in the re-exec case; elsewhere (macOS,
+  Windows, or when the helper cannot start) it stays in orbitd's environment
+  and `orbit doctor` warns (`api_key_in_environment`). What remains: a
+  process of the same user can still read orbitd's memory with ptrace or
+  `/proc/<pid>/mem`, which Linux's Yama setting (`ptrace_scope` 1, the
+  default on most distributions) refuses to anything but orbitd's ancestors
+  — the engine's shell and the plugins are its descendants.
 - **Subscription mode** (your own `claude login`): the CliDriver spawns your
   `claude` binary, which reads its own credential store. Orbit never reads,
   copies, stores, logs or forwards Claude OAuth credentials
@@ -98,8 +120,9 @@ prior Orbit decision stops the Run (`policy_bypassed`).
 **Child environments are allowlists.** No child process inherits
 `process.env`. Each kind of child (`cli-engine`, `sdk-engine`, `plugin`,
 `tool`, `orbitd`, …) gets the variables on its list and nothing else; the API
-key stays in orbitd, and only Bedrock / Vertex credentials reach the SDK
-engine (ADR-005, ADR-018).
+key stays in orbitd (the `orbitd` child the CLI starts gets it on standard
+input, not in its environment), and only Bedrock / Vertex credentials reach
+the SDK engine (ADR-005, ADR-018).
 
 **The engine's reported credential source is checked.** The CliDriver stops if
 the engine says it used `ANTHROPIC_API_KEY`; the SdkDriver stops on any login
