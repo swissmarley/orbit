@@ -430,6 +430,24 @@ describe('loadConfig: hosted mode (ADR-015)', () => {
     expect(JSON.stringify(c)).not.toContain('TEST-oidc-client-secret');
   });
 
+  it("refuses a configured principal named 'owner' in hosted mode (the bearer token's actor)", () => {
+    const people = [
+      { id: 'owner', kind: 'human', name: 'Ada', role: 'owner', oidc: { subject: 'sub-ada' } },
+    ];
+    writeConfig({ mode: 'hosted', principals: people });
+    expectInvalid(
+      () => loadConfig(env()),
+      /principal id "owner" is reserved in hosted mode for the local bearer token/,
+    );
+    // Locally (one owner) and with the built-in default, "owner" stays as it is.
+    writeConfig({ principals: people });
+    expect(loadConfig(env()).principals[0]?.id).toBe('owner');
+    writeConfig({});
+    expect(loadConfig(env({ ORBIT_MODE: 'hosted' })).principals.map((p) => p.id)).toEqual([
+      'owner',
+    ]);
+  });
+
   it('environment values override config.json field by field', () => {
     writeConfig({
       hosted: {

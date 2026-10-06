@@ -31,6 +31,9 @@ function boolFromEnv(env: Env, name: string): boolean | undefined {
   throw new OrbitError('invalid_config', `${name} must be a boolean`);
 }
 
+/** The principal the local bearer token acts as (the API's OWNER). */
+export const RESERVED_OWNER_ID = 'owner';
+
 type HostedInput = NonNullable<OrbitConfigInput['hosted']>;
 
 /**
@@ -187,6 +190,21 @@ export function loadConfig(
   const result = OrbitConfig.safeParse(merged);
   if (!result.success) {
     throw new OrbitError('invalid_config', `Invalid configuration: ${result.error.message}`);
+  }
+  // The local bearer token acts as "owner" in every audit record: in hosted
+  // mode no configured person may share that id (M8 review L11). The
+  // built-in default principal is that local owner itself.
+  if (
+    result.data.mode === 'hosted' &&
+    (merged.principals ?? []).some((p) => p.id === RESERVED_OWNER_ID)
+  ) {
+    throw new OrbitError(
+      'invalid_config',
+      `principal id "${RESERVED_OWNER_ID}" is reserved in hosted mode for the local bearer token`,
+      {
+        hint: `Give that principal another id in config.json (e.g. its name); records made with the bearer token keep saying "${RESERVED_OWNER_ID}".`,
+      },
+    );
   }
   return result.data;
 }
