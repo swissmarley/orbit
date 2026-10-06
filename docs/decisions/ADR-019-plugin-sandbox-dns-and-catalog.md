@@ -217,6 +217,15 @@ the database, so no migration is needed.
   in the Bot's workspace. Git operations that rewrite a file at the top of
   the common dir (`packed-refs` when deleting a packed ref, `shallow`,
   `gc.pid` for an automatic gc) fail inside the sandbox; the plugin's tools
-  (add, commit, push) need none of them. Linux
+  (add, commit, push) need none of them. A plugin with `network: true`
+  shares the host's network namespace (`--share-net`), and with it the
+  host's abstract Unix sockets: an X11 server listening on
+  `@/tmp/.X11-unix/X<n>` (keystroke injection, screen reads) or a D-Bus
+  session bus on an abstract address is reachable even though their socket
+  files are not bound (M8 safety review). bubblewrap has no option to keep
+  the network but drop abstract sockets (that needs a seccomp filter on
+  `connect`/`bind` to `sun_path[0] == 0`, or a separate network namespace
+  with forwarded egress); not done, documented in docs/security.md.
+  Plugins without network get their own namespace and reach none. Linux
   system folders (`/etc`, `/usr`) stay readable. A link in an owner-added
   folder's `node_modules` can make a package folder outside it readable.

@@ -196,7 +196,11 @@ CPU, memory and PID limits, all capabilities dropped and `no-new-privileges`
 `~/.ssh`, `~/.claude` and other credential stores simply are not there), no
 `$ORBIT_HOME`, and only the workspace, folders and network the plugin's
 manifest declares. `plugins.sandbox: required` refuses plugins that cannot be
-sandboxed. The Browser plugin resolves every name once, refuses answers that
+sandboxed. A plugin that declares network access shares the host's network
+namespace (Linux): besides the network it can reach abstract Unix sockets
+there — an X11 display (`@/tmp/.X11-unix/X0`), some D-Bus session buses —
+which a file-system sandbox does not cover; a plugin without network gets a
+network namespace of its own and reaches none of them. The Browser plugin resolves every name once, refuses answers that
 point at private or metadata addresses and connects to the address it
 checked, so DNS rebinding cannot reach your network. Plugins installed from
 the catalog are checked against their published integrity before they are
