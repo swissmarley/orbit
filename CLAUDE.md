@@ -140,10 +140,12 @@ Plugins depend on `@orbit/plugin-kit` only (they run as separate processes).
   `@orbit/core` (`avatarFor` derives the default), drawn as inline SVG; never
   an image, URL or upload.
 - The Bot's computer (ADR-020) is read-only GET routes over the workspace and
-  Run events: relative paths only, every component `lstat`ed, symlinks listed
-  but never followed, `.git` hidden, files opened `O_NOFOLLOW` and
-  inode-checked, previews capped and redacted, untrusted files flagged. The App
-  never gets a shell or browser control; take-over stays `orbit shell`.
+  Run events: relative paths only, never through a symlink nor by name again
+  once a folder on the path is open (Linux `/proc/self/fd/<dir>/<name>` +
+  `O_NOFOLLOW`, macOS `O_NOFOLLOW_ANY`, refused elsewhere), no hard-linked
+  files, `.git` hidden, previews capped and redacted, untrusted files flagged;
+  files need an operator. The App never gets a shell or browser control;
+  take-over stays `orbit shell`.
 - TUI: bindings live in `model.ts` (`onKey`, `HELP`) and are unit-tested
   there; views only render. 16 basic colors only, never colour alone (a
   symbol or word too). Every `.tsx` file starts with

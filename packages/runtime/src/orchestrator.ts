@@ -469,13 +469,12 @@ export class Orchestrator {
         { hint },
       );
     }
-    const next = this.deps.store
-      .listRuns({ conversationId: prev.conversationId, limit: 10_000 })
-      .find((r) => r.continuesRunId === runId);
-    if (next) {
+    // A chain has no forks: only its newest turn may be answered (review ADR-020 L3).
+    const latest = this.deps.store.listRuns({ conversationId: prev.conversationId, limit: 1 })[0];
+    if (latest && latest.runId !== runId) {
       throw new OrbitError(
         'conflict',
-        `Run ${runId} was already answered by ${next.runId}; continue the latest turn instead`,
+        `Run ${runId} was already answered; continue the latest turn instead (${latest.runId})`,
       );
     }
     return { runId, conversationId: prev.conversationId, taint: [...prev.taintSources] };

@@ -216,5 +216,14 @@ describe("the Bot's computer (ADR-020)", () => {
     expect(activity.body[1]?.result?.content).toMatch(/Launch page/);
     const one = await h.json<unknown[]>('GET', `/v1/bots/${id}/computer/activity?limit=1`);
     expect(one.body).toHaveLength(1);
+    // Every call shown keeps its decision and result, the oldest one too (review L1).
+    const two = await h.json<typeof activity.body>(
+      'GET',
+      `/v1/bots/${id}/computer/activity?limit=2`,
+    );
+    expect(two.body.map((a) => [a.name, a.decision?.behavior, a.result?.isError])).toEqual([
+      ['Write', 'allow', false],
+      ['WebFetch', 'allow', false],
+    ]);
   });
 });

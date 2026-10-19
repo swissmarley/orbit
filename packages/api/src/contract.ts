@@ -1227,17 +1227,22 @@ export const routes = {
     tag: 'computer',
     response: ComputerStatus,
   },
+  // Files are the operator's (review ADR-020 F2): an operator can have the Bot
+  // read any of them anyway; a viewer would see more than Run events show
+  // (a worktree Bot's whole repository).
   computerFiles: {
     method: 'GET',
+    role: 'operator',
     path: '/v1/bots/{bot}/computer/files',
     summary:
-      "List a directory of the Bot's workspace (links are listed, never followed; .git is hidden)",
+      "List a directory of the Bot's workspace (links are never followed; .git is hidden)",
     tag: 'computer',
     query: ComputerPathQuery,
     response: ComputerListing,
   },
   computerFile: {
     method: 'GET',
+    role: 'operator',
     path: '/v1/bots/{bot}/computer/file',
     summary: "Preview a file of the Bot's workspace (text only, capped, redacted)",
     tag: 'computer',

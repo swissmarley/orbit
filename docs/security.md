@@ -303,12 +303,15 @@ refused, and nothing restarts by itself after you release it.
 - **The Bot's computer** (ADR-020) is read-only in the App: its files, the
   pages it read, the commands it ran and its calls with their decisions.
   Workspace files are listed and previewed by a reader that takes relative
-  paths only, checks every path component and never follows a symbolic
-  link (a Bot could point one at `daemon.token`), opens the file with
-  `O_NOFOLLOW` and requires the inode it checked, refuses hard-linked
-  files, hides `.git`, caps previews and runs them through the event
-  redactor, and flags files a tainted Run wrote. These are GET routes, so
-  viewers may read them, as they may read Run events.
+  paths only and never follows a symbolic link (a Bot could point one at
+  `daemon.token`), nor resolves a path by name again once a folder on it is
+  open, so swapping a folder for a link mid-read changes nothing (Linux:
+  one name at a time inside the open folder through `/proc/self/fd`;
+  macOS: `O_NOFOLLOW_ANY`; other systems do not show workspaces). It
+  refuses hard-linked files, hides `.git`, caps previews and runs them
+  through the event redactor, and flags files a tainted Run wrote. Status
+  and activity are open to viewers, as Run events are; files need an
+  operator, who could have the Bot read them anyway.
 - **Take-over** (`orbit shell <bot>`) opens your own shell in a Bot's
   workspace from the terminal only (the bearer token, never a browser
   session), holds the Bot while it is open and is audited. The App shows the

@@ -23,6 +23,7 @@ import {
   useComputerFile,
   useComputerFiles,
 } from '../lib/queries';
+import { useRole } from '../lib/role';
 import { useStore } from '../lib/store';
 import { TONE_CLASS } from '../lib/tone';
 import { computerOpenStore, computerPathStore, computerTabStore } from '../lib/ui';
@@ -271,8 +272,18 @@ function FilesTab({ bot, status }: { bot: Bot; status: Status }) {
     setFile(wanted);
     computerPathStore.set(null);
   }, [wanted]);
-  const listing = useComputerFiles(bot.id, dir, file === null);
+  // A viewer sees what Run events show; the files are the operator's (ADR-020).
+  const browse = useRole().can('computerFiles');
+  const listing = useComputerFiles(bot.id, dir, browse && file === null);
   const name = scrubControls(bot.spec.name);
+  if (!browse) {
+    return (
+      <p className="px-2 py-8 text-center text-sm text-fg-muted">
+        Browsing {name}’s files needs the operator role. Activity and Terminal show what it read and
+        wrote.
+      </p>
+    );
+  }
   if (file !== null) return <FilePreview bot={bot} path={file} onBack={() => setFile(null)} />;
   if (!status.workspace.exists) {
     return (

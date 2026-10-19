@@ -25215,7 +25215,7 @@
     "/v1/bots/{bot}/computer/files": {
       "get": {
         "operationId": "computerFiles",
-        "summary": "List a directory of the Bot's workspace (links are listed, never followed; .git is hidden)",
+        "summary": "List a directory of the Bot's workspace (links are never followed; .git is hidden)",
         "tags": [
           "computer"
         ],
@@ -25361,7 +25361,7 @@
             }
           }
         },
-        "x-orbit-role": "viewer"
+        "x-orbit-role": "operator"
       }
     },
     "/v1/bots/{bot}/computer/file": {
@@ -25488,7 +25488,7 @@
             }
           }
         },
-        "x-orbit-role": "viewer"
+        "x-orbit-role": "operator"
       }
     },
     "/v1/bots/{bot}/computer/activity": {

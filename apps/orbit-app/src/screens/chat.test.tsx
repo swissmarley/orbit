@@ -153,6 +153,12 @@ describe('chat', () => {
     const id = await bot(h, 'Scout', 'pong');
     m = mountApp(`/chat/${id}`, { h, role: 'viewer' });
     expect(await screen.findByText(/Viewers can read along/)).toBeTruthy();
+    // The files are the operator's (ADR-020): the tab says so instead of asking orbitd.
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Show the computer' }));
+    const panel = await screen.findByTestId('computer-panel');
+    await user.click(within(panel).getByRole('tab', { name: 'Files' }));
+    expect(await within(panel).findByText(/files needs the operator role/)).toBeTruthy();
   });
 });
 

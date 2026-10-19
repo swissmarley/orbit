@@ -160,6 +160,8 @@ import type {
  */
 export const OWNER = 'owner';
 const DAY_MS = 86_400_000;
+/** Decisions and results read for one computer Activity page (a few per call at most). */
+const ACTIVITY_SCAN_LIMIT = 10_000;
 
 const IN_FLIGHT: readonly RunState['status'][] = [
   'queued',
@@ -1923,20 +1925,28 @@ export class OrbitService {
   /** The Bot's latest tool calls across its Runs, newest first, with decisions and results. */
   computerActivity(botRef: string, limit: number): z.infer<typeof ComputerAction>[] {
     const bot = this.bots.get(botRef);
-    const events = this.store.listBotEvents(
-      bot.id,
-      ['tool.call', 'permission.decision', 'tool.result'],
-      limit * 4,
-    );
+    const calls = this.store
+      .listBotEvents(bot.id, ['tool.call'], limit)
+      .filter((e): e is Extract<RunEvent, { type: 'tool.call' }> => e.type === 'tool.call');
+    // Decisions and results follow their call: read all of them since the
+    // oldest call shown, so none is cut off (review ADR-020 L1).
+    const oldest = calls.at(-1)?.id;
+    const events =
+      oldest === undefined
+        ? []
+        : this.store.listBotEvents(
+            bot.id,
+            ['permission.decision', 'tool.result'],
+            ACTIVITY_SCAN_LIMIT,
+            oldest,
+          );
     const key = (runId: string, toolUseId: string) => `${runId} ${toolUseId}`;
     type Decision = NonNullable<z.infer<typeof ComputerAction>['decision']>;
     const decisions = new Map<string, Decision>();
     const results = new Map<string, Extract<RunEvent, { type: 'tool.result' }>['data']>();
-    const calls: Extract<RunEvent, { type: 'tool.call' }>[] = [];
     // Newest first: the latest decision of a call wins (held, then approved).
     for (const e of events) {
-      if (e.type === 'tool.call') calls.push(e);
-      else if (e.type === 'tool.result') {
+      if (e.type === 'tool.result') {
         if (!results.has(key(e.runId, e.data.toolUseId)))
           results.set(key(e.runId, e.data.toolUseId), e.data);
       } else if (e.type === 'permission.decision' && e.data.toolUseId) {
@@ -1961,7 +1971,7 @@ export class OrbitService {
       return id;
     };
     const CONTENT = 4000;
-    return calls.slice(0, limit).map((c) => {
+    return calls.map((c) => {
       const k = key(c.runId, c.data.toolUseId);
       const r = results.get(k);
       return {
@@ -1986,11 +1996,11 @@ export class OrbitService {
 
   /** Whether a workspace path (a directory: anything in it) is marked untrusted. */
   private taintedIn(botId: string): (path: string, directory: boolean) => boolean {
-    const marks = this.workspaceTaint.list(botId).map((t) => t.path);
-    if (marks.includes('*')) return () => true;
-    // The taint ledger folds case where the volume does (review M6 M2).
+    // Case folds where the volume does (review M6 M2), on both sides (review ADR-020 L2).
     const fold = (p: string) =>
       process.platform === 'darwin' || process.platform === 'win32' ? p.toLowerCase() : p;
+    const marks = this.workspaceTaint.list(botId).map((t) => fold(t.path));
+    if (marks.includes('*')) return () => true;
     const exact = new Set(marks);
     return (path, directory) => {
       const p = fold(path);

@@ -166,6 +166,13 @@ describe('EventStore', () => {
     expect(
       store.listBotEvents('bot_1', ['run.queued', 'run.started', 'run.completed'], 1),
     ).toHaveLength(1);
+    const started = got[1]?.id ?? 0;
+    expect(
+      store
+        .listBotEvents('bot_1', ['run.started', 'run.completed'], 10, started)
+        .map((e) => e.type),
+    ).toEqual(['run.completed', 'run.started']);
+    expect(store.listBotEvents('bot_1', ['run.started'], 10, started + 1)).toEqual([]);
   });
 
   it('compare-and-set append refuses a stale writer and writes nothing', () => {

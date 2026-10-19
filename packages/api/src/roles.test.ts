@@ -42,10 +42,11 @@ const EXPECTED: Record<RouteName, PrincipalRole | 'public'> = {
   runMemory: 'viewer',
   runTree: 'viewer',
   botTaint: 'viewer',
-  // The Bot's computer (ADR-020): what Run events already show, read-only.
+  // The Bot's computer (ADR-020): its status and calls show what Run events
+  // show; its files are the operator's (who can have the Bot read them anyway).
   getComputer: 'viewer',
-  computerFiles: 'viewer',
-  computerFile: 'viewer',
+  computerFiles: 'operator',
+  computerFile: 'operator',
   computerActivity: 'viewer',
   triageUsage: 'viewer',
   listPlugins: 'viewer',

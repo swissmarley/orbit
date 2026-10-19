@@ -1,5 +1,14 @@
 import { execFileSync } from 'node:child_process';
-import { linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -84,6 +93,20 @@ describe('listing a workspace', () => {
     expect(() => listWorkspace(elsewhere, '')).toThrow(/not a plain directory/);
   });
 
+  it('a folder swapped for a link while Orbit lists it changes nothing (review F1)', () => {
+    if (process.platform !== 'linux') return;
+    mkdirSync(join(ws, 'notes'));
+    writeFileSync(join(ws, 'notes', 'mine.md'), 'mine');
+    // The Bot races Orbit: once `notes` is open, it becomes a link to Orbit's home.
+    const l = listWorkspace(ws, 'notes', {
+      onStep: () => {
+        renameSync(join(ws, 'notes'), join(ws, 'kept'));
+        symlinkSync(home, join(ws, 'notes'));
+      },
+    });
+    expect(l.entries.map((e) => e.name)).toEqual(['mine.md']);
+  });
+
   it('caps a huge directory and says so', () => {
     for (let i = 0; i < WORKSPACE_LIST_LIMIT + 5; i++) writeFileSync(join(ws, `f${i}`), '');
     const l = listWorkspace(ws, '');
@@ -112,6 +135,36 @@ describe('previewing a file', () => {
     expect(() => readWorkspaceFile(ws, 'home/daemon.token')).toThrow(/symbolic link/);
   });
 
+  it('a folder swapped for a link during the walk cannot redirect it (review F1)', () => {
+    if (process.platform !== 'linux') return;
+    mkdirSync(join(ws, 'a', 'b'), { recursive: true });
+    writeFileSync(join(ws, 'a', 'b', 'daemon.token'), 'the Bot’s own file');
+    mkdirSync(join(home, 'b'));
+    writeFileSync(join(home, 'b', 'daemon.token'), 'orbit-daemon-token-value');
+    // Checked by name, `a/b/daemon.token` would now lead to Orbit's home.
+    const p = readWorkspaceFile(ws, 'a/b/daemon.token', {
+      onStep: (depth) => {
+        if (depth !== 0) return;
+        renameSync(join(ws, 'a'), join(ws, 'kept'));
+        symlinkSync(home, join(ws, 'a'));
+      },
+    });
+    expect(p.text).toBe('the Bot’s own file');
+    // Positive control: by name, the same path now reads Orbit's token.
+    expect(readFileSync(join(ws, 'a', 'b', 'daemon.token'), 'utf8')).toBe(
+      'orbit-daemon-token-value',
+    );
+    expect(() => readWorkspaceFile(ws, 'a/b/daemon.token')).toThrow(/symbolic link/);
+  });
+
+  it('is not shown where Orbit cannot walk a path without following links', () => {
+    writeFileSync(join(ws, 'a.txt'), 'a');
+    expect(() => readWorkspaceFile(ws, 'a.txt', { platform: 'win32' })).toThrow(
+      /Linux and macOS only/,
+    );
+    expect(() => listWorkspace(ws, '', { platform: 'freebsd' })).toThrow(/Linux and macOS only/);
+  });
+
   it('refuses a hard link to a file outside (it would be the same file)', () => {
     linkSync(secret(), join(ws, 'innocent.txt'));
     expect(() => readWorkspaceFile(ws, 'innocent.txt')).toThrow(/hard links/);
@@ -135,7 +188,7 @@ describe('previewing a file', () => {
 
   it('shows the start of a large file, even when the cut splits a character', () => {
     writeFileSync(join(ws, 'big.txt'), `${'a'.repeat(9)}é and more`);
-    const p = readWorkspaceFile(ws, 'big.txt', 10);
+    const p = readWorkspaceFile(ws, 'big.txt', { maxBytes: 10 });
     expect(p).toMatchObject({ kind: 'text', text: 'a'.repeat(9), truncated: true });
   });
 

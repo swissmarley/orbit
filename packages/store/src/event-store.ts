@@ -162,12 +162,26 @@ export class EventStore {
       .map(toEvent);
   }
 
-  /** A Bot's latest events of these types across its Runs, newest first (its computer, ADR-020). */
-  listBotEvents(botId: string, types: readonly RunEvent['type'][], limit = 500): RunEvent[] {
+  /**
+   * A Bot's latest events of these types across its Runs, newest first (its
+   * computer, ADR-020); with `fromId`, only that event and newer ones.
+   */
+  listBotEvents(
+    botId: string,
+    types: readonly RunEvent['type'][],
+    limit = 500,
+    fromId?: number,
+  ): RunEvent[] {
     return this.db.orm
       .select()
       .from(events)
-      .where(and(eq(events.botId, botId), inArray(events.type, [...types])))
+      .where(
+        and(
+          eq(events.botId, botId),
+          inArray(events.type, [...types]),
+          fromId === undefined ? undefined : gte(events.id, fromId),
+        ),
+      )
       .orderBy(desc(events.id))
       .limit(limit)
       .all()

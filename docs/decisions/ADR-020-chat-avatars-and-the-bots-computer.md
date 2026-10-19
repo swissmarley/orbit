@@ -85,10 +85,17 @@ What OpenDots does, and what Orbit takes from it:
 - `GET /v1/bots/{bot}/computer/files?path=` lists a workspace directory and
   `GET /v1/bots/{bot}/computer/file?path=` previews a file:
   - relative paths only: no absolute paths, `..`, backslashes or NUL;
-  - every component is `lstat`ed and **symbolic links are listed but never
-    followed or read** (a Bot could point one at `$ORBIT_HOME/daemon.token`);
-    the file is opened with `O_NOFOLLOW` and must be the same inode that was
-    checked;
+  - **symbolic links are never followed or read** (a Bot could point one at
+    `$ORBIT_HOME/daemon.token`), and a path is never resolved by name again
+    once a folder on it is open, so a Bot that swaps a folder for a link
+    while orbitd reads cannot redirect it (safety review F1): on Linux the
+    walk opens one name at a time inside the folder already open
+    (`/proc/self/fd/<folder>/<name>` with `O_NOFOLLOW`) and a listing reads
+    the open folder (links are listed as links); on macOS `O_NOFOLLOW_ANY`
+    refuses a link anywhere on the path and a listing shows only the names
+    that open that way (links are left out); other systems do not show
+    workspaces;
+  - a file with other hard links is not shown;
   - `.git` is hidden;
   - previews are capped (256 KiB), binary files are not shown, and text goes
     through the event store's redactor, so a credential the Bot wrote is
@@ -98,8 +105,11 @@ What OpenDots does, and what Orbit takes from it:
   calls across its Runs, with the decision (tier, allowed, denied, waiting)
   and the redacted result: the Terminal (shell commands), Browser (Browser
   plugin, WebFetch, WebSearch) and Activity tabs.
-- All three are GET routes, so viewers may call them (ADR-015); they show
-  what Run events already show.
+- Status and activity are viewer routes (ADR-015): they show what Run
+  events already show. Files and file previews need an **operator**, who
+  can have the Bot read any of them anyway; for a viewer they would show
+  more than Run events do (a worktree Bot's whole repository) (safety
+  review F2).
 - The App never gets a shell or browser control: commands run only through
   the Bot (and Orbit's policy) or the owner's `orbit shell` (ADR-016, bearer
   token only). The panel shows that command to copy.
