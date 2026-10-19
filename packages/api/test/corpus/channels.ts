@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Bot, BotSpecInput, RunState, TriggerRef } from '@orbit/core';
@@ -284,9 +284,13 @@ const gitEnv = () => ({
 const git = (...args: string[]) =>
   execFileSync('git', ['-C', repo, ...args], { env: gitEnv(), stdio: 'pipe' });
 
-/** Rewrite the branch ref with its own value: a watcher that missed the change sees one now. */
+/**
+ * Bump the branch ref's time: a watcher that missed the change sees one now.
+ * (`git update-ref` to the ref's own value leaves the file untouched: no event.)
+ */
 const touchRef = () => {
-  git('update-ref', 'refs/heads/main', 'HEAD');
+  const now = new Date();
+  utimesSync(join(repo, '.git', 'refs', 'heads', 'main'), now, now);
 };
 
 /** A commit subject is one line; git refuses NUL in a message. */
