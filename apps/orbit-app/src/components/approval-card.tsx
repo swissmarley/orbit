@@ -59,10 +59,7 @@ export function ApprovalCard({
   busy?: boolean;
   /** The surrounding dialog's title already says what the Bot wants: don't repeat it. */
   titled?: boolean;
-  /**
-   * In a chat (ADR-020): no sticky footer, and no hints for the Inbox's
-   * single-key shortcuts (they work only there).
-   */
+  /** In a chat (ADR-020): no sticky footer; the keys work with focus in the card. */
   inline?: boolean;
 }) {
   const c = approval.card;
@@ -77,7 +74,7 @@ export function ApprovalCard({
 
   return (
     <div className="flex flex-col gap-4" data-testid="approval-card">
-      <section aria-label="Summary" className="flex flex-col gap-2">
+      <div role="group" aria-label="Summary" className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <TierBadge tier={approval.tier} />
           <span className="font-mono text-xs text-fg-muted">
@@ -118,7 +115,7 @@ export function ApprovalCard({
           <dt className="text-fg-muted">Risk</dt>
           <dd className="text-fg">{scrubControls(c.risk)}</dd>
         </dl>
-      </section>
+      </div>
 
       {c.untrusted.length > 0 ? (
         <div
@@ -158,7 +155,7 @@ export function ApprovalCard({
       ) : null}
 
       {mode === 'edit' ? (
-        <section aria-label="Edit arguments" className="flex flex-col gap-2">
+        <div role="group" aria-label="Edit arguments" className="flex flex-col gap-2">
           <label htmlFor={`${ids}-edit`} className="text-xs font-medium text-fg-muted">
             Arguments (JSON) — the tool runs with exactly these
           </label>
@@ -212,9 +209,9 @@ export function ApprovalCard({
             label="Your changes"
             maxHeight="max-h-40"
           />
-        </section>
+        </div>
       ) : (
-        <section aria-label="Arguments" className="flex flex-col gap-2">
+        <div role="group" aria-label="Arguments" className="flex flex-col gap-2">
           {c.diff ? <DiffView lines={parseUnified(c.diff)} label="What it changes" /> : null}
           <figure className="overflow-hidden rounded-md border border-border">
             <figcaption className="border-b border-border bg-surface-2 px-3 py-1.5 text-xs text-fg-muted">
@@ -224,11 +221,11 @@ export function ApprovalCard({
               {scrubControls(prettyJson(c.payload))}
             </pre>
           </figure>
-        </section>
+        </div>
       )}
 
       {mode === 'deny' ? (
-        <section aria-label="Deny" className="flex flex-col gap-2">
+        <div role="group" aria-label="Deny" className="flex flex-col gap-2">
           <label htmlFor={`${ids}-reason`} className="text-xs font-medium text-fg-muted">
             Reason (the Bot sees it; optional)
           </label>
@@ -247,23 +244,22 @@ export function ApprovalCard({
             placeholder="e.g. Don't email customers directly — draft it for me instead."
             autoFocus
           />
-        </section>
+        </div>
       ) : null}
 
       {mode === 'always' ? (
         <div
           role="alertdialog"
           aria-labelledby={`${ids}-always`}
-          className="rounded-md border border-attention/40 bg-attention-bg px-3 py-2 text-sm text-attention"
+          tabIndex={-1}
+          className="rounded-md border border-attention/40 bg-attention-bg px-3 py-2 text-sm text-attention focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <p id={`${ids}-always`} className="font-medium">
             {alwaysAllowText(approval)}
           </p>
-          {inline ? null : (
-            <p className="mt-1 text-xs">
-              Press <Kbd>y</Kbd> to confirm, <Kbd>n</Kbd> or <Kbd>Esc</Kbd> to cancel.
-            </p>
-          )}
+          <p className="mt-1 text-xs">
+            Press <Kbd>y</Kbd> to confirm, <Kbd>n</Kbd> or <Kbd>Esc</Kbd> to cancel.
+          </p>
         </div>
       ) : null}
 
@@ -283,7 +279,7 @@ export function ApprovalCard({
                 onClick={() => onMode('deny')}
                 disabled={busy}
               >
-                <X aria-hidden /> Deny {inline ? null : <Kbd>d</Kbd>}
+                <X aria-hidden /> Deny <Kbd>d</Kbd>
               </Button>
             </RoleGate>
             <RoleGate route="approve">
@@ -292,20 +288,18 @@ export function ApprovalCard({
                 onClick={() => onMode('edit')}
                 disabled={busy || financial}
               >
-                <Pencil aria-hidden /> Edit {inline ? null : <Kbd>e</Kbd>}
+                <Pencil aria-hidden /> Edit <Kbd>e</Kbd>
               </Button>
             </RoleGate>
             <RoleGate role={ALWAYS_ALLOW_ROLE}>
               <Button onClick={() => onMode('always')} disabled={busy || financial}>
-                Always allow {inline ? null : <Kbd>⇧A</Kbd>}
+                Always allow <Kbd>⇧A</Kbd>
               </Button>
             </RoleGate>
             <RoleGate route="approve">
               <Button variant="success" onClick={() => onApprove({})} disabled={busy || financial}>
                 <Check aria-hidden /> Approve{' '}
-                {inline ? null : (
-                  <Kbd className="border-transparent bg-black/15 text-inherit">a</Kbd>
-                )}
+                <Kbd className="border-transparent bg-black/15 text-inherit">a</Kbd>
               </Button>
             </RoleGate>
           </>
@@ -340,15 +334,14 @@ export function ApprovalCard({
         {mode === 'always' ? (
           <>
             <Button variant="ghost" onClick={() => onMode('card')}>
-              Cancel
+              Cancel <Kbd>Esc</Kbd>
             </Button>
             <Button
               variant="success"
               disabled={busy || financial}
               onClick={() => onApprove({ always: true })}
             >
-              Yes, always allow{' '}
-              {inline ? null : <Kbd className="border-transparent bg-black/15 text-inherit">y</Kbd>}
+              Yes, always allow <Kbd className="border-transparent bg-black/15 text-inherit">y</Kbd>
             </Button>
           </>
         ) : null}

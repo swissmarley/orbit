@@ -1,7 +1,7 @@
 /** @jsxRuntime automatic @jsxImportSource react */
 import { X } from 'lucide-react';
 import { Dialog as D } from 'radix-ui';
-import type { ComponentProps, ReactNode } from 'react';
+import { type ComponentProps, type ReactNode, useRef } from 'react';
 import { cn } from '../../lib/cn';
 
 export const Dialog = D.Root;
@@ -61,5 +61,53 @@ export function DialogFooter({ className, ...props }: ComponentProps<'div'>) {
       )}
       {...props}
     />
+  );
+}
+
+/**
+ * A panel over the page from one side, modal: focus stays in it, the page
+ * behind is inert, Esc closes it and focus returns to what opened it (the
+ * drawer and the Bot's computer on narrow screens, ui review H1).
+ */
+export function SheetContent({
+  side,
+  title,
+  className,
+  children,
+  onOpenAutoFocus,
+  onCloseAutoFocus,
+  ...props
+}: ComponentProps<typeof D.Content> & { side: 'left' | 'right'; title: string }) {
+  // Radix gives the focus back to a Dialog.Trigger; a sheet opens from a
+  // store (a button, a key, a tool card), so it remembers what had it.
+  const opener = useRef<Element | null>(null);
+  return (
+    <D.Portal>
+      <D.Overlay className="fixed inset-0 z-40 bg-black/30" />
+      <D.Content
+        aria-describedby={undefined}
+        onOpenAutoFocus={(e) => {
+          opener.current = document.activeElement;
+          onOpenAutoFocus?.(e);
+        }}
+        onCloseAutoFocus={(e) => {
+          onCloseAutoFocus?.(e);
+          if (e.defaultPrevented) return;
+          e.preventDefault();
+          const back = opener.current;
+          opener.current = null;
+          if (back instanceof HTMLElement && back.isConnected) back.focus();
+        }}
+        className={cn(
+          'fixed inset-y-0 z-50 flex flex-col border-border shadow-card focus:outline-none',
+          side === 'left' ? 'left-0 border-r' : 'right-0 border-l',
+          className,
+        )}
+        {...props}
+      >
+        <D.Title className="sr-only">{title}</D.Title>
+        {children}
+      </D.Content>
+    </D.Portal>
   );
 }

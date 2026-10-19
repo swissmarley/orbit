@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   computerOpenStore,
   computerPathStore,
+  computerSheetStore,
   computerTabStore,
   drawerStore,
   lastBotStore,
@@ -26,6 +27,7 @@ afterEach(async () => {
   m = undefined;
   // Stores outlive a mounted App.
   computerOpenStore.set(false);
+  computerSheetStore.set(false);
   computerTabStore.set('activity');
   computerPathStore.set(null);
   lastBotStore.set('');
@@ -100,6 +102,56 @@ describe('chat', () => {
     await waitFor(() => expect(h.service.approvals.list({ status: 'pending' })).toHaveLength(0));
   });
 
+  it('a request in the chat is decided from the keyboard; focus comes back to the composer', async () => {
+    const h = harness();
+    const id = await bot(h, 'Mailer', 'send-email');
+    m = mountApp(`/chat/${id}`, { h });
+    const user = userEvent.setup();
+    await user.type(
+      await screen.findByRole('textbox', { name: 'Message Mailer' }),
+      'Reply to Ada{Enter}',
+    );
+    const card = await screen.findByTestId('chat-approval', {}, { timeout: 5000 });
+    await within(card).findByRole('button', { name: /^Approve/ });
+    // r goes to the request (from outside any field), d opens the reason, Esc goes back.
+    (document.activeElement as HTMLElement | null)?.blur();
+    await user.keyboard('r');
+    expect(document.activeElement).toBe(card);
+    await user.keyboard('d');
+    const reason = await within(card).findByRole('textbox', { name: /Reason/ });
+    expect(document.activeElement).toBe(reason);
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(within(card).queryByRole('textbox', { name: /Reason/ })).toBeNull());
+    // ⇧A asks first; n cancels.
+    card.focus();
+    await user.keyboard('A');
+    expect(await within(card).findByRole('alertdialog')).toBeTruthy();
+    await user.keyboard('n');
+    await waitFor(() => expect(within(card).queryByRole('alertdialog')).toBeNull());
+    // a approves from the full card; the composer gets the focus back.
+    card.focus();
+    await user.keyboard('a');
+    await waitFor(() => expect(h.service.approvals.list({ status: 'pending' })).toHaveLength(0));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Message Mailer' })),
+    );
+  });
+
+  it('the computer opens over the chat on a narrow screen, as a dialog', async () => {
+    const h = harness();
+    const id = await bot(h, 'Watcher', 'pong');
+    m = mountApp(`/chat/${id}`, { h });
+    const user = userEvent.setup();
+    const toggle = await screen.findByRole('button', { name: 'Show the computer' });
+    await user.click(toggle);
+    const dialog = await screen.findByRole('dialog', { name: "Watcher's computer" });
+    expect(within(dialog).getByTestId('computer-panel')).toBeTruthy();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    // Focus goes back to what opened it.
+    await waitFor(() => expect(document.activeElement).toBe(toggle));
+  });
+
   it('the computer shows the files, the pages read and every call', async () => {
     const h = harness();
     const id = await bot(h, 'Watcher', 'web-then-write');
@@ -139,13 +191,27 @@ describe('chat', () => {
     expect(await within(panel).findByText(/Launch page: owner Ada/)).toBeTruthy();
   });
 
-  it('the composer says why it cannot send', async () => {
+  it('the composer says why it cannot send, and offers the way out', async () => {
     const h = harness();
     const id = await bot(h, 'Scout', 'pong');
     await h.json('POST', `/v1/bots/${id}/pause`);
     m = mountApp(`/chat/${id}`, { h });
     expect(await screen.findByText('Scout is paused. Resume it to continue.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(true);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Resume Scout' }));
+    await waitFor(() => expect(h.service.bots.get(id).pausedAt).toBeNull());
+  });
+
+  it('a starter fills the message box; it does not send', async () => {
+    const h = harness();
+    const id = await bot(h, 'Scout', 'pong');
+    m = mountApp(`/chat/${id}`, { h });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'What can you do for me?' }));
+    const box = screen.getByRole('textbox', { name: 'Message Scout' });
+    expect((box as HTMLTextAreaElement).value).toMatch(/What can you do for me/);
+    expect(document.activeElement).toBe(box);
+    expect(h.service.store.listRuns({ botId: id })).toHaveLength(0);
   });
 
   it('a viewer reads along but cannot message', async () => {

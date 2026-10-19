@@ -850,7 +850,7 @@ export function MemoryScreen() {
             : 'Bots remember the result of each finished Run, notes they save, and your feedback (thumbs, edits, denials). You can add facts yourself.'}
         </EmptyState>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
           <section aria-label="Memories">
             <p className="mb-2 text-xs text-fg-muted" role="status">
               {items.length} {items.length === 1 ? 'memory' : 'memories'}

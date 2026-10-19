@@ -46,9 +46,9 @@ pnpm --filter @orbit/app exec tsx scripts/screenshots.ts <dir>   # screenshots o
   (`ui.ts`), and pure, unit-tested logic: chat turns, tool cards and the
   composer's state from Run events (`conversation.ts`), the markdown subset
   of Bot messages (`markdown.ts`, rendered as elements, never HTML; links
-  shown, not followed), avatar names (`avatar.ts`), the Inbox key model
-  (`inbox.ts`), the timeline builder (`timeline.ts`), diffs, the Create Bot
-  proposal (`wizard.ts`), theme.
+  shown, not followed), avatar names (`avatar.ts`), the chat's and the
+  Inbox's key models (`chat-keys.ts`, `inbox.ts`), the timeline builder
+  (`timeline.ts`), diffs, the Create Bot proposal (`wizard.ts`), theme.
 - `src/components`: `ui/` primitives, the shell (sidebar with Bots and
   conversations, header with connection, queue, usage limit, driver and
   auth), the chat (`chat.tsx`: messages, tool cards, the approval card
@@ -57,7 +57,7 @@ pnpm --filter @orbit/app exec tsx scripts/screenshots.ts <dir>   # screenshots o
   palette.
 - `src/screens`: Chat (the home), Inbox, Bots, Bot detail (incl. Appearance,
   Memory & team), Run (live delegation tree, feedback, what it remembered),
-  Runs (Activity), Memory (browse, search, edit, review, delete), New Bot
+  Runs, Memory (browse, search, edit, review, delete), New Bot
   (local suggestion or a metered “Ask Claude” proposal, with an avatar),
   Settings (triage usage under Budgets; audit rows as names and links),
   Welcome, sign-in.

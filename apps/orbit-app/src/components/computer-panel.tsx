@@ -26,7 +26,8 @@ import {
 import { useRole } from '../lib/role';
 import { useStore } from '../lib/store';
 import { TONE_CLASS } from '../lib/tone';
-import { computerOpenStore, computerPathStore, computerTabStore } from '../lib/ui';
+import { summarizeToolInput } from '../lib/timeline';
+import { computerPathStore, computerStore, computerTabStore } from '../lib/ui';
 import { BotAvatar } from './avatar';
 import { ListSkeleton } from './states';
 import { TierBadge, Time } from './status';
@@ -44,7 +45,7 @@ const STATE: Record<Status['state'], { word: string; tone: Tone; mark: string }>
   working: { word: 'Working', tone: 'info', mark: '●' },
   needs_you: { word: 'Needs you', tone: 'attention', mark: '◆' },
   waiting: { word: 'Waiting', tone: 'neutral', mark: '◌' },
-  idle: { word: 'Idle', tone: 'success', mark: '○' },
+  idle: { word: 'Idle', tone: 'neutral', mark: '○' },
 };
 
 /** "Folder · no network", "Git worktree of ~/code/app", "Docker container · 2 allowed domains". */
@@ -94,7 +95,7 @@ const outcome = (a: Action): { word: string; tone: Tone } =>
 
 function BrowserTab({ bot, status, activity }: { bot: Bot; status: Status; activity: Action[] }) {
   const pages = activity.filter((a) => {
-    const k = describeTool(a.name).kind;
+    const k = describeTool(scrubControls(a.name)).kind;
     return k === 'web' || k === 'browser';
   });
   const [picked, setPicked] = useState<string | null>(null);
@@ -225,8 +226,11 @@ function FilePreview({ bot, path, onBack }: { bot: Bot; path: string; onBack: ()
         <Button variant="ghost" size="sm" onClick={onBack}>
           <ArrowLeft aria-hidden /> Files
         </Button>
-        <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg" title={path}>
-          {path}
+        <span
+          className="min-w-0 flex-1 truncate font-mono text-xs text-fg"
+          title={scrubControls(path)}
+        >
+          {scrubControls(path)}
         </span>
         {file.data?.tainted ? <Untrusted /> : null}
       </div>
@@ -244,7 +248,7 @@ function FilePreview({ bot, path, onBack }: { bot: Bot; path: string; onBack: ()
         <>
           <pre
             tabIndex={0}
-            aria-label={`Contents of ${path}`}
+            aria-label={`Contents of ${scrubControls(path)}`}
             className="max-h-[55vh] overflow-auto rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap text-fg"
           >
             {scrubControls(file.data.text ?? '')}
@@ -311,7 +315,7 @@ function FilesTab({ bot, status }: { bot: Bot; status: Status }) {
               className="rounded px-1.5 py-0.5 text-fg hover:bg-surface-2"
               onClick={() => setDir(crumbs.slice(0, i + 1).join('/'))}
             >
-              {c}
+              {scrubControls(c)}
             </button>
           </span>
         ))}
@@ -375,7 +379,9 @@ function FilesTab({ bot, status }: { bot: Bot; status: Status }) {
 // ── Terminal ──────────────────────────────────────────────────────────────
 
 function TerminalTab({ bot, status, activity }: { bot: Bot; status: Status; activity: Action[] }) {
-  const commands = activity.filter((a) => describeTool(a.name).kind === 'terminal').reverse();
+  const commands = activity
+    .filter((a) => describeTool(scrubControls(a.name)).kind === 'terminal')
+    .reverse();
   const name = scrubControls(bot.spec.name);
   const prompt = `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'bot'}@computer`;
   return (
@@ -387,7 +393,10 @@ function TerminalTab({ bot, status, activity }: { bot: Bot; status: Status; acti
         aria-label={`Commands ${name} ran`}
       >
         {commands.length === 0 ? (
-          <p className="text-terminal-dim">No commands yet.</p>
+          <p className="text-terminal-dim">
+            No commands yet. When {name} runs one (it needs the Bash tool), it shows here with its
+            output.
+          </p>
         ) : (
           commands.map((c) => {
             const i = inputOf(c);
@@ -398,10 +407,21 @@ function TerminalTab({ bot, status, activity }: { bot: Bot; status: Status; acti
                   <span className="text-terminal-dim select-none">{prompt} $ </span>
                   {scrubControls(typeof i.command === 'string' ? i.command : c.name)}
                 </div>
-                {o.word === 'denied' || o.word === 'waiting for you' ? (
+                {o.word === 'waiting for you' ? (
                   <div className="text-terminal-dim">
-                    [{o.word}
-                    {c.decision?.reason ? `: ${scrubControls(c.decision.reason)}` : ''}]
+                    [waiting for your decision]{' '}
+                    <Link
+                      to="/chat/$botId"
+                      params={{ botId: bot.id }}
+                      search={{ c: c.conversationId }}
+                      className="text-terminal-fg underline"
+                    >
+                      Open in the chat
+                    </Link>
+                  </div>
+                ) : o.word === 'denied' ? (
+                  <div className="text-terminal-dim">
+                    [not run: {c.decision?.tier === 'FINANCIAL' ? 'handed back to you' : 'denied'}]
                   </div>
                 ) : c.result ? (
                   <pre className="whitespace-pre-wrap text-terminal-fg/90">
@@ -432,20 +452,21 @@ function TerminalTab({ bot, status, activity }: { bot: Bot; status: Status; acti
 
 // ── Activity ──────────────────────────────────────────────────────────────
 
-function ActivityTab({ bot, activity }: { bot: Bot; activity: Action[] }) {
+function ActivityTab({ bot, status, activity }: { bot: Bot; status: Status; activity: Action[] }) {
   if (activity.length === 0) {
-    return <p className="px-2 py-8 text-center text-sm text-fg-muted">Nothing yet.</p>;
+    return (
+      <p className="px-2 py-8 text-center text-sm text-fg-muted">
+        Nothing yet. Every call {scrubControls(bot.spec.name)} makes shows here with Orbit’s
+        decision.
+      </p>
+    );
   }
   return (
     <ol className="flex flex-col" aria-label="Recent activity">
       {activity.map((a) => {
-        const info = describeTool(a.name, a.input);
+        const info = describeTool(scrubControls(a.name), a.input);
         const o = outcome(a);
-        const detail = (() => {
-          const i = inputOf(a);
-          const v = i.command ?? i.file_path ?? i.path ?? i.url ?? i.query ?? i.pattern ?? i.to;
-          return typeof v === 'string' ? scrubControls(v) : '';
-        })();
+        const detail = scrubControls(summarizeToolInput(a.input, status.workspace.path));
         return (
           <li
             key={a.runId + a.toolUseId}
@@ -510,7 +531,7 @@ export function ComputerPanel({ bot, onClose }: { bot: Bot; onClose?: () => void
           size="icon"
           className="ml-auto"
           aria-label="Close the computer"
-          onClick={() => (onClose ? onClose() : computerOpenStore.set(false))}
+          onClick={() => (onClose ? onClose() : computerStore().set(false))}
         >
           <X aria-hidden />
         </Button>
@@ -566,16 +587,17 @@ export function ComputerPanel({ bot, onClose }: { bot: Bot; onClose?: () => void
                 <TerminalTab bot={bot} status={status.data} activity={acts} />
               </TabsContent>
               <TabsContent value="activity">
-                <ActivityTab bot={bot} activity={acts} />
+                <ActivityTab bot={bot} status={status.data} activity={acts} />
               </TabsContent>
             </div>
           </Tabs>
           <footer className="flex flex-wrap items-center gap-2 border-t border-border px-4 py-2.5">
+            {/* Cut from the start: the Bot's own folder is the end of the path. */}
             <code
-              className="min-w-0 flex-1 truncate font-mono text-[11px] text-fg-subtle"
+              className="min-w-0 flex-1 truncate font-mono text-[11px] text-fg-subtle [direction:rtl] text-left"
               title={status.data.workspace.path}
             >
-              {status.data.workspace.path}
+              <bdi>{status.data.workspace.path}</bdi>
             </code>
             {status.data.shellCommand ? <TakeOverButton bot={bot} size="sm" /> : null}
           </footer>

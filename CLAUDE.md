@@ -46,8 +46,9 @@ pnpm --filter @orbit/desktop build         # Tauri shell (Rust; WebKitGTK on Lin
 
 - `packages/core` domain types, zod schemas, `RunEvent`, run projection, config,
   permission types, redaction, the shared status/tier vocabulary and local
-  times (`vocabulary.ts`), Bot avatars (`avatar.ts`); `@orbit/core/browser` is
-  the Node-free subset
+  times (`vocabulary.ts`), Bot avatars (`avatar.ts`), the trigger prompt's
+  untrusted block (`untrusted.ts`); `@orbit/core/browser` is the Node-free
+  subset
 - `packages/store` SQLite (Drizzle): append-only events, run projections, bots
 - `packages/runtime` orchestrator, scheduler, drivers (Sdk/Cli/Mock),
   AuthResolver, rate limits, Orbit's MCP tools (`src/orbit-tools`: toolset,
@@ -88,7 +89,7 @@ pnpm --filter @orbit/desktop build         # Tauri shell (Rust; WebKitGTK on Lin
   web App (React 19, Vite, Tailwind v4, Radix/shadcn-style `components/ui`,
   TanStack Router/Query): pure logic in `src/lib` (`conversation.ts` chat
   turns from Run events, `markdown.ts` the message subset, `avatar.ts`,
-  `inbox.ts` key model, `timeline.ts`, `diff.ts`, `wizard.ts`, `actions.ts`
+  `chat-keys.ts` and `inbox.ts` key models, `timeline.ts`, `diff.ts`, `wizard.ts`, `actions.ts`
   writes with toasts/Undo, `live.ts` SSE feed, `ui.ts` small stores),
   `src/components` (`shell.tsx` sidebar, `chat.tsx` messages and tool cards,
   `computer-panel.tsx`, `avatar.tsx`), `src/screens` (`chat.tsx` the home,
@@ -130,7 +131,9 @@ Plugins depend on `@orbit/plugin-kit` only (they run as separate processes).
 - App: imports only `@orbit/core/browser` and `@orbit/sdk-client/browser`
   (guarded); never holds the bearer token (HttpOnly session cookie + CSRF
   header, ADR-011); approvals are decided only from the full card; key
-  bindings live in pure, unit-tested models (`src/lib/inbox.ts`); model text
+  bindings live in pure, unit-tested models (`src/lib/inbox.ts`,
+  `chat-keys.ts`); a trigger's delivered content is shown as untrusted data,
+  never as the owner's message (`splitTriggerPrompt`); model text
   goes through `scrubControls` and is rendered as text, never as HTML (chat
   messages: the `markdown.ts` subset as elements; links shown, not followed).
 - Conversations (ADR-020): a message is a Run that `continues` the latest,

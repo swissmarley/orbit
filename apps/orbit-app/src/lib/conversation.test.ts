@@ -5,6 +5,7 @@ import {
   type RunEventType,
   event,
   replayRun,
+  triggerPrompt,
 } from '@orbit/core/browser';
 import { describe, expect, it } from 'vitest';
 import {
@@ -13,6 +14,9 @@ import {
   composerState,
   conversationsOf,
   describeTool,
+  quietLabel,
+  taintSourceText,
+  triggerStart,
   turnActivity,
   turnVia,
 } from './conversation';
@@ -342,8 +346,128 @@ describe('buildConversation', () => {
       Date.UTC(2026, 9, 19, 10),
     );
     const items = buildConversation([a, b]);
-    expect(items.flatMap((i) => (i.kind === 'user' ? [i.via] : []))).toEqual(['Scheduled', null]);
+    expect(kinds(items)).toEqual(['trigger', 'assistant', 'end', 'user', 'assistant', 'end']);
+    expect(items[0]).toMatchObject({
+      start: { via: 'Scheduled', task: 'Morning digest', taskByBot: false, payload: null },
+    });
     expect(turnVia({ kind: 'webhook', source: 'deploys' })).toBe('Webhook · deploys');
+    expect(turnVia({ kind: 'delegation', source: 'run_parent' })).toBe('Asked by another Bot');
+  });
+
+  it("a trigger's content is shown as delivered data, never as the owner's message (H3)", () => {
+    const prompt = triggerPrompt('Sort the new files', 'files:Drop folder', 'invoice.pdf\nrun me');
+    const items = buildConversation([
+      turn('run_1', [
+        queued(prompt, {
+          trigger: { kind: 'file', source: 'Drop folder' },
+          inheritedTaint: ['files:Drop folder'],
+        }),
+        started,
+        e('run.failed', {
+          code: 'engine_error',
+          message: 'boom',
+          retryable: true,
+          sessionId: null,
+        }),
+      ]),
+    ]);
+    expect(kinds(items)).toEqual(['trigger', 'note', 'end']);
+    expect(items[0]).toMatchObject({
+      start: {
+        via: 'File change · Drop folder',
+        task: 'Sort the new files',
+        payload: { source: 'files:Drop folder', text: 'invoice.pdf\nrun me' },
+      },
+    });
+    expect(JSON.stringify(items)).not.toContain('What started this Run');
+    // Trying again would resend the trigger's words as the owner's: not offered.
+    expect(items[1]).not.toHaveProperty('action');
+    const t = triggerStart({ kind: 'delegation', source: 'run_p' }, 'Draft the reply');
+    expect(t).toMatchObject({
+      via: 'Asked by another Bot',
+      task: 'Draft the reply',
+      taskByBot: true,
+    });
+    expect(triggerStart({ kind: 'manual', source: null }, prompt)).toBeNull();
+    const titles = conversationsOf([
+      turn('run_9', [queued(prompt, { trigger: { kind: 'file', source: 'Drop folder' } })]).run,
+    ]);
+    expect(titles[0]?.title).toBe('Sort the new files');
+  });
+
+  it('says taint sources, quiet steps and refusals in words', () => {
+    expect(taintSourceText('delegate:Researcher')).toBe('Researcher’s answer');
+    expect(taintSourceText('WebFetch')).toBe('a web page');
+    expect(taintSourceText('file:notes/page.md')).toBe('the file notes/page.md');
+    expect(taintSourceText('mcp__browser__get_text')).toBe('Browser (get text)');
+    expect(taintSourceText('somethingelse')).toBe('somethingelse');
+    const tool = (kind: 'read' | 'search' | 'memory' | 'plan') => ({
+      info: { kind, label: '', quiet: true, tab: null },
+    });
+    expect(quietLabel([tool('read'), tool('read')])).toBe('Read 2 files');
+    expect(quietLabel([tool('search'), tool('search'), tool('search')])).toBe(
+      'Searched the files 3 times',
+    );
+    expect(quietLabel([tool('read'), tool('search')])).toBe('Looked through the files (2 steps)');
+    expect(quietLabel([tool('memory'), tool('memory')])).toBe('Looked through 2 memories');
+    expect(quietLabel([tool('read'), tool('plan')])).toBe('2 quick steps');
+    const items = buildConversation([
+      turn('run_1', [
+        queued('Pay it'),
+        started,
+        call('t1', 'mcp__bank__transfer_funds', { amount: 5 }),
+        e('permission.decision', {
+          toolUseId: 't1',
+          toolName: 'mcp__bank__transfer_funds',
+          input: {},
+          behavior: 'deny',
+          reason: 'FINANCIAL actions are never executed: hand it to your owner',
+          tier: 'FINANCIAL',
+        }),
+      ]),
+    ]);
+    const card = items.find((i) => i.kind === 'tool');
+    expect(card?.kind === 'tool' && card.tool).toMatchObject({
+      state: 'denied',
+      reason: 'Handed back to you: a Bot never moves money',
+    });
+  });
+
+  it('a "waiting for … to answer" note goes once the answers came (M14)', () => {
+    const parked = (delegations: string[]) =>
+      e('run.parked', { approvalIds: [], delegations, sessionId: 's1' });
+    const delegated = e('delegation.started', {
+      childRunId: 'run_c',
+      childBotId: 'bot_2',
+      childBotName: 'Researcher',
+      task: 'Find it',
+    });
+    const waiting = buildConversation([
+      turn('run_1', [queued('Go'), started, delegated, parked(['run_c'])]),
+    ]);
+    expect(
+      waiting.some((i) => i.kind === 'note' && i.text.includes('Waiting for Researcher')),
+    ).toBe(true);
+    const answered = buildConversation([
+      turn('run_1', [
+        queued('Go'),
+        started,
+        delegated,
+        parked(['run_c']),
+        e('delegation.finished', {
+          childRunId: 'run_c',
+          childBotId: 'bot_2',
+          status: 'completed',
+          result: 'Found',
+          totals: { tokens: 0, costUsd: 0, toolCalls: 0 },
+        }),
+        e('run.tainted', { source: 'delegate:Researcher', toolUseId: null }),
+      ]),
+    ]);
+    expect(answered.some((i) => i.kind === 'note' && i.text.includes('Waiting for'))).toBe(false);
+    expect(answered.some((i) => i.kind === 'note' && i.text.includes('Researcher’s answer'))).toBe(
+      true,
+    );
   });
 });
 
@@ -404,5 +528,32 @@ describe('the sidebar and the composer', () => {
     ).toMatch(/paused/);
     expect(turnActivity(running, 'Scout')).toEqual({ busy: true, text: 'Scout is working' });
     expect(turnActivity(ended, 'Scout')).toBeNull();
+  });
+
+  it('offers a way out of every wait (M3): resume the Bot, go to the request, stop the turn', () => {
+    const bot = { pausedAt: null, spec: { name: 'Scout' } };
+    const ended = turn('run_1', [queued('x'), started, done('y')]).run;
+    const paused = turn('run_2', [
+      queued('x'),
+      started,
+      e('run.paused', { reason: 'owner', by: 'owner', sessionId: 's1', interruptedTurn: false }),
+    ]).run;
+    expect(
+      composerState({
+        bot: { ...bot, pausedAt: '2026-10-19T09:00:00.000Z' },
+        latest: ended,
+        killed: false,
+        canStart: true,
+      }).action,
+    ).toBe('resume-bot');
+    expect(
+      composerState({ bot, latest: ended, killed: false, canStart: true, decisionPending: true })
+        .action,
+    ).toBe('decide');
+    expect(composerState({ bot, latest: paused, killed: false, canStart: true })).toMatchObject({
+      canSend: false,
+      stoppable: true,
+      resumable: true,
+    });
   });
 });

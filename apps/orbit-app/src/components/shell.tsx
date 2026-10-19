@@ -1,5 +1,5 @@
 /** @jsxRuntime automatic @jsxImportSource react */
-import { type Bot, formatLocalTime, formatRelative, scrubControls } from '@orbit/core/browser';
+import { type Bot, formatLocalTime, scrubControls } from '@orbit/core/browser';
 import { useQueryClient } from '@tanstack/react-query';
 import { Link, Outlet, useNavigate, useRouterState } from '@tanstack/react-router';
 import {
@@ -22,14 +22,14 @@ import {
   SunMoon,
   X,
 } from 'lucide-react';
-import { type ReactNode, useEffect } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { useActions } from '../lib/actions';
 import { authStore, isUnauthorized, useClient } from '../lib/api';
 import type { AvatarState } from '../lib/avatar';
 import { cn } from '../lib/cn';
 import { conversationsOf } from '../lib/conversation';
 import { type Connection, connectionStore, startLiveFeed } from '../lib/live';
-import { otherModalOpen } from '../lib/modal';
+import { useMediaQuery } from '../lib/media';
 import { MOD } from '../lib/platform';
 import {
   useBot,
@@ -44,7 +44,15 @@ import {
 } from '../lib/queries';
 import { useStore } from '../lib/store';
 import { type ThemeChoice, setTheme, themeStore } from '../lib/theme';
-import { computerOpenStore, drawerStore, lastBotStore, sidebarCollapsedStore } from '../lib/ui';
+import {
+  COMPUTER_WIDE,
+  SIDEBAR_WIDE,
+  computerOpenStore,
+  computerSheetStore,
+  drawerStore,
+  lastBotStore,
+  sidebarCollapsedStore,
+} from '../lib/ui';
 import { BotAvatar } from './avatar';
 import { ComputerPanel } from './computer-panel';
 import { ConfirmHost, confirmAction } from './confirm';
@@ -52,9 +60,11 @@ import { KeyboardHelp, helpStore } from './keyboard-help';
 import { CommandPalette, paletteStore } from './palette';
 import { RoleGate } from './role-gate';
 import { ListSkeleton } from './states';
+import { Time } from './status';
 import { TakeOverHost } from './takeover';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
+import { Dialog, DialogClose, SheetContent } from './ui/dialog';
 import { Kbd } from './ui/misc';
 import { Tooltip } from './ui/tooltip';
 import { SignedOut } from '../screens/sign-in';
@@ -112,6 +122,8 @@ function DriverBadge() {
     d.driver === 'mock'
       ? 'Demo · mock driver'
       : `${d.driver ?? 'no driver'} · ${AUTH_SHORT[d.authMethod] ?? d.authMethod}`;
+  // Narrow screens keep a short form, never nothing (ui review H4).
+  const short = d.driver === 'mock' ? 'Demo' : (d.driver ?? 'no driver');
 
   return (
     <Tooltip
@@ -121,10 +133,16 @@ function DriverBadge() {
           : `Driver ${d.driver ?? 'none'} (${d.driverSource}); auth: ${d.authLabel}; models ${d.models.default} / ${d.models.triage}`
       }
     >
-      <Link to="/settings" search={{ tab: 'engine' }} className="rounded-full">
+      <Link
+        to="/settings"
+        search={{ tab: 'engine' }}
+        className="rounded-full"
+        aria-label={`Engine: ${text}`}
+      >
         <Badge tone={tone} data-testid="driver-badge" className="uppercase tracking-wide">
           <span aria-hidden>{d.refusal ? '✘' : '◇'}</span>
-          {text}
+          <span className="md:hidden">{short}</span>
+          <span className="hidden md:inline">{text}</span>
         </Badge>
       </Link>
     </Tooltip>
@@ -136,7 +154,7 @@ function StatusChips() {
   const queue = useQueue();
   const c = CONNECTION[conn];
   return (
-    <div className="flex min-w-0 items-center gap-1.5" aria-label="Orbit status">
+    <div className="flex shrink-0 items-center gap-1.5" aria-label="Orbit status">
       <Tooltip content={c.meaning}>
         <span role="status" aria-label={`Connection: ${c.label}`}>
           <Badge tone={c.tone}>
@@ -160,9 +178,7 @@ function StatusChips() {
           {queue.data.queued.length > 0 ? ` · ${queue.data.queued.length} queued` : ''}
         </Badge>
       ) : null}
-      <span className="hidden md:inline-flex">
-        <DriverBadge />
-      </span>
+      <DriverBadge />
     </div>
   );
 }
@@ -339,28 +355,21 @@ function BotRow({
           <Badge tone="attention" aria-label={`${pending} waiting for you`}>
             {pending}
           </Badge>
-        ) : working ? (
-          <span className="text-xs text-info">
-            <span
-              aria-hidden
-              className="inline-block size-1.5 animate-pulse rounded-full bg-info"
-            />
-            <span className="sr-only">working</span>
-          </span>
         ) : bot.pausedAt ? (
-          <span className="text-xs text-warning">
-            <span aria-hidden>⏸&#xFE0E;</span>
-            <span className="sr-only">paused</span>
-          </span>
+          <span className="shrink-0 text-xs text-warning">paused</span>
+        ) : working ? (
+          <span className="shrink-0 text-xs text-info">working</span>
         ) : null}
       </Link>
       <Tooltip content={`${name}'s settings`}>
+        {/* Also in the chat's header: one tab stop per Bot here (ui review M9). */}
         <Link
           to="/bots/$botId"
           params={{ botId: bot.id }}
           onClick={() => drawerStore.set(false)}
           aria-label={`${name}'s settings`}
-          className="mr-1 rounded-md p-1 text-fg-muted opacity-0 group-hover:opacity-100 hover:bg-surface-3 hover:text-fg focus-visible:opacity-100"
+          tabIndex={-1}
+          className="mr-1 rounded-md p-1 text-fg-muted opacity-0 group-hover:opacity-100 hover:bg-surface-3 hover:text-fg [@media(hover:none)]:opacity-100"
         >
           <MoreHorizontal className="size-4" aria-hidden />
         </Link>
@@ -369,12 +378,16 @@ function BotRow({
   );
 }
 
+const CONVERSATIONS_SHOWN = 40;
+
 /** The selected Bot's conversations, latest first. */
 function Conversations({ bot }: { bot: Bot }) {
   const runs = useRuns({ bot: bot.id, limit: 300 });
   const path = useRouterState({ select: (s) => s.location });
   const current = (path.search as { c?: string }).c;
-  const list = conversationsOf(runs.data ?? []).slice(0, 40);
+  const [shown, setShown] = useState(CONVERSATIONS_SHOWN);
+  const all = conversationsOf(runs.data ?? []);
+  const list = all.slice(0, shown);
   const name = scrubControls(bot.spec.name);
   return (
     <>
@@ -393,7 +406,9 @@ function Conversations({ bot }: { bot: Bot }) {
           </Tooltip>
         }
       >
-        Conversations
+        <span className="block truncate normal-case tracking-normal">
+          <span className="tracking-[0.14em] uppercase">Conversations</span> · {name}
+        </span>
       </SectionTitle>
       {runs.isPending ? (
         <ListSkeleton rows={2} className="px-2" />
@@ -428,19 +443,27 @@ function Conversations({ bot }: { bot: Bot }) {
                       <span className="sr-only">waiting for you</span>
                     </span>
                   ) : busy ? (
-                    <span
-                      aria-hidden
-                      className="size-1.5 shrink-0 animate-pulse rounded-full bg-info"
-                    />
+                    <span className="shrink-0 text-[11px] text-info">working</span>
                   ) : (
                     <span className="shrink-0 text-[11px] text-fg-subtle tabular-nums">
-                      {formatRelative(c.at)}
+                      <Time iso={c.at} mode="relative" />
                     </span>
                   )}
                 </Link>
               </li>
             );
           })}
+          {all.length > list.length ? (
+            <li>
+              <button
+                type="button"
+                className="w-full rounded-lg px-2 py-1 text-left text-xs text-fg-muted hover:bg-surface-2 hover:text-fg"
+                onClick={() => setShown((n) => n + CONVERSATIONS_SHOWN)}
+              >
+                Show {Math.min(CONVERSATIONS_SHOWN, all.length - list.length)} more
+              </button>
+            </li>
+          ) : null}
         </ul>
       )}
     </>
@@ -521,7 +544,10 @@ function SidebarContent() {
           <Kbd className="ml-auto">{MOD}K</Kbd>
         </button>
       </div>
-      <nav aria-label="Main" className="mt-1 flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <nav
+        aria-label="Bots and conversations"
+        className="mt-1 flex min-h-0 flex-1 flex-col overflow-y-auto"
+      >
         <SectionTitle
           action={
             <RoleGate route="createBot">
@@ -563,20 +589,21 @@ function SidebarContent() {
           </ul>
         )}
         {current ? <Conversations bot={current} /> : null}
-        <div className="mt-auto flex flex-col gap-0.5 pt-5">
-          <NavRow to="/inbox" icon={<Inbox aria-hidden />} count={pending}>
-            Inbox
-          </NavRow>
-          <NavRow to="/runs" icon={<ListTree aria-hidden />}>
-            Activity
-          </NavRow>
-          <NavRow to="/memory" icon={<Brain aria-hidden />}>
-            Memory
-          </NavRow>
-          <NavRow to="/settings" icon={<Settings2 aria-hidden />}>
-            Settings
-          </NavRow>
-        </div>
+      </nav>
+      {/* Pinned: only the Bots and conversations scroll (ui review M2). */}
+      <nav aria-label="Main" className="flex shrink-0 flex-col gap-0.5 pt-3">
+        <NavRow to="/inbox" icon={<Inbox aria-hidden />} count={pending}>
+          Needs you
+        </NavRow>
+        <NavRow to="/runs" icon={<ListTree aria-hidden />}>
+          Runs
+        </NavRow>
+        <NavRow to="/memory" icon={<Brain aria-hidden />}>
+          Memory
+        </NavRow>
+        <NavRow to="/settings" icon={<Settings2 aria-hidden />}>
+          Settings
+        </NavRow>
       </nav>
       <div className="mt-2 flex items-center gap-0.5 border-t border-border pt-2">
         <ThemeToggle />
@@ -602,6 +629,11 @@ function SidebarContent() {
 function Sidebar() {
   const collapsed = useStore(sidebarCollapsedStore);
   const drawer = useStore(drawerStore);
+  const wide = useMediaQuery(SIDEBAR_WIDE);
+  // The window grew under an open drawer: the sidebar is back beside the page.
+  useEffect(() => {
+    if (wide && drawer) drawerStore.set(false);
+  }, [wide, drawer]);
   return (
     <>
       {collapsed ? null : (
@@ -612,30 +644,21 @@ function Sidebar() {
           <SidebarContent />
         </aside>
       )}
-      {drawer ? (
-        <div className="fixed inset-0 z-50 lg:hidden">
-          <div
-            aria-hidden
-            className="absolute inset-0 bg-black/30"
-            onClick={() => drawerStore.set(false)}
-          />
-          <aside
-            className="absolute inset-y-0 left-0 w-72 border-r border-border bg-sidebar shadow-card"
-            aria-label="Bots and conversations"
-          >
+      <Dialog open={drawer && !wide} onOpenChange={(o) => drawerStore.set(o)}>
+        <SheetContent side="left" title="Menu" className="w-72 max-w-[85vw] bg-sidebar">
+          <DialogClose asChild>
             <Button
               variant="ghost"
               size="icon"
               className="absolute top-4 right-2"
               aria-label="Close the menu"
-              onClick={() => drawerStore.set(false)}
             >
               <X aria-hidden />
             </Button>
-            <SidebarContent />
-          </aside>
-        </div>
-      ) : null}
+          </DialogClose>
+          <SidebarContent />
+        </SheetContent>
+      </Dialog>
     </>
   );
 }
@@ -643,8 +666,8 @@ function Sidebar() {
 // ── top bar ─────────────────────────────────────────────────────────────
 
 const SECTION: Record<string, string> = {
-  inbox: 'Inbox',
-  runs: 'Activity',
+  inbox: 'Needs you',
+  runs: 'Runs',
   memory: 'Memory',
   settings: 'Settings',
   bots: 'Bots',
@@ -666,7 +689,7 @@ function Crumbs() {
         : botPage
           ? ['Bots', name, 'Settings']
           : parts[0] === 'runs' && parts[1]
-            ? ['Activity', 'Run']
+            ? ['Runs', 'Run']
             : ['Orbit', SECTION[parts[0] ?? ''] ?? 'Home'];
   return (
     <nav aria-label="Breadcrumb" className="min-w-0">
@@ -715,9 +738,28 @@ function StopAll() {
   );
 }
 
+/** Below the sidebar's width, what waits for you stays one tap away (ui review M2). */
+function NeedsYouButton() {
+  const approvals = usePendingApprovals();
+  const n = approvals.data?.length ?? 0;
+  if (n === 0) return null;
+  return (
+    <Tooltip content="Needs you">
+      <Button variant="ghost" size="sm" className="lg:hidden" asChild>
+        <Link to="/inbox" aria-label={`Needs you: ${n} waiting`}>
+          <Inbox aria-hidden />
+          <Badge tone="attention">{n}</Badge>
+        </Link>
+      </Button>
+    </Tooltip>
+  );
+}
+
 function TopBar({ chatBot }: { chatBot: string | null }) {
   const collapsed = useStore(sidebarCollapsedStore);
-  const open = useStore(computerOpenStore);
+  const wide = useMediaQuery(COMPUTER_WIDE);
+  const computer = wide ? computerOpenStore : computerSheetStore;
+  const open = useStore(computer);
   return (
     <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2 border-b border-border bg-bg/90 px-3 backdrop-blur sm:px-5">
       <Button
@@ -742,8 +784,9 @@ function TopBar({ chatBot }: { chatBot: string | null }) {
         </Button>
       </Tooltip>
       <Crumbs />
-      <div className="ml-auto flex min-w-0 items-center gap-1.5">
+      <div className="ml-auto flex shrink-0 items-center gap-1.5">
         <StatusChips />
+        <NeedsYouButton />
         <StopAll />
         {chatBot ? (
           <Tooltip content={open ? 'Hide the computer' : 'Show the computer'}>
@@ -753,7 +796,7 @@ function TopBar({ chatBot }: { chatBot: string | null }) {
               aria-label={open ? 'Hide the computer' : 'Show the computer'}
               aria-expanded={open}
               aria-controls="computer-dock"
-              onClick={() => computerOpenStore.set(!open)}
+              onClick={() => computer.set(!open)}
             >
               <Monitor aria-hidden />
             </Button>
@@ -764,25 +807,31 @@ function TopBar({ chatBot }: { chatBot: string | null }) {
   );
 }
 
-/** The Bot's computer beside its chat; over it on narrow screens (ADR-020). */
+/** The Bot's computer beside its chat; over it, modal, on narrow screens (ADR-020). */
 function ComputerDock({ botId }: { botId: string }) {
-  const open = useStore(computerOpenStore);
+  const wide = useMediaQuery(COMPUTER_WIDE);
+  const docked = useStore(computerOpenStore);
+  const sheet = useStore(computerSheetStore);
   const bot = useBot(botId);
-  if (!open || !bot.data) return null;
-  return (
-    <>
-      <div
-        aria-hidden
-        className="fixed inset-0 z-30 bg-black/30 xl:hidden"
-        onClick={() => computerOpenStore.set(false)}
-      />
-      <div
-        id="computer-dock"
-        className="fixed inset-y-0 right-0 z-40 w-full max-w-md border-l border-border shadow-card xl:sticky xl:top-14 xl:z-auto xl:h-[calc(100dvh-3.5rem)] xl:w-[440px] xl:max-w-none xl:shadow-none"
-      >
-        <ComputerPanel bot={bot.data} />
+  if (!bot.data) return null;
+  if (wide) {
+    return docked ? (
+      <div id="computer-dock" className="h-full w-[440px] shrink-0 border-l border-border">
+        <ComputerPanel bot={bot.data} onClose={() => computerOpenStore.set(false)} />
       </div>
-    </>
+    ) : null;
+  }
+  return (
+    <Dialog open={sheet} onOpenChange={(o) => computerSheetStore.set(o)}>
+      <SheetContent
+        side="right"
+        id="computer-dock"
+        title={`${scrubControls(bot.data.spec.name)}'s computer`}
+        className="w-full max-w-md bg-surface"
+      >
+        <ComputerPanel bot={bot.data} onClose={() => computerSheetStore.set(false)} />
+      </SheetContent>
+    </Dialog>
   );
 }
 
@@ -807,19 +856,6 @@ export function AppShell() {
     return () => ctl.abort();
   }, [auth, client, qc]);
 
-  // Escape closes the drawer and, where it covers the page, the computer (narrow screens).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || otherModalOpen()) return;
-      if (drawerStore.get()) drawerStore.set(false);
-      else if (computerOpenStore.get() && !window.matchMedia('(min-width: 1280px)').matches) {
-        computerOpenStore.set(false);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
-
   if (auth === 'signed-out') return <SignedOut />;
   if (auth === 'unknown') {
     return (
@@ -830,7 +866,7 @@ export function AppShell() {
   }
 
   return (
-    <div className="flex min-h-dvh bg-bg">
+    <div className={cn('flex bg-bg', chatBot ? 'h-dvh overflow-hidden' : 'min-h-dvh')}>
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-surface focus:px-3 focus:py-2"
@@ -841,11 +877,14 @@ export function AppShell() {
       <div className="flex min-w-0 flex-1 flex-col">
         <KillBanner />
         <TopBar chatBot={chatBot} />
-        <div className="flex min-w-0 flex-1">
+        <div className={cn('flex min-w-0 flex-1', chatBot && 'min-h-0')}>
           <main
             id="main"
             tabIndex={-1}
-            className={cn('min-w-0 flex-1 focus:outline-none', chatBot ? '' : 'px-4 py-6 sm:px-8')}
+            className={cn(
+              'min-w-0 flex-1 focus:outline-none',
+              chatBot ? 'min-h-0' : 'px-4 py-6 sm:px-8',
+            )}
           >
             {chatBot ? (
               <Outlet />

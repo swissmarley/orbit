@@ -9,6 +9,7 @@ import {
   formatLocalTime,
   pauseReason,
   scrubControls,
+  splitTriggerPrompt,
 } from '@orbit/core/browser';
 import { summarizeToolInput } from './timeline';
 
@@ -162,6 +163,7 @@ export type ChatItem =
       /** How the turn started when it was not typed: "Scheduled", "Webhook deploys"… */
       via: string | null;
     }
+  | { kind: 'trigger'; key: string; runId: string; ts: string; start: TriggerStart }
   | { kind: 'assistant'; key: string; runId: string; ts: string; text: string }
   | { kind: 'tool'; key: string; runId: string; tool: ChatTool }
   | { kind: 'group'; key: string; runId: string; tools: ChatTool[] }
@@ -227,9 +229,86 @@ const VIA: Partial<Record<TriggerRef['kind'], string>> = {
 export function turnVia(trigger: TriggerRef | null): string | null {
   if (!trigger || trigger.kind === 'manual' || trigger.kind === 'resume') return null;
   const base = VIA[trigger.kind] ?? trigger.kind;
-  return trigger.source && trigger.kind !== 'cron' && trigger.kind !== 'interval'
+  // A delegation's source is the asking Run's id: not worth reading.
+  return trigger.source &&
+    trigger.kind !== 'cron' &&
+    trigger.kind !== 'interval' &&
+    trigger.kind !== 'delegation'
     ? `${base} · ${scrubControls(trigger.source)}`
     : base;
+}
+
+/** A turn nobody typed: what started it, the task, and what the trigger delivered. */
+export interface TriggerStart {
+  /** "Scheduled", "File change · Drop folder", "Asked by another Bot". */
+  via: string;
+  /** The trigger's prompt or the Bot's goal (the owner's words), or another Bot's task. */
+  task: string;
+  /** The task was written by another Bot (a delegation), not by the owner. */
+  taskByBot: boolean;
+  /** What the trigger delivered (untrusted, ADR-014), without Orbit's note to the model. */
+  payload: { source: string; text: string } | null;
+}
+
+/**
+ * Split a turn's prompt the way people should read it: null for a message
+ * someone typed; otherwise what started it, the task, and the delivered
+ * content apart, so a webhook's or another Bot's words are never drawn as
+ * the owner's (ui review H3).
+ */
+export function triggerStart(trigger: TriggerRef | null, prompt: string): TriggerStart | null {
+  const via = turnVia(trigger);
+  if (via === null) return null;
+  const split = splitTriggerPrompt(prompt);
+  return {
+    via,
+    task: scrubControls(split ? split.task : prompt).trim(),
+    taskByBot: trigger?.kind === 'delegation',
+    payload: split
+      ? { source: scrubControls(split.source), text: scrubControls(split.text) }
+      : null,
+  };
+}
+
+/** A taint source in words ("Researcher’s answer", "a web page"). */
+export function taintSourceText(source: string): string {
+  const s = scrubControls(source);
+  if (s === 'WebFetch') return 'a web page';
+  if (s === 'WebSearch') return 'web search results';
+  const mcp = /^mcp__([a-z][a-z0-9-]*)__(.+)$/.exec(s);
+  if (mcp) return `${cap(words(mcp[1] ?? ''))} (${words(mcp[2] ?? '')})`;
+  const i = s.indexOf(':');
+  if (i < 0) return s;
+  const kind = s.slice(0, i);
+  const rest = s.slice(i + 1);
+  switch (kind) {
+    case 'delegate':
+      return `${rest}’s answer`;
+    case 'memory':
+      return 'a memory written from untrusted content';
+    case 'file':
+      return `the file ${rest}`;
+    case 'files':
+      return `a file change (${rest})`;
+    case 'git':
+      return `git ${rest}`;
+    case 'slack':
+      return `Slack ${rest}`;
+    default:
+      return s;
+  }
+}
+
+/** Quiet reads folded into one row, in words ("Read 3 files"). */
+export function quietLabel(tools: readonly Pick<ChatTool, 'info'>[]): string {
+  const n = tools.length;
+  const kinds = new Set(tools.map((t) => t.info.kind));
+  if (kinds.size === 1 && kinds.has('memory')) return `Looked through ${n} memories`;
+  if (kinds.size === 1 && kinds.has('read')) return `Read ${n} files`;
+  if (kinds.size === 1 && kinds.has('search')) return `Searched the files ${n} times`;
+  if ([...kinds].every((k) => k === 'read' || k === 'search'))
+    return `Looked through the files (${n} steps)`;
+  return `${n} quick steps`;
 }
 
 const ENDED: readonly RunStatus[] = ['completed', 'failed', 'cancelled'];
@@ -247,15 +326,18 @@ const RESUMED: Partial<
 
 function oneTurn(turn: Turn): ChatItem[] {
   const { run } = turn;
+  const start = triggerStart(run.trigger, run.prompt);
   const items: ChatItem[] = [
-    {
-      kind: 'user',
-      key: `${run.runId}:prompt`,
-      runId: run.runId,
-      ts: run.createdAt,
-      text: scrubControls(run.prompt).trim(),
-      via: turnVia(run.trigger),
-    },
+    start
+      ? { kind: 'trigger', key: `${run.runId}:prompt`, runId: run.runId, ts: run.createdAt, start }
+      : {
+          kind: 'user',
+          key: `${run.runId}:prompt`,
+          runId: run.runId,
+          ts: run.createdAt,
+          text: scrubControls(run.prompt).trim(),
+          via: null,
+        },
   ];
   const events = turn.events ?? [];
   const tools = new Map<string, ChatTool>();
@@ -265,6 +347,8 @@ function oneTurn(turn: Turn): ChatItem[] {
   const early = new Map<string, Extract<RunEvent, { type: 'permission.decision' }>['data']>();
   /** Calls held for an approval, so its decision can be shown on them. */
   const held = new Map<string, ChatTool[]>();
+  /** "Waiting for … to answer" notes, dropped once those answers came (ui review M14). */
+  const waits: { key: string; childRunIds: readonly string[] }[] = [];
   let cwd: string | null = null;
   let lastText: string | null = null;
   let tainted = false;
@@ -305,10 +389,14 @@ function oneTurn(turn: Turn): ChatItem[] {
       if (t.state !== 'done' && t.state !== 'failed') t.state = 'working';
       t.reason = null;
     } else {
-      const waits = d.approvalId !== null && d.reason.startsWith(HELD);
-      t.state = waits ? 'held' : 'denied';
-      t.reason = scrubControls(d.reason);
-      if (waits && d.approvalId) held.set(d.approvalId, [...(held.get(d.approvalId) ?? []), t]);
+      const holds = d.approvalId !== null && d.reason.startsWith(HELD);
+      t.state = holds ? 'held' : 'denied';
+      // The policy's reason is written for the model; FINANCIAL says it to the owner.
+      t.reason =
+        d.tier === 'FINANCIAL'
+          ? 'Handed back to you: a Bot never moves money'
+          : scrubControls(d.reason);
+      if (holds && d.approvalId) held.set(d.approvalId, [...(held.get(d.approvalId) ?? []), t]);
     }
   };
 
@@ -348,7 +436,7 @@ function oneTurn(turn: Turn): ChatItem[] {
           runId: run.runId,
           toolUseId: e.data.toolUseId,
           name: scrubControls(e.data.name),
-          info: describeTool(e.data.name, e.data.input),
+          info: describeTool(scrubControls(e.data.name), e.data.input),
           detail: scrubControls(summarizeToolInput(e.data.input, cwd)),
           input: e.data.input,
           state: 'working',
@@ -449,7 +537,7 @@ function oneTurn(turn: Turn): ChatItem[] {
           note(
             e,
             'warning',
-            `Read untrusted content (${e.data.source}). Anything it wants to send now needs your approval.`,
+            `Read untrusted content: ${taintSourceText(e.data.source)}. Anything it wants to send now needs your approval.`,
           );
         }
         break;
@@ -469,6 +557,7 @@ function oneTurn(turn: Turn): ChatItem[] {
             (id) => delegations.get(id)?.childBotName ?? 'a peer',
           );
           note(e, 'info', `Waiting for ${[...new Set(names)].join(' and ')} to answer`);
+          waits.push({ key: `${run.runId}:${e.seq}`, childRunIds: e.data.delegations });
         }
         break;
       case 'run.resumed': {
@@ -495,7 +584,11 @@ function oneTurn(turn: Turn): ChatItem[] {
           note(e, e.data.level === 'error' ? 'danger' : 'warning', e.data.message);
         break;
       case 'run.failed':
-        note(e, 'danger', 'Something went wrong', { detail: e.data.message, action: 'retry' });
+        // Trying again resends the owner's own message; a trigger's turn has none.
+        note(e, 'danger', 'Something went wrong', {
+          detail: e.data.message,
+          ...(start ? {} : { action: 'retry' as const }),
+        });
         break;
       case 'run.cancelled':
         note(e, 'neutral', 'Stopped', { detail: e.data.reason });
@@ -517,6 +610,13 @@ function oneTurn(turn: Turn): ChatItem[] {
       default:
         break;
     }
+  }
+  const answered = waits
+    .filter((w) => w.childRunIds.every((id) => delegations.get(id)?.status !== 'working'))
+    .map((w) => w.key);
+  if (answered.length > 0) {
+    const drop = new Set(answered);
+    items.splice(0, items.length, ...items.filter((i) => !drop.has(i.key)));
   }
   if (ENDED.includes(run.status)) {
     items.push({
@@ -600,7 +700,9 @@ export function conversationsOf(runs: readonly RunState[]): ConversationSummary[
     const first = ordered[0];
     const latest = ordered.at(-1);
     if (!first || !latest) continue;
-    const flat = scrubControls(first.prompt).replace(/\s+/g, ' ').trim();
+    const flat = (triggerStart(first.trigger, first.prompt)?.task ?? scrubControls(first.prompt))
+      .replace(/\s+/g, ' ')
+      .trim();
     out.push({
       id,
       botId: first.botId,
@@ -653,6 +755,8 @@ export interface ComposerState {
   stoppable: boolean;
   /** The latest turn waits to be resumed by the owner. */
   resumable: boolean;
+  /** What the hint offers to do about it (ui review M3, M9). */
+  action: 'resume-bot' | 'decide' | null;
 }
 
 /** Whether the composer can send, and what it says otherwise. */
@@ -667,20 +771,32 @@ export function composerState(input: {
 }): ComposerState {
   const name = scrubControls(input.bot.spec.name);
   const st = input.latest?.status;
-  const stoppable = st === 'queued' || st === 'running' || st === 'delegating';
+  // Everything stopRun accepts: a paused or usage-limited turn can be ended too.
+  const stoppable =
+    st === 'queued' ||
+    st === 'running' ||
+    st === 'delegating' ||
+    st === 'paused' ||
+    st === 'rate_limited';
   const resumable = st === 'paused' || st === 'rate_limited';
-  const no = (hint: string): ComposerState => ({ canSend: false, hint, stoppable, resumable });
+  const no = (hint: string, action: ComposerState['action'] = null): ComposerState => ({
+    canSend: false,
+    hint,
+    stoppable,
+    resumable,
+    action,
+  });
   if (!input.canStart)
     return no('Viewers can read along; an operator or the owner can message Bots.');
   if (input.killed) return no('The kill switch is on: nothing runs until it is released.');
   if (input.takenOver) return no(`${name}'s computer is taken over in a terminal (orbit shell).`);
-  if (input.bot.pausedAt) return no(`${name} is paused. Resume it to continue.`);
-  if (input.decisionPending) return no('Decide the request above first.');
+  if (input.bot.pausedAt) return no(`${name} is paused. Resume it to continue.`, 'resume-bot');
+  if (input.decisionPending) return no('Decide the request above first.', 'decide');
   if (st === 'queued' || st === 'running')
     return no(`${name} is working. Stop it to send something else.`);
-  if (st === 'waiting_approval') return no('Decide the request above first.');
+  if (st === 'waiting_approval') return no('Decide the request above first.', 'decide');
   if (st === 'delegating') return no(`${name} is waiting for another Bot to answer.`);
   if (st === 'paused') return no(`This conversation is paused. Resume or stop it first.`);
-  if (st === 'rate_limited') return no('Waiting for the usage limit to reset.');
-  return { canSend: true, hint: null, stoppable, resumable };
+  if (st === 'rate_limited') return no('Waiting for the usage limit to reset (or stop it).');
+  return { canSend: true, hint: null, stoppable, resumable, action: null };
 }

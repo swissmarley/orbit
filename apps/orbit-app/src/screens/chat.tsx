@@ -1,9 +1,15 @@
 /** @jsxRuntime automatic @jsxImportSource react */
-import { type Bot, scrubControls, triggerLabel } from '@orbit/core/browser';
+import {
+  type Bot,
+  RUN_STATUS,
+  type RunStatus,
+  scrubControls,
+  triggerLabel,
+} from '@orbit/core/browser';
 import { useQueries } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
-import { ArrowUpRight, Clock3, ListTree, Plus, Settings2 } from 'lucide-react';
-import { useEffect, useMemo, useRef } from 'react';
+import { Clock3, ListTree, Play, Plus, Settings2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { BotAvatar } from '../components/avatar';
 import {
   ApprovalInChat,
@@ -13,17 +19,29 @@ import {
   DelegationCard,
   ToolCard,
   ToolGroup,
+  TriggerStartCard,
   Typing,
   TurnFooter,
   UserMessage,
 } from '../components/chat';
+import { helpStore } from '../components/keyboard-help';
+import { paletteStore } from '../components/palette';
+import { RoleGate } from '../components/role-gate';
 import { ErrorState, ListSkeleton } from '../components/states';
 import { Button } from '../components/ui/button';
 import { Tooltip } from '../components/ui/tooltip';
 import { useActions } from '../lib/actions';
 import { useClient } from '../lib/api';
 import { type AvatarState } from '../lib/avatar';
-import { type ChatItem, buildConversation, composerState, turnActivity } from '../lib/conversation';
+import { chatKey, stepConversation } from '../lib/chat-keys';
+import {
+  type ChatItem,
+  buildConversation,
+  composerState,
+  conversationsOf,
+  turnActivity,
+} from '../lib/conversation';
+import { otherModalOpen } from '../lib/modal';
 import {
   keys,
   useBot,
@@ -32,32 +50,33 @@ import {
   useDoctor,
   useKill,
   usePendingApprovals,
+  useRuns,
 } from '../lib/queries';
 import { useRole } from '../lib/role';
-import { lastBotStore } from '../lib/ui';
+import { COMPOSER_ID, lastBotStore } from '../lib/ui';
 
-/** What the header says the Bot is doing. */
-function headerStatus(
-  bot: Bot,
-  latestStatus: string | undefined,
-): { text: string; avatar: AvatarState } {
-  if (bot.pausedAt) return { text: 'Paused', avatar: 'paused' };
-  switch (latestStatus) {
-    case 'queued':
-      return { text: 'About to start…', avatar: 'working' };
-    case 'running':
-      return { text: 'Working…', avatar: 'working' };
-    case 'delegating':
-      return { text: 'Waiting for another Bot', avatar: 'working' };
-    case 'waiting_approval':
-      return { text: 'Needs your decision', avatar: 'attention' };
-    case 'paused':
-      return { text: 'Paused in this conversation', avatar: 'attention' };
-    case 'rate_limited':
-      return { text: 'Waiting for the usage limit', avatar: 'idle' };
-    default:
-      return { text: 'Here with you', avatar: 'idle' };
-  }
+/**
+ * What the header says the Bot is doing: the shared Run vocabulary for the
+ * latest turn (ui review M7); "Here with you" only when nothing is going on.
+ */
+export function headerStatus(
+  bot: Pick<Bot, 'pausedAt'>,
+  latestStatus: RunStatus | undefined,
+): { text: string; avatar: AvatarState; mark: string | null } {
+  if (bot.pausedAt) return { text: 'Paused', avatar: 'paused', mark: '⏸' };
+  if (latestStatus === undefined || latestStatus === 'completed')
+    return { text: 'Here with you', avatar: 'idle', mark: null };
+  const word = RUN_STATUS[latestStatus];
+  const text = `${word.label[0]?.toUpperCase() ?? ''}${word.label.slice(1)} — ${word.meaning}`;
+  const avatar: AvatarState =
+    latestStatus === 'waiting_approval'
+      ? 'attention'
+      : latestStatus === 'queued' || latestStatus === 'running' || latestStatus === 'delegating'
+        ? 'working'
+        : latestStatus === 'paused' || latestStatus === 'rate_limited'
+          ? 'paused'
+          : 'idle';
+  return { text, avatar, mark: word.mark };
 }
 
 function ItemView({
@@ -72,8 +91,10 @@ function ItemView({
   switch (item.kind) {
     case 'user':
       return <UserMessage item={item} />;
+    case 'trigger':
+      return <TriggerStartCard item={item} botName={scrubControls(bot.spec.name)} />;
     case 'assistant':
-      return <AssistantMessage item={item} />;
+      return <AssistantMessage item={item} botName={scrubControls(bot.spec.name)} />;
     case 'tool':
       // A delegation shows as its own card once it started.
       if (
@@ -95,6 +116,7 @@ function ItemView({
   }
 }
 
+/** Starting points: they fill the message box, they never send (ui review M16). */
 function Starters({ bot, onPick }: { bot: Bot; onPick: (text: string) => void }) {
   const goal = scrubControls(bot.spec.goal);
   const starters = [
@@ -115,7 +137,7 @@ function Starters({ bot, onPick }: { bot: Bot; onPick: (text: string) => void })
           className="rounded-full"
           onClick={() => onPick(s.text)}
         >
-          {s.label} <ArrowUpRight aria-hidden />
+          {s.label}
         </Button>
       ))}
     </div>
@@ -172,7 +194,8 @@ function Conversation({ bot, conversationId }: { bot: Bot; conversationId: strin
     try {
       const run = await actions.sendMessage(bot, text, conversationId ? latest?.runId : undefined);
       stick.current = true;
-      if (!conversationId) {
+      // A first message, or one sent from a conversation that is gone, starts a new one.
+      if (run.conversationId !== conversationId) {
         await navigate({
           to: '/chat/$botId',
           params: { botId: bot.id },
@@ -188,6 +211,65 @@ function Conversation({ bot, conversationId }: { bot: Bot; conversationId: strin
     const failed = turns.find((t) => t.runId === runId);
     if (failed) void send(failed.prompt);
   };
+  const [seed, setSeed] = useState<{ text: string; n: number } | null>(null);
+
+  // The chat's keys (src/lib/chat-keys.ts): /, r, n, [ ].
+  const runs = useRuns({ bot: bot.id, limit: 300 });
+  const conversationIds = useMemo(
+    () => conversationsOf(runs.data ?? []).map((x) => x.id),
+    [runs.data],
+  );
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || otherModalOpen() || paletteStore.get() || helpStore.get()) return;
+      const t = e.target;
+      const cmd = chatKey({
+        key: e.key,
+        inField:
+          t instanceof HTMLElement &&
+          (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName)),
+        modified: e.metaKey || e.ctrlKey || e.altKey,
+      });
+      if (!cmd) return;
+      if (cmd === 'composer') document.getElementById(COMPOSER_ID)?.focus();
+      else if (cmd === 'request') {
+        const card = document.querySelector<HTMLElement>('[data-testid="chat-approval"]');
+        if (!card) return;
+        card.focus();
+        card.scrollIntoView({ block: 'nearest' });
+      } else if (cmd === 'new') {
+        void navigate({ to: '/chat/$botId', params: { botId: bot.id } });
+      } else {
+        const next = stepConversation(conversationIds, conversationId, cmd);
+        if (!next) return;
+        void navigate({ to: '/chat/$botId', params: { botId: bot.id }, search: { c: next } });
+      }
+      e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [bot.id, conversationId, conversationIds, navigate]);
+
+  const hintAction =
+    state.action === 'resume-bot' ? (
+      <RoleGate route="resumeBot">
+        <Button size="sm" variant="secondary" onClick={() => void actions.setBotPaused(bot, false)}>
+          <Play aria-hidden /> Resume {name}
+        </Button>
+      </RoleGate>
+    ) : state.action === 'decide' ? (
+      <Button
+        size="sm"
+        variant="secondary"
+        onClick={() => {
+          const card = document.querySelector<HTMLElement>('[data-testid="chat-approval"]');
+          card?.focus();
+          card?.scrollIntoView({ block: 'nearest' });
+        }}
+      >
+        Go to the request
+      </Button>
+    ) : null;
   const triggers = bot.spec.triggers.filter((t) => t.enabled);
   const footer =
     doctor.data?.driver === 'mock'
@@ -195,7 +277,7 @@ function Conversation({ bot, conversationId }: { bot: Bot; conversationId: strin
       : `${name} works on its own computer; anything outside it asks you first.`;
 
   return (
-    <div className="flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <div
         ref={scroller}
         className="min-h-0 flex-1 overflow-y-auto"
@@ -205,11 +287,13 @@ function Conversation({ bot, conversationId }: { bot: Bot; conversationId: strin
         }}
       >
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 pb-6 sm:px-6">
-          <header className="sticky top-0 z-10 -mx-4 flex items-center gap-3 border-b border-border bg-bg px-4 py-3 sm:-mx-6 sm:px-6">
+          <header className="sticky top-0 z-10 -mx-4 flex items-center gap-3 border-b border-border bg-bg px-4 py-2 sm:-mx-6 sm:px-6 sm:py-3">
             <BotAvatar bot={bot} size={40} state={header.avatar} />
             <div className="min-w-0 flex-1">
               <h1 className="truncate text-base font-semibold text-fg">{name}</h1>
+              {/* The chat's one live region (ui review M12). */}
               <p className="truncate text-xs text-fg-muted" role="status">
+                {header.mark ? <span aria-hidden>{header.mark} </span> : null}
                 {header.text}
               </p>
             </div>
@@ -292,7 +376,16 @@ function Conversation({ bot, conversationId }: { bot: Bot; conversationId: strin
                 </div>
               ))}
               {turns.length === 0 ? (
-                <p className="text-sm text-fg-muted">This conversation has no turns.</p>
+                <p className="text-sm text-fg-muted">
+                  This conversation is not there (any more): a message starts a new one.{' '}
+                  <Link
+                    to="/chat/$botId"
+                    params={{ botId: bot.id }}
+                    className="text-accent hover:underline"
+                  >
+                    New conversation
+                  </Link>
+                </p>
               ) : null}
             </div>
           )}
@@ -302,7 +395,7 @@ function Conversation({ bot, conversationId }: { bot: Bot; conversationId: strin
       <div className="mx-auto w-full max-w-3xl px-4 pt-2 pb-3 sm:px-6">
         {!conversationId && state.canSend ? (
           <div className="mb-3">
-            <Starters bot={bot} onPick={(t) => void send(t)} />
+            <Starters bot={bot} onPick={(text) => setSeed((p) => ({ text, n: (p?.n ?? 0) + 1 }))} />
           </div>
         ) : null}
         <Composer
@@ -313,6 +406,8 @@ function Conversation({ bot, conversationId }: { bot: Bot; conversationId: strin
             ? { onStop: () => void actions.stopRun(latest.runId) }
             : {})}
           footer={footer}
+          action={hintAction}
+          seed={seed}
           autoFocus={!conversationId}
         />
       </div>

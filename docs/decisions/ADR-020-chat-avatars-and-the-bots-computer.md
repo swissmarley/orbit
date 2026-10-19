@@ -23,7 +23,7 @@ What OpenDots does, and what Orbit takes from it:
 
 | OpenDots                                                                    | Orbit                                                                                                                                                                                                         |
 | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Sidebar: Dots, Spaces, conversations; Scheduled, Memories, Settings         | Sidebar: Bots (with avatars), the Bot's conversations; Needs you, Activity, Memory, Settings                                                                                                                  |
+| Sidebar: Dots, Spaces, conversations; Scheduled, Memories, Settings         | Sidebar: Bots (with avatars), the Bot's conversations; Needs you, Runs, Memory, Settings                                                                                                                      |
 | Chat: avatar and status above the messages; composer with send/stop         | The same; the status comes from the Run (working, needs you, paused, usage limit…)                                                                                                                            |
 | Tool calls rendered inline ("Opening website", "Saving file")               | The same, built from RunEvents; quiet reads are grouped                                                                                                                                                       |
 | Human-in-the-loop card pauses the chat ("Approve & save")                   | Orbit's full approval card inline (approvals are decided only from the full card)                                                                                                                             |
@@ -119,7 +119,7 @@ What OpenDots does, and what Orbit takes from it:
 - Chat-first shell: the sidebar lists Bots with their avatars and the
   selected Bot's conversations; the main column is the chat
   (`/chat/$botId?c=<conversation>`); the computer panel opens beside it
-  (over it on narrow screens). Needs you, Activity (Runs), Memory, Settings,
+  (over it on narrow screens). Needs you, Runs, Memory, Settings,
   Bot settings and Run details stay, reachable from the sidebar and from
   every chat turn.
 - Warm, quiet visual tokens in the spirit of OpenDots, still checked for
@@ -128,11 +128,24 @@ What OpenDots does, and what Orbit takes from it:
   headings, emphasis, code) into React elements after `scrubControls`:
   never HTML, and links are shown as text, not followed.
 - A pending approval appears in the chat as the full approval card; the
-  composer waits until it is decided.
+  composer waits until it is decided. With focus in the card the Inbox's
+  keys decide it through the same pure model (`onInboxKey`); the chat's own
+  keys (`/` message box, `r` the request, `n` new, `[` `]` conversations)
+  live in `chat-keys.ts`.
+- A turn nobody typed (a schedule, a trigger, another Bot) is drawn as what
+  started it, its task and the delivered content marked untrusted, never as
+  the owner's message and without Orbit's note to the model; the prompt
+  format is shared through `@orbit/core` (`triggerPrompt`,
+  `splitTriggerPrompt`). Trying such a turn again is not offered: it would
+  resend the trigger's words as the owner's.
+- On narrow screens the sidebar and the computer open as modal sheets (focus
+  stays inside, the page behind is inert, Esc closes, focus goes back). Only
+  the docked computer's open state is remembered, so the computer never
+  covers a chat by surprise on a phone.
 
 ## Consequences
 
-- Every message is a Run: the Activity list grows with the chat, and a
+- Every message is a Run: the Runs list grows with the chat, and a
   chatty conversation spends `maxRunsPerDay` faster.
 - Conversations have no title of their own; the first message is the title.
 - In demo mode (MockDriver) a reply replays the scenario's `-resumed`

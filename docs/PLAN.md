@@ -813,7 +813,7 @@ operations console. ADR-020 records what was adopted, adapted and left out.
   cards, folded reads, the full approval card inline, delegations, notes,
   feedback; the computer panel (Browser, Files, Terminal, Activity) beside it;
   avatar pickers in the wizard and Bot settings; warm design tokens (AA in both
-  themes); home opens the last Bot's chat. Inbox, Activity (Runs), Memory,
+  themes); home opens the last Bot's chat. Needs you (Inbox), Runs, Memory,
   Settings, Bot settings and Run details stay.
 - Tests: projection, store (migration 7, conversation filter), orchestrator
   (session resume, taint carried, refusals: fork, unfinished turn, other
@@ -824,6 +824,24 @@ operations console. ADR-020 records what was adopted, adapted and left out.
   markdown, chat, approvals in the chat, computer panel, sidebar, avatar
   picker, axe) and e2e (chat + approval + reply, the computer panel with axe
   in both themes, every screen incl. the chat at 768/1024 px).
+- Reviews. Safety: F1 (critical) — the workspace reader checked names with
+  `lstat` and then opened the path by name, so a Bot swapping a folder for a
+  link mid-read could make orbitd read or list outside the workspace; the walk
+  now opens one name at a time inside the open folder (Linux
+  `/proc/self/fd`, macOS `O_NOFOLLOW_ANY`, other systems refused), with a test
+  that swaps a folder mid-walk. F2 (medium) — files are the operator's;
+  viewers keep status and activity. L1 the Activity page reads every decision
+  since its oldest call; L2 taint marks fold case like the paths; L3 only the
+  newest turn may be answered (one indexed row); L4 (the session walk) is
+  O(1) in practice and stays. UI: the drawer and the computer are modal
+  sheets on narrow screens (H1); a request in the chat is decided from the
+  keyboard with focus handled at every step (H2); trigger turns show the
+  delivered content as untrusted data, not as the owner's message (H3); the
+  driver badge stays on phones (H4); one live region, articles instead of
+  landmarks, speakers for screen readers, the shared status words in the
+  chat header, pinned navigation, a way out of every composer wait, starters
+  that fill the box, `mcp__x__y` kept literal, and the smaller items (L1–L17;
+  the Bot list keeps one tab stop per Bot instead of a roving tabindex).
 
 ## 4. Test strategy
 

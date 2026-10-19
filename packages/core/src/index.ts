@@ -20,4 +20,5 @@ export * from './redact';
 export * from './templates';
 export * from './text';
 export * from './triage';
+export * from './untrusted';
 export * from './vocabulary';

@@ -1,6 +1,6 @@
 /** @jsxRuntime automatic @jsxImportSource react */
 import { type Bot, type Tone, scrubControls } from '@orbit/core/browser';
-import type { Approval } from '@orbit/sdk-client/browser';
+import { type Approval, roleFor } from '@orbit/sdk-client/browser';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import {
@@ -25,22 +25,41 @@ import {
   ThumbsDown,
   ThumbsUp,
   Wrench,
+  Zap,
 } from 'lucide-react';
-import { type KeyboardEvent, type ReactNode, type SyntheticEvent, useState } from 'react';
+import {
+  type KeyboardEvent,
+  type ReactNode,
+  type SyntheticEvent,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
+import { toast } from 'sonner';
 import { useActions } from '../lib/actions';
 import { useClient } from '../lib/api';
+import { composerKey } from '../lib/chat-keys';
 import { cn } from '../lib/cn';
-import type { ChatItem, ChatTool, ComposerState, ToolKind, ToolState } from '../lib/conversation';
+import {
+  type ChatItem,
+  type ChatTool,
+  type ComposerState,
+  type ToolKind,
+  type ToolState,
+  quietLabel,
+} from '../lib/conversation';
 import { toolDiff } from '../lib/diff';
+import { type InboxState, gateInboxKey, onInboxKey } from '../lib/inbox';
 import { keys, useBots } from '../lib/queries';
+import { ALWAYS_ALLOW_ROLE, needsRoleText, useRole } from '../lib/role';
 import { TONE_CLASS } from '../lib/tone';
-import { showComputer } from '../lib/ui';
+import { COMPOSER_ID, showComputer } from '../lib/ui';
 import { type CardMode, ApprovalCard } from './approval-card';
 import { BotAvatar } from './avatar';
 import { DiffView } from './diff-view';
 import { Markdown } from './markdown';
 import { RoleGate } from './role-gate';
-import { TierBadge, Time } from './status';
+import { Time } from './status';
 import { Button } from './ui/button';
 
 const ICON: Record<ToolKind, typeof Wrench> = {
@@ -107,7 +126,7 @@ function TerminalOutput({ tool, botName }: { tool: ChatTool; botName: string }) 
       <div
         className="max-h-80 overflow-auto px-3 py-2"
         tabIndex={0}
-        role="region"
+        role="group"
         aria-label={`Terminal output on ${botName}'s computer`}
       >
         <div className="break-all whitespace-pre-wrap">
@@ -205,8 +224,14 @@ export function ToolCard({ tool, bot }: { tool: ChatTool; bot: Bot }) {
     tool.info.kind === 'write' || tool.info.kind === 'edit'
       ? toolDiff(tool.name, tool.input)
       : null;
+  // A command that did not run (held, denied) shows as one line, not a terminal.
+  const showsTerminal =
+    tool.info.kind === 'terminal' &&
+    tool.state !== 'denied' &&
+    tool.state !== 'held' &&
+    tool.state !== 'approved';
   return (
-    <section
+    <article
       className="rounded-xl border border-border bg-surface shadow-card"
       aria-label={`${name}: ${tool.info.label}`}
       data-testid="tool-card"
@@ -240,20 +265,15 @@ export function ToolCard({ tool, bot }: { tool: ChatTool; bot: Bot }) {
         </span>
       </header>
       <div className="flex flex-col gap-2 px-3.5 pt-1 pb-3">
-        {tool.detail && tool.info.kind !== 'terminal' ? (
+        {tool.detail && (tool.info.kind !== 'terminal' || !showsTerminal) ? (
           <p className="truncate font-mono text-xs text-fg-muted" title={tool.detail}>
-            {tool.detail}
+            {tool.info.kind === 'terminal' ? `$ ${tool.detail}` : tool.detail}
           </p>
         ) : null}
         {tool.state === 'denied' && tool.reason ? (
           <p className="text-xs text-danger">{tool.reason}</p>
         ) : null}
-        {tool.info.kind === 'terminal' &&
-        tool.state !== 'denied' &&
-        tool.state !== 'held' &&
-        tool.state !== 'approved' ? (
-          <TerminalOutput tool={tool} botName={name} />
-        ) : null}
+        {showsTerminal ? <TerminalOutput tool={tool} botName={name} /> : null}
         {(tool.info.kind === 'web' || tool.info.kind === 'browser') &&
         tool.result &&
         !tool.result.isError ? (
@@ -305,11 +325,11 @@ export function ToolCard({ tool, bot }: { tool: ChatTool; bot: Bot }) {
           <ResultDetails tool={tool} />
         ) : null}
       </div>
-    </section>
+    </article>
   );
 }
 
-/** Quiet reads in a row, folded: "Looked through 3 files". */
+/** Quiet reads in a row, folded: "Read 3 files". */
 export function ToolGroup({ tools }: { tools: ChatTool[] }) {
   return (
     <details
@@ -318,8 +338,7 @@ export function ToolGroup({ tools }: { tools: ChatTool[] }) {
     >
       <summary className="flex cursor-pointer list-none items-center gap-2 text-sm text-fg-muted hover:text-fg">
         <Search className="size-4" aria-hidden />
-        Looked through {tools.length}{' '}
-        {tools.every((t) => t.info.kind === 'memory') ? 'memories' : 'things'}
+        {quietLabel(tools)}
         <ChevronDown
           className="ml-auto size-4 transition-transform group-open:rotate-180"
           aria-hidden
@@ -341,18 +360,75 @@ export function ToolGroup({ tools }: { tools: ChatTool[] }) {
   );
 }
 
-/** A request waiting in the chat: the whole approval card, decided right here. */
+const isField = (t: EventTarget | null): boolean =>
+  t instanceof HTMLElement &&
+  (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.isContentEditable);
+
+/**
+ * A request waiting in the chat: the whole approval card, decided right
+ * here. With focus in it the Inbox's keys work (a, e, d, ⇧A, y/n, Esc)
+ * through the same pure model; each step focuses its own control, and a
+ * decision hands the focus back to the composer (ui review H2).
+ */
 export function ApprovalInChat({ item }: { item: Extract<ChatItem, { kind: 'approval' }> }) {
   const c = useClient();
   const actions = useActions();
-  const [mode, setMode] = useState<CardMode>('card');
+  const role = useRole();
+  const [mode, setModeState] = useState<CardMode>('card');
   const [busy, setBusy] = useState(false);
+  const section = useRef<HTMLElement>(null);
+  /** The control that opened the current step; it gets the focus back. */
+  const opener = useRef<HTMLElement | null>(null);
+  /** A decision made here: once the card collapses, the composer takes the focus. */
+  const refocus = useRef(false);
   const approval = useQuery({
     queryKey: [...keys.approvals, 'one', item.approvalId],
     queryFn: () => c.approvals.get(item.approvalId),
   });
   const a: Approval | undefined = approval.data;
-  if (item.decision || (a && a.status !== 'pending')) {
+  const decided = item.decision !== null || (a !== undefined && a.status !== 'pending');
+
+  useEffect(() => {
+    if (!decided || !refocus.current) return;
+    refocus.current = false;
+    document.getElementById(COMPOSER_ID)?.focus();
+  }, [decided]);
+
+  useEffect(() => {
+    const el = section.current;
+    if (!el) return;
+    if (mode === 'always') {
+      const confirm = el.querySelector<HTMLElement>('[role="alertdialog"]');
+      confirm?.focus();
+      confirm?.scrollIntoView({ block: 'nearest' });
+    } else if (mode === 'card') {
+      const back = opener.current;
+      opener.current = null;
+      if (back?.isConnected) back.focus();
+      else if (back) el.focus();
+    } else {
+      el.querySelector('textarea')?.scrollIntoView({ block: 'nearest' });
+    }
+  }, [mode]);
+
+  const setMode = (m: CardMode) => {
+    if (m !== 'card' && mode === 'card') {
+      const active = document.activeElement;
+      opener.current = active instanceof HTMLElement ? active : null;
+    }
+    setModeState(m);
+  };
+  const decide = (fn: () => Promise<void>) => {
+    refocus.current = true;
+    setBusy(true);
+    void fn()
+      .catch(() => {
+        refocus.current = false;
+      })
+      .finally(() => setBusy(false));
+  };
+
+  if (decided) {
     const d = item.decision?.decision ?? a?.status ?? 'decided';
     const ok = d === 'approved';
     return (
@@ -373,9 +449,39 @@ export function ApprovalInChat({ item }: { item: Extract<ChatItem, { kind: 'appr
       </div>
     );
   }
+
+  const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+    if (!a || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+    // Enter and Space on a focused control belong to it.
+    if (e.key === 'Enter' || e.key === ' ') return;
+    const state: InboxState = { selectedId: a.id, moved: false, mode: { kind: mode, id: a.id } };
+    const r = gateInboxKey(
+      state,
+      onInboxKey(state, [a], { key: e.key, inField: isField(e.target) }),
+      { decide: role.can('approve'), always: role.atLeast(ALWAYS_ALLOW_ROLE) },
+      {
+        decide: `${needsRoleText(roleFor('approve'))} to approve or deny`,
+        always: `${needsRoleText(ALWAYS_ALLOW_ROLE)} to always allow a tool`,
+      },
+    );
+    if (r.state === state && !r.command) return;
+    e.preventDefault();
+    // There is no list in a chat: "back to the list" is the card.
+    const next = r.state.mode.kind === 'list' ? 'card' : r.state.mode.kind;
+    if (next !== mode) setMode(next);
+    const cmd = r.command;
+    if (cmd?.kind === 'notice') toast(cmd.text);
+    // Same gate as the buttons: FINANCIAL is never approved (handed back).
+    if (cmd?.kind === 'approve' && !busy && a.tier !== 'FINANCIAL')
+      decide(() => actions.approve(a, { always: cmd.always }));
+  };
+
   return (
-    <section
-      className="rounded-xl border border-attention/40 bg-surface shadow-card"
+    <article
+      ref={section}
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
+      className="rounded-xl border border-attention/40 bg-surface shadow-card focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       aria-label={`Needs your decision: ${item.summary}`}
       data-testid="chat-approval"
     >
@@ -384,9 +490,6 @@ export function ApprovalInChat({ item }: { item: Extract<ChatItem, { kind: 'appr
           ◆
         </span>
         <strong className="text-sm font-semibold text-fg">Ready for your review</strong>
-        <span className="ml-auto">
-          <TierBadge tier={item.tier} />
-        </span>
       </header>
       <div className="px-3.5 py-3">
         {a ? (
@@ -396,26 +499,14 @@ export function ApprovalInChat({ item }: { item: Extract<ChatItem, { kind: 'appr
             onMode={setMode}
             busy={busy}
             inline
-            onApprove={(opts) => {
-              setBusy(true);
-              void actions
-                .approve(a, opts)
-                .catch(() => undefined)
-                .finally(() => setBusy(false));
-            }}
-            onDeny={(reason) => {
-              setBusy(true);
-              void actions
-                .deny(a, reason)
-                .catch(() => undefined)
-                .finally(() => setBusy(false));
-            }}
+            onApprove={(opts) => decide(() => actions.approve(a, opts))}
+            onDeny={(reason) => decide(() => actions.deny(a, reason))}
           />
         ) : (
           <p className="text-sm text-fg-muted">{item.summary}</p>
         )}
       </div>
-    </section>
+    </article>
   );
 }
 
@@ -425,8 +516,9 @@ export function DelegationCard({ item }: { item: Extract<ChatItem, { kind: 'dele
   const peer = bots.data?.find((b) => b.id === item.childBotId);
   const working = item.status === 'working';
   return (
-    <section
+    <article
       className="rounded-xl border border-border bg-surface px-3.5 py-3 shadow-card"
+      aria-label={`Asked ${item.childBotName}`}
       data-testid="delegation-card"
     >
       <header className="flex items-center gap-2">
@@ -442,7 +534,9 @@ export function DelegationCard({ item }: { item: Extract<ChatItem, { kind: 'dele
           />
         </span>
       </header>
-      <p className="mt-1.5 text-sm whitespace-pre-wrap text-fg-muted">{item.task}</p>
+      <p className="mt-1.5 text-sm whitespace-pre-wrap text-fg-muted [overflow-wrap:anywhere]">
+        {item.task}
+      </p>
       {item.result ? (
         <div className="mt-2 rounded-lg bg-surface-2 px-3 py-2 text-sm">
           <p className="mb-1 text-xs text-fg-subtle">
@@ -459,7 +553,7 @@ export function DelegationCard({ item }: { item: Extract<ChatItem, { kind: 'dele
       >
         Open {item.childBotName}’s side <ArrowUpRight className="size-3" aria-hidden />
       </Link>
-    </section>
+    </article>
   );
 }
 
@@ -516,20 +610,86 @@ export function ChatNote({
 export function UserMessage({ item }: { item: Extract<ChatItem, { kind: 'user' }> }) {
   return (
     <div className="flex flex-col items-end gap-1" data-testid="user-message">
-      {item.via ? (
-        <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[11px] font-medium text-fg-muted">
-          {item.via}
-        </span>
-      ) : null}
-      <div className="max-w-[85%] rounded-2xl rounded-br-md bg-bubble px-4 py-2.5 text-sm whitespace-pre-wrap text-bubble-fg shadow-sm">
+      <div className="max-w-[85%] rounded-2xl rounded-br-md bg-bubble px-4 py-2.5 text-sm whitespace-pre-wrap text-bubble-fg shadow-sm [overflow-wrap:anywhere]">
+        <span className="sr-only">You: </span>
         {item.text}
       </div>
     </div>
   );
 }
 
-export function AssistantMessage({ item }: { item: Extract<ChatItem, { kind: 'assistant' }> }) {
-  return <Markdown text={item.text} className="text-[15px] leading-relaxed text-fg" />;
+/**
+ * A turn nobody typed (ADR-014, ui review H3): what started it and the task
+ * as a note, and what the trigger delivered as untrusted data — never as the
+ * owner's own message, and without Orbit's note to the model.
+ */
+export function TriggerStartCard({
+  item,
+  botName,
+}: {
+  item: Extract<ChatItem, { kind: 'trigger' }>;
+  botName: string;
+}) {
+  const { start } = item;
+  const payload = start.payload ? lines(start.payload.text, 12) : null;
+  return (
+    <article
+      className="flex flex-col gap-2 rounded-xl border border-border bg-surface-2 px-3.5 py-3"
+      aria-label={`Started by ${start.via}`}
+      data-testid="trigger-start"
+    >
+      <p className="flex items-center gap-1.5 text-xs font-medium text-fg-muted">
+        <Zap className="size-3.5 shrink-0" aria-hidden />
+        Started by {start.via}
+        <span className="text-fg-subtle">
+          · <Time iso={item.ts} />
+        </span>
+      </p>
+      {start.task ? (
+        <div className="text-sm whitespace-pre-wrap text-fg [overflow-wrap:anywhere]">
+          {start.taskByBot ? (
+            <span className="mb-1 block text-xs text-fg-subtle">
+              Written by another Bot · untrusted data for {botName}
+            </span>
+          ) : null}
+          {start.task}
+        </div>
+      ) : null}
+      {start.payload && payload ? (
+        <div className="overflow-hidden rounded-lg border border-border bg-surface">
+          <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-xs text-fg-muted">
+            <span className="min-w-0 truncate">{start.payload.source}</span>
+            <span className="ml-auto shrink-0 rounded bg-warning-bg px-1.5 text-[11px] text-warning">
+              untrusted
+            </span>
+          </div>
+          <pre
+            tabIndex={0}
+            aria-label={`What ${start.payload.source} delivered`}
+            className="max-h-48 overflow-auto px-3 py-2 font-sans text-xs whitespace-pre-wrap text-fg [overflow-wrap:anywhere]"
+          >
+            {payload.shown}
+            {payload.more > 0 ? `\n… ${payload.more} more lines` : ''}
+          </pre>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+export function AssistantMessage({
+  item,
+  botName,
+}: {
+  item: Extract<ChatItem, { kind: 'assistant' }>;
+  botName: string;
+}) {
+  return (
+    <div className="text-[15px] leading-relaxed text-fg">
+      <span className="sr-only">{botName}: </span>
+      <Markdown text={item.text} />
+    </div>
+  );
 }
 
 /** After a turn: when, its details, and thumbs (feedback becomes memory). */
@@ -586,7 +746,7 @@ export function TurnFooter({ item }: { item: Extract<ChatItem, { kind: 'end' }> 
 /** The Bot is working: three dots and what it is doing. */
 export function Typing({ text }: { text: string }) {
   return (
-    <div className="flex items-center gap-2 text-xs text-fg-muted" role="status">
+    <div className="flex items-center gap-2 text-xs text-fg-muted">
       <span className="flex gap-1" aria-hidden>
         {[0, 1, 2].map((i) => (
           <span
@@ -608,6 +768,8 @@ export function Composer({
   onSend,
   onStop,
   footer,
+  action,
+  seed,
   autoFocus = false,
 }: {
   botName: string;
@@ -615,12 +777,22 @@ export function Composer({
   onSend: (text: string) => Promise<boolean>;
   onStop?: () => void;
   footer?: ReactNode;
+  /** A control next to the hint (resume the Bot, go to the request). */
+  action?: ReactNode;
+  /** Text to put in the box (a starter); focuses it. */
+  seed?: { text: string; n: number } | null;
   autoFocus?: boolean;
 }) {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  const box = useRef<HTMLTextAreaElement>(null);
   const name = scrubControls(botName);
   const can = state.canSend && !sending && text.trim().length > 0;
+  useEffect(() => {
+    if (!seed) return;
+    setText(seed.text);
+    box.current?.focus();
+  }, [seed]);
   const submit = (e?: SyntheticEvent) => {
     e?.preventDefault();
     if (!can) return;
@@ -632,17 +804,29 @@ export function Composer({
       .finally(() => setSending(false));
   };
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+    const cmd = composerKey({
+      key: e.key,
+      shift: e.shiftKey,
+      composing: e.nativeEvent.isComposing,
+    });
+    if (cmd === 'send') {
       e.preventDefault();
       submit();
+    } else if (cmd === 'leave') {
+      e.preventDefault();
+      box.current?.blur();
     }
   };
+  // A long name would wrap the placeholder over several lines (ui review L17).
+  const placeholder = name.length > 24 ? 'Message…' : `Message ${name}…`;
   return (
     <form onSubmit={submit} className="flex flex-col gap-1.5" aria-label={`Message ${name}`}>
-      <div className="flex items-end gap-2 rounded-2xl border border-border-input bg-surface px-3 py-2 shadow-card focus-within:border-ring">
+      <div className="flex items-end gap-2 rounded-2xl border border-border-input bg-surface px-3 py-2 shadow-card focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30">
         <textarea
+          ref={box}
+          id={COMPOSER_ID}
           aria-label={`Message ${name}`}
-          placeholder={`Message ${name}…`}
+          placeholder={placeholder}
           rows={1}
           value={text}
           maxLength={20_000}
@@ -677,9 +861,10 @@ export function Composer({
           </Button>
         )}
       </div>
-      <p className="min-h-4 px-2 text-center text-xs text-fg-subtle" aria-live="polite">
-        {state.hint ?? footer}
-      </p>
+      <div className="flex min-h-4 flex-wrap items-center justify-center gap-x-2 gap-y-1 px-2 text-center text-xs text-fg-subtle">
+        <span>{state.hint ?? footer}</span>
+        {state.hint ? action : null}
+      </div>
     </form>
   );
 }

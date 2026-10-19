@@ -35,6 +35,19 @@ export function parseInline(src: string): Inline[] {
     if (text) out.push({ t: 'text', v: text });
     text = '';
   };
+  /** A word character there (underscores count: snake_case, mcp__x__y). */
+  const word = (at: number) => at >= 0 && /\w/.test(src.charAt(at));
+  /**
+   * Where a run of `marker` closes: for underscores only where no word
+   * follows, so names like `mcp__bank__transfer_funds` stay as written.
+   */
+  const closing = (marker: string, from: number) => {
+    let end = src.indexOf(marker, from);
+    while (marker.startsWith('_') && end > -1 && word(end + marker.length)) {
+      end = src.indexOf(marker, end + 1);
+    }
+    return end;
+  };
   let i = 0;
   while (i < src.length) {
     const ch = src.charAt(i);
@@ -47,8 +60,10 @@ export function parseInline(src: string): Inline[] {
         continue;
       }
     }
-    if ((ch === '*' || ch === '_') && src[i + 1] === ch) {
-      const end = src.indexOf(`${ch}${ch}`, i + 2);
+    // Underscores open only where no word comes before (ui review M4).
+    const opens = ch === '*' || (ch === '_' && !word(i - 1));
+    if (opens && src[i + 1] === ch) {
+      const end = closing(`${ch}${ch}`, i + 2);
       if (end > i + 2) {
         flush();
         out.push({ t: 'strong', c: parseInline(src.slice(i + 2, end)) });
@@ -56,8 +71,8 @@ export function parseInline(src: string): Inline[] {
         continue;
       }
     }
-    if (ch === '*' || (ch === '_' && (i === 0 || !/\w/.test(src[i - 1] ?? '')))) {
-      const end = src.indexOf(ch, i + 1);
+    if (opens && src[i + 1] !== ch) {
+      const end = closing(ch, i + 1);
       const inner = end > i + 1 ? src.slice(i + 1, end) : '';
       if (inner && !inner.startsWith(' ') && !inner.endsWith(' ')) {
         flush();

@@ -1,7 +1,7 @@
 /**
  * Screenshots of every App screen for UI review: a real orbitd (mock driver,
  * ORBIT_PORT=0, throwaway home) with seeded Bots and Runs, captured in light
- * and dark at 1440, 1024 and 768 px. Build the App first.
+ * and dark at 1440, 1024, 768 and 390 px. Build the App first.
  *
  *   pnpm --filter @orbit/app exec tsx scripts/screenshots.ts <out-dir> [width,…]
  */
@@ -10,7 +10,7 @@ import { chromium } from '@playwright/test';
 import { startOrbitd } from '../e2e/orbitd';
 
 const out = process.argv[2] ?? 'screenshots';
-const widths = (process.argv[3] ?? '1440,1024,768').split(',').map(Number);
+const widths = (process.argv[3] ?? '1440,1024,768,390').split(',').map(Number);
 mkdirSync(out, { recursive: true });
 
 const o = await startOrbitd();
@@ -175,7 +175,8 @@ try {
           path: `${out}/computer-${tab.toLowerCase()}-${scheme}-${width}.png`,
         });
       }
-      await page.getByRole('button', { name: 'Hide the computer' }).click();
+      // Narrow screens show the computer over the page (modal): close it from the panel.
+      await page.getByRole('button', { name: 'Close the computer' }).click();
       await page.goto(`${o.url}/inbox`);
       await page.getByTestId('inbox-row').first().waitFor();
       await page.keyboard.press('Enter');

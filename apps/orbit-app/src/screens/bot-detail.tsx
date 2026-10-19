@@ -102,7 +102,6 @@ function Overview({ bot }: { bot: Bot }) {
   const b = s.budgets;
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      <Appearance bot={bot} />
       <Card>
         <CardHeader>
           <CardTitle>Goal</CardTitle>
@@ -253,6 +252,7 @@ function Overview({ bot }: { bot: Bot }) {
           </dl>
         </CardContent>
       </Card>
+      <Appearance bot={bot} />
     </div>
   );
 }

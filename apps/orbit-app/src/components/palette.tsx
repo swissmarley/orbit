@@ -1,6 +1,6 @@
 /** @jsxRuntime automatic @jsxImportSource react */
 import { RUN_STATUS, scrubControls } from '@orbit/core/browser';
-import { useNavigate } from '@tanstack/react-router';
+import { useNavigate, useRouterState } from '@tanstack/react-router';
 import { Command, useCommandState } from 'cmdk';
 import {
   Bot as BotIcon,
@@ -34,7 +34,7 @@ import { textMark } from '../lib/tone';
 import { confirmAction } from './confirm';
 import { takeoverStore } from './takeover';
 import { BotAvatar } from './avatar';
-import { computerOpenStore } from '../lib/ui';
+import { computerStore } from '../lib/ui';
 
 export const paletteStore = createStore(false);
 
@@ -100,6 +100,7 @@ export function CommandPalette() {
   const approvals = usePendingApprovals();
   const kill = useKill();
   const role = useRole();
+  const onChat = useRouterState({ select: (s) => s.location.pathname.startsWith('/chat/') });
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -140,24 +141,36 @@ export function CommandPalette() {
           <Command.Item className={item} onSelect={run(() => navigate({ to: '/' }))}>
             <MessageCircle aria-hidden /> Chat — the Bot you last talked to
           </Command.Item>
-          <Command.Item className={item} onSelect={run(() => navigate({ to: '/inbox' }))}>
-            <Inbox aria-hidden /> Inbox — needs you
+          <Command.Item
+            className={item}
+            keywords={['inbox', 'approvals']}
+            onSelect={run(() => navigate({ to: '/inbox' }))}
+          >
+            <Inbox aria-hidden /> Needs you — requests waiting for your decision
           </Command.Item>
           <Command.Item className={item} onSelect={run(() => navigate({ to: '/bots' }))}>
             <LayoutGrid aria-hidden /> Bots
           </Command.Item>
-          <Command.Item className={item} onSelect={run(() => navigate({ to: '/runs' }))}>
-            <ListTree aria-hidden /> Activity — every Run
-          </Command.Item>
           <Command.Item
             className={item}
-            keywords={['computer', 'workspace', 'files', 'terminal', 'browser']}
-            onSelect={run(() => {
-              computerOpenStore.set(!computerOpenStore.get());
-            })}
+            keywords={['activity', 'history']}
+            onSelect={run(() => navigate({ to: '/runs' }))}
           >
-            <Monitor aria-hidden /> Show or hide the Bot’s computer
+            <ListTree aria-hidden /> Runs — every Run
           </Command.Item>
+          {/* Only where there is a computer to show: a chat (ui review M8). */}
+          {onChat ? (
+            <Command.Item
+              className={item}
+              keywords={['computer', 'workspace', 'files', 'terminal', 'browser']}
+              onSelect={run(() => {
+                const store = computerStore();
+                store.set(!store.get());
+              })}
+            >
+              <Monitor aria-hidden /> Show or hide the Bot’s computer
+            </Command.Item>
+          ) : null}
           <Command.Item className={item} onSelect={run(() => navigate({ to: '/bots/new' }))}>
             <Plus aria-hidden /> New Bot
           </Command.Item>
