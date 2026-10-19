@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomBytes } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { arch, platform } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -17,6 +18,7 @@ import {
   type RunState,
   type PluginInstallPreview,
   type PluginStatus,
+  type RunEvent,
   type TriggerRef,
   type TriggerSpec,
   errorMessage,
@@ -119,8 +121,10 @@ import {
   defaultRunner,
   detectPluginSandbox,
   detectSandboxSupport,
+  listWorkspace,
   parseUpstream,
   prepareTakeoverGit,
+  readWorkspaceFile,
 } from '@orbit/sandbox';
 import {
   BotRepo,
@@ -134,6 +138,10 @@ import {
 import type { z } from 'zod';
 import type {
   ApproveBody,
+  ComputerAction,
+  ComputerFile,
+  ComputerListing,
+  ComputerStatus,
   CreateRuleBody,
   DecisionResult,
   DenyBody,
@@ -1038,6 +1046,7 @@ export class OrbitService {
       prompt?: string | undefined;
       fixture?: string | undefined;
       priority?: number | undefined;
+      continues?: string | undefined;
     },
   ): Promise<RunState> {
     const bot = this.bots.get(ref);
@@ -1054,10 +1063,13 @@ export class OrbitService {
     // Fail fast with the onboarding / compliance message instead of queueing a doomed Run.
     await this.ensureEngine();
     const mockFixture = this.fixture(body.fixture);
+    // Checked and appended without an await in between: two replies cannot
+    // both continue one turn (ADR-020; orbitd is the single writer).
     const run = this.orchestrator.enqueue(bot, {
       ...(body.prompt ? { prompt: body.prompt } : {}),
       ...(body.priority !== undefined ? { priority: body.priority } : {}),
       ...(mockFixture ? { mockFixture } : {}),
+      ...(body.continues ? { continues: body.continues } : {}),
     });
     this.queue.push({ kind: 'start', runId: run.runId, botId: bot.id, priority: run.priority });
     return this.requireRun(run.runId);
@@ -1811,6 +1823,179 @@ export class OrbitService {
       data: { files: n },
     });
     return n;
+  }
+
+  // ── the Bot's computer (ADR-020) ──────────────────────────────────────────
+
+  /** What a Bot's computer is doing, where it works and how it reaches the web. */
+  computer(botRef: string): z.infer<typeof ComputerStatus> {
+    const bot = this.bots.get(botRef);
+    const sb = bot.spec.sandbox;
+    const path = this.sandbox.workspacePath(bot);
+    const runs = this.store.listRuns({ botId: bot.id, status: IN_FLIGHT, limit: 100 });
+    const find = (...statuses: RunState['status'][]) =>
+      runs.find((r) => statuses.includes(r.status)) ?? null;
+    const working = find('running');
+    const needsYou = find('waiting_approval', 'paused');
+    const waiting = find('queued', 'delegating', 'rate_limited');
+    const takeover = this.controls.takeover(bot.id);
+    const state = this.controls.globalKill()
+      ? 'stopped'
+      : takeover
+        ? 'taken_over'
+        : bot.pausedAt
+          ? 'paused'
+          : working
+            ? 'working'
+            : needsYou
+              ? 'needs_you'
+              : waiting
+                ? 'waiting'
+                : 'idle';
+    const behind =
+      state === 'working'
+        ? working
+        : state === 'needs_you'
+          ? needsYou
+          : state === 'waiting'
+            ? waiting
+            : null;
+    const browser = this.plugins.list().find((p) => p.id === 'browser');
+    const tools = bot.spec.tools;
+    return {
+      botId: bot.id,
+      state,
+      runId: behind?.runId ?? null,
+      workspace: {
+        kind: sb.kind,
+        path,
+        exists: existsSync(path),
+        network: sb.network,
+        allowedDomains: sb.allowedDomains,
+        repo: sb.kind === 'worktree' ? (sb.repo ?? null) : null,
+      },
+      takeover: takeover
+        ? { pid: takeover.pid, startedAt: takeover.startedAt, by: takeover.by }
+        : null,
+      web: {
+        browser: !bot.spec.plugins.includes('browser')
+          ? 'not_added'
+          : browser?.state === 'ready'
+            ? 'ready'
+            : 'off',
+        // Omitted tools = the engine's default set, which has both.
+        fetch: tools === undefined || tools.some((t) => t === 'WebFetch' || t === 'WebSearch'),
+      },
+      shellCommand: sb.kind === 'docker' ? null : `orbit shell ${slugify(bot.spec.name)}`,
+    };
+  }
+
+  /** One directory of the Bot's workspace, untrusted files marked (ADR-020). */
+  computerFiles(botRef: string, path: string): z.infer<typeof ComputerListing> {
+    const bot = this.bots.get(botRef);
+    const listing = listWorkspace(this.sandbox.workspacePath(bot), path);
+    const tainted = this.taintedIn(bot.id);
+    return {
+      ...listing,
+      entries: listing.entries.map((e) => ({
+        ...e,
+        tainted: tainted(e.path, e.kind === 'directory'),
+      })),
+    };
+  }
+
+  /**
+   * A text preview of a workspace file. It goes through the same redactor as
+   * every event, so a credential the Bot wrote is masked (ADR-020).
+   */
+  computerFile(botRef: string, path: string): z.infer<typeof ComputerFile> {
+    const bot = this.bots.get(botRef);
+    const preview = readWorkspaceFile(this.sandbox.workspacePath(bot), path);
+    const text = preview.text === null ? null : this.redactor.redactString(preview.text);
+    return {
+      ...preview,
+      text,
+      redacted: text !== preview.text,
+      tainted: this.taintedIn(bot.id)(preview.path, false),
+    };
+  }
+
+  /** The Bot's latest tool calls across its Runs, newest first, with decisions and results. */
+  computerActivity(botRef: string, limit: number): z.infer<typeof ComputerAction>[] {
+    const bot = this.bots.get(botRef);
+    const events = this.store.listBotEvents(
+      bot.id,
+      ['tool.call', 'permission.decision', 'tool.result'],
+      limit * 4,
+    );
+    const key = (runId: string, toolUseId: string) => `${runId} ${toolUseId}`;
+    type Decision = NonNullable<z.infer<typeof ComputerAction>['decision']>;
+    const decisions = new Map<string, Decision>();
+    const results = new Map<string, Extract<RunEvent, { type: 'tool.result' }>['data']>();
+    const calls: Extract<RunEvent, { type: 'tool.call' }>[] = [];
+    // Newest first: the latest decision of a call wins (held, then approved).
+    for (const e of events) {
+      if (e.type === 'tool.call') calls.push(e);
+      else if (e.type === 'tool.result') {
+        if (!results.has(key(e.runId, e.data.toolUseId)))
+          results.set(key(e.runId, e.data.toolUseId), e.data);
+      } else if (e.type === 'permission.decision' && e.data.toolUseId) {
+        const k = key(e.runId, e.data.toolUseId);
+        if (!decisions.has(k)) {
+          decisions.set(k, {
+            behavior: e.data.behavior,
+            tier: e.data.tier,
+            reason: e.data.reason,
+            approvalId: e.data.approvalId,
+          });
+        }
+      }
+    }
+    const conversations = new Map<string, string>();
+    const conversationOf = (runId: string): string => {
+      let id = conversations.get(runId);
+      if (id === undefined) {
+        id = this.store.getRun(runId)?.conversationId ?? runId;
+        conversations.set(runId, id);
+      }
+      return id;
+    };
+    const CONTENT = 4000;
+    return calls.slice(0, limit).map((c) => {
+      const k = key(c.runId, c.data.toolUseId);
+      const r = results.get(k);
+      return {
+        runId: c.runId,
+        conversationId: conversationOf(c.runId),
+        toolUseId: c.data.toolUseId,
+        name: c.data.name,
+        input: c.data.input,
+        parentToolUseId: c.data.parentToolUseId,
+        at: c.ts,
+        decision: decisions.get(k) ?? null,
+        result: r
+          ? {
+              isError: r.isError,
+              content: r.content.slice(0, CONTENT),
+              truncated: r.truncated || r.content.length > CONTENT,
+            }
+          : null,
+      };
+    });
+  }
+
+  /** Whether a workspace path (a directory: anything in it) is marked untrusted. */
+  private taintedIn(botId: string): (path: string, directory: boolean) => boolean {
+    const marks = this.workspaceTaint.list(botId).map((t) => t.path);
+    if (marks.includes('*')) return () => true;
+    // The taint ledger folds case where the volume does (review M6 M2).
+    const fold = (p: string) =>
+      process.platform === 'darwin' || process.platform === 'win32' ? p.toLowerCase() : p;
+    const exact = new Set(marks);
+    return (path, directory) => {
+      const p = fold(path);
+      return exact.has(p) || (directory && marks.some((m) => m.startsWith(`${p}/`)));
+    };
   }
 
   // ── triage path: summaries and proposals ──────────────────────────────────

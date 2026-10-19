@@ -103,6 +103,10 @@ export const RunState = z.object({
   pause: RunPause.nullable(),
   /** How often orbitd stopped while this Run executed (automatic retries are capped). */
   interruptions: z.int(),
+  /** The conversation this Run is a turn of (ADR-020): its first Run's id, or this Run's own. */
+  conversationId: z.string(),
+  /** The earlier turn this Run answers (it resumed that engine session); null for a first turn. */
+  continuesRunId: z.string().nullable(),
 });
 export type RunState = z.infer<typeof RunState>;
 
@@ -157,6 +161,8 @@ function blankState(runId: string, botId: string, createdAt: string): RunState {
     pauseRequested: null,
     pause: null,
     interruptions: 0,
+    conversationId: runId,
+    continuesRunId: null,
   };
 }
 
@@ -195,6 +201,10 @@ export function foldRun(prev: RunState | undefined, e: RunEvent): RunState {
       for (const t of Array.isArray(e.data.inheritedTaint) ? e.data.inheritedTaint : []) {
         if (!s.taintSources.includes(t)) s.taintSources.push(t);
       }
+      // Events logged before ADR-020 have no conversation fields: each Run is its own.
+      s.conversationId =
+        typeof e.data.conversationId === 'string' ? e.data.conversationId : e.runId;
+      s.continuesRunId = typeof e.data.continuesRunId === 'string' ? e.data.continuesRunId : null;
       break;
     case 'run.started':
       s.status = 'running';

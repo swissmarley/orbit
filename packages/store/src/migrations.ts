@@ -286,6 +286,18 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE audit ADD COLUMN mac TEXT;
     `,
   },
+  {
+    id: 7,
+    name: 'run-conversations',
+    sql: `
+      -- Conversations are chains of Runs (ADR-020): each Run records the
+      -- conversation it is a turn of (its first Run's id). The runs table is a
+      -- projection, so existing rows are backfilled: each was its own.
+      ALTER TABLE runs ADD COLUMN conversation_id TEXT;
+      UPDATE runs SET conversation_id = id WHERE conversation_id IS NULL;
+      CREATE INDEX runs_conversation_idx ON runs (conversation_id, created_at);
+    `,
+  },
 ];
 
 /** When migration `id` was applied to this database, or null. */

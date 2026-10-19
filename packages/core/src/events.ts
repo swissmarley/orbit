@@ -84,10 +84,14 @@ export const RunEventBody = z.discriminatedUnion('type', [
     parentRunId: nullableString.default(null),
     /** Delegation depth: 0 for top-level Runs. */
     depth: z.int().min(0).max(10).default(0),
-    /** Untrusted sources the Run starts with (a delegating parent's taint). */
+    /** Untrusted sources the Run starts with (a delegating parent's or an earlier turn's taint). */
     inheritedTaint: z.array(z.string()).default([]),
     /** Budget ceiling inherited from a delegating parent. */
     budgetCap: BudgetCap.nullable().default(null),
+    /** The conversation this Run is a turn of: its first Run's id (ADR-020); null = it starts one. */
+    conversationId: nullableString.default(null),
+    /** The earlier turn this Run answers; it resumes that conversation's engine session. */
+    continuesRunId: nullableString.default(null),
   }),
   ev('run.started', {
     driver: DriverKind,

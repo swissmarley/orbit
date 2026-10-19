@@ -63,8 +63,14 @@ export const runs = sqliteTable(
     state: text('state', { mode: 'json' }).notNull(),
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull(),
+    /** The conversation the Run is a turn of (ADR-020); its first Run's id. */
+    conversationId: text('conversation_id'),
   },
-  (t) => [index('runs_bot_idx').on(t.botId, t.createdAt), index('runs_status_idx').on(t.status)],
+  (t) => [
+    index('runs_bot_idx').on(t.botId, t.createdAt),
+    index('runs_status_idx').on(t.status),
+    index('runs_conversation_idx').on(t.conversationId, t.createdAt),
+  ],
 );
 
 export const approvals = sqliteTable('approvals', {

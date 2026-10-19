@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BotAvatar } from './avatar';
 
 export const BotBudgets = z.object({
   /** Tool calls per Run (counted at permission time, so denied calls count). */
@@ -216,6 +217,8 @@ export const BotSpec = z.object({
   name: z.string().trim().min(1).max(80),
   goal: z.string().trim().min(1).max(4000),
   instructions: z.string().max(20_000).default(''),
+  /** How the Bot looks in the clients (ADR-020); omitted = a default derived from its id. */
+  avatar: BotAvatar.optional(),
   /** Model alias or ID; falls back to ORBIT_DEFAULT_MODEL. */
   model: z.string().trim().min(1).optional(),
   /** Built-in engine tools exposed to the Bot; omitted = engine default set. */

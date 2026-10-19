@@ -506,6 +506,31 @@ describe('orbit CLI', () => {
     expect(h.text()).toMatch(/✔ completed/);
   });
 
+  it('--continue replies in a conversation: the new Run resumes the earlier one (ADR-020)', async () => {
+    const h = harness(mockEnv());
+    await h.run('bot', 'create', '--name', 'Notes', '--goal', 'x', '--fixture', 'pong');
+    h.reset();
+    expect(await h.run('run', 'Notes', '--json')).toBe(ExitCode.ok);
+    const first = h.ndjson()[0]!.runId;
+    h.reset();
+    expect(await h.run('run', 'Notes', '--continue', first, '--prompt', 'And now?', '--json')).toBe(
+      ExitCode.ok,
+    );
+    const reply = h.ndjson();
+    const queued = reply[0]!;
+    expect(queued.type === 'run.queued' && queued.data).toMatchObject({
+      prompt: 'And now?',
+      conversationId: first,
+      continuesRunId: first,
+    });
+    h.reset();
+    // The first turn has been answered: replying to it again is refused (409).
+    expect(await h.run('run', 'Notes', '--continue', first, '--prompt', 'Fork')).not.toBe(
+      ExitCode.ok,
+    );
+    expect(h.err.join('\n')).toMatch(/already answered/);
+  });
+
   it('exits 75 with a resume time when a usage limit pauses the run', async () => {
     const h = harness(mockEnv());
     await h.run('bot', 'create', '--name', 'Notes', '--goal', 'x', '--fixture', 'usage-limit');

@@ -97,3 +97,14 @@ export {
   prepareTakeoverGit,
   worktreeAdminDir,
 } from './git-dirs';
+export {
+  HIDDEN_WORKSPACE_NAMES,
+  WORKSPACE_LIST_LIMIT,
+  WORKSPACE_PREVIEW_BYTES,
+  type WorkspaceEntry,
+  type WorkspaceListing,
+  type WorkspacePreview,
+  listWorkspace,
+  readWorkspaceFile,
+  workspacePathSegments,
+} from './workspace-files';

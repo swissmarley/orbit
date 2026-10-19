@@ -3,6 +3,7 @@
  * schema and redaction utilities. Depends on nothing else in the workspace;
  * every other package depends on it.
  */
+export * from './avatar';
 export * from './bot';
 export * from './canonical';
 export * from './config';

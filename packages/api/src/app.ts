@@ -628,6 +628,7 @@ export function createApp(opts: AppOptions): Hono {
       return service.store.listRuns({
         ...(q.bot ? { botId: service.bots.get(q.bot).id } : {}),
         ...(q.status ? { status: q.status } : {}),
+        ...(q.conversation ? { conversationId: q.conversation } : {}),
         limit: q.limit ?? 20,
       });
     },
@@ -743,6 +744,22 @@ export function createApp(opts: AppOptions): Hono {
     runFeedback: ({ params, body }) =>
       service.feedback(param(params, 'run'), body as z.output<typeof routes.runFeedback.body>),
     runTree: ({ params }) => service.runTree(param(params, 'run')),
+    getComputer: ({ params }) => service.computer(param(params, 'bot')),
+    computerFiles: ({ params, query }) =>
+      service.computerFiles(
+        param(params, 'bot'),
+        (query as z.output<typeof routes.computerFiles.query>).path,
+      ),
+    computerFile: ({ params, query }) =>
+      service.computerFile(
+        param(params, 'bot'),
+        (query as z.output<typeof routes.computerFile.query>).path,
+      ),
+    computerActivity: ({ params, query }) =>
+      service.computerActivity(
+        param(params, 'bot'),
+        (query as z.output<typeof routes.computerActivity.query>).limit ?? 50,
+      ),
     botTaint: ({ params }) => service.taintedFiles(param(params, 'bot')),
     clearBotTaint: ({ params }) => ({ cleared: service.clearTaintedFiles(param(params, 'bot')) }),
     triageUsage: () => service.triageUsage(),

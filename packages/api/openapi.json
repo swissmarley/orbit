@@ -1509,6 +1509,42 @@
                             "type": "string",
                             "maxLength": 20000
                           },
+                          "avatar": {
+                            "type": "object",
+                            "properties": {
+                              "character": {
+                                "type": "string",
+                                "enum": [
+                                  "orb",
+                                  "planet",
+                                  "star",
+                                  "cloud",
+                                  "comet",
+                                  "robot",
+                                  "ghost",
+                                  "cat"
+                                ]
+                              },
+                              "color": {
+                                "type": "string",
+                                "enum": [
+                                  "violet",
+                                  "blue",
+                                  "teal",
+                                  "green",
+                                  "amber",
+                                  "coral",
+                                  "rose",
+                                  "slate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "character",
+                              "color"
+                            ],
+                            "additionalProperties": false
+                          },
                           "model": {
                             "type": "string",
                             "minLength": 1
@@ -2303,6 +2339,42 @@
                           "type": "string",
                           "maxLength": 20000
                         },
+                        "avatar": {
+                          "type": "object",
+                          "properties": {
+                            "character": {
+                              "type": "string",
+                              "enum": [
+                                "orb",
+                                "planet",
+                                "star",
+                                "cloud",
+                                "comet",
+                                "robot",
+                                "ghost",
+                                "cat"
+                              ]
+                            },
+                            "color": {
+                              "type": "string",
+                              "enum": [
+                                "violet",
+                                "blue",
+                                "teal",
+                                "green",
+                                "amber",
+                                "coral",
+                                "rose",
+                                "slate"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "character",
+                            "color"
+                          ],
+                          "additionalProperties": false
+                        },
                         "model": {
                           "type": "string",
                           "minLength": 1
@@ -3076,6 +3148,41 @@
                     "type": "string",
                     "maxLength": 20000
                   },
+                  "avatar": {
+                    "type": "object",
+                    "properties": {
+                      "character": {
+                        "type": "string",
+                        "enum": [
+                          "orb",
+                          "planet",
+                          "star",
+                          "cloud",
+                          "comet",
+                          "robot",
+                          "ghost",
+                          "cat"
+                        ]
+                      },
+                      "color": {
+                        "type": "string",
+                        "enum": [
+                          "violet",
+                          "blue",
+                          "teal",
+                          "green",
+                          "amber",
+                          "coral",
+                          "rose",
+                          "slate"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "character",
+                      "color"
+                    ]
+                  },
                   "model": {
                     "type": "string",
                     "minLength": 1
@@ -3735,6 +3842,42 @@
                           "default": "",
                           "type": "string",
                           "maxLength": 20000
+                        },
+                        "avatar": {
+                          "type": "object",
+                          "properties": {
+                            "character": {
+                              "type": "string",
+                              "enum": [
+                                "orb",
+                                "planet",
+                                "star",
+                                "cloud",
+                                "comet",
+                                "robot",
+                                "ghost",
+                                "cat"
+                              ]
+                            },
+                            "color": {
+                              "type": "string",
+                              "enum": [
+                                "violet",
+                                "blue",
+                                "teal",
+                                "green",
+                                "amber",
+                                "coral",
+                                "rose",
+                                "slate"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "character",
+                            "color"
+                          ],
+                          "additionalProperties": false
                         },
                         "model": {
                           "type": "string",
@@ -4538,6 +4681,42 @@
                           "type": "string",
                           "maxLength": 20000
                         },
+                        "avatar": {
+                          "type": "object",
+                          "properties": {
+                            "character": {
+                              "type": "string",
+                              "enum": [
+                                "orb",
+                                "planet",
+                                "star",
+                                "cloud",
+                                "comet",
+                                "robot",
+                                "ghost",
+                                "cat"
+                              ]
+                            },
+                            "color": {
+                              "type": "string",
+                              "enum": [
+                                "violet",
+                                "blue",
+                                "teal",
+                                "green",
+                                "amber",
+                                "coral",
+                                "rose",
+                                "slate"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "character",
+                            "color"
+                          ],
+                          "additionalProperties": false
+                        },
                         "model": {
                           "type": "string",
                           "minLength": 1
@@ -5311,6 +5490,41 @@
                     "type": "string",
                     "maxLength": 20000
                   },
+                  "avatar": {
+                    "type": "object",
+                    "properties": {
+                      "character": {
+                        "type": "string",
+                        "enum": [
+                          "orb",
+                          "planet",
+                          "star",
+                          "cloud",
+                          "comet",
+                          "robot",
+                          "ghost",
+                          "cat"
+                        ]
+                      },
+                      "color": {
+                        "type": "string",
+                        "enum": [
+                          "violet",
+                          "blue",
+                          "teal",
+                          "green",
+                          "amber",
+                          "coral",
+                          "rose",
+                          "slate"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "character",
+                      "color"
+                    ]
+                  },
                   "model": {
                     "type": "string",
                     "minLength": 1
@@ -5969,6 +6183,42 @@
                             "default": "",
                             "type": "string",
                             "maxLength": 20000
+                          },
+                          "avatar": {
+                            "type": "object",
+                            "properties": {
+                              "character": {
+                                "type": "string",
+                                "enum": [
+                                  "orb",
+                                  "planet",
+                                  "star",
+                                  "cloud",
+                                  "comet",
+                                  "robot",
+                                  "ghost",
+                                  "cat"
+                                ]
+                              },
+                              "color": {
+                                "type": "string",
+                                "enum": [
+                                  "violet",
+                                  "blue",
+                                  "teal",
+                                  "green",
+                                  "amber",
+                                  "coral",
+                                  "rose",
+                                  "slate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "character",
+                              "color"
+                            ],
+                            "additionalProperties": false
                           },
                           "model": {
                             "type": "string",
@@ -6751,6 +7001,42 @@
                           "default": "",
                           "type": "string",
                           "maxLength": 20000
+                        },
+                        "avatar": {
+                          "type": "object",
+                          "properties": {
+                            "character": {
+                              "type": "string",
+                              "enum": [
+                                "orb",
+                                "planet",
+                                "star",
+                                "cloud",
+                                "comet",
+                                "robot",
+                                "ghost",
+                                "cat"
+                              ]
+                            },
+                            "color": {
+                              "type": "string",
+                              "enum": [
+                                "violet",
+                                "blue",
+                                "teal",
+                                "green",
+                                "amber",
+                                "coral",
+                                "rose",
+                                "slate"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "character",
+                            "color"
+                          ],
+                          "additionalProperties": false
                         },
                         "model": {
                           "type": "string",
@@ -7555,6 +7841,42 @@
                           "default": "",
                           "type": "string",
                           "maxLength": 20000
+                        },
+                        "avatar": {
+                          "type": "object",
+                          "properties": {
+                            "character": {
+                              "type": "string",
+                              "enum": [
+                                "orb",
+                                "planet",
+                                "star",
+                                "cloud",
+                                "comet",
+                                "robot",
+                                "ghost",
+                                "cat"
+                              ]
+                            },
+                            "color": {
+                              "type": "string",
+                              "enum": [
+                                "violet",
+                                "blue",
+                                "teal",
+                                "green",
+                                "amber",
+                                "coral",
+                                "rose",
+                                "slate"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "character",
+                            "color"
+                          ],
+                          "additionalProperties": false
                         },
                         "model": {
                           "type": "string",
@@ -8968,6 +9290,15 @@
                       "type": "integer",
                       "minimum": -9007199254740991,
                       "maximum": 9007199254740991
+                    },
+                    "conversationId": {
+                      "type": "string"
+                    },
+                    "continuesRunId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
@@ -9010,7 +9341,9 @@
                     "memoryWrites",
                     "pauseRequested",
                     "pause",
-                    "interruptions"
+                    "interruptions",
+                    "conversationId",
+                    "continuesRunId"
                   ],
                   "additionalProperties": false
                 }
@@ -9078,6 +9411,11 @@
                     "type": "integer",
                     "minimum": -100,
                     "maximum": 100
+                  },
+                  "continues": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
                   }
                 }
               }
@@ -9096,6 +9434,14 @@
         "parameters": [
           {
             "name": "bot",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conversation",
             "in": "query",
             "required": false,
             "schema": {
@@ -9765,6 +10111,15 @@
                         "type": "integer",
                         "minimum": -9007199254740991,
                         "maximum": 9007199254740991
+                      },
+                      "conversationId": {
+                        "type": "string"
+                      },
+                      "continuesRunId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
                       }
                     },
                     "required": [
@@ -9807,7 +10162,9 @@
                       "memoryWrites",
                       "pauseRequested",
                       "pause",
-                      "interruptions"
+                      "interruptions",
+                      "conversationId",
+                      "continuesRunId"
                     ],
                     "additionalProperties": false
                   }
@@ -10517,6 +10874,15 @@
                       "type": "integer",
                       "minimum": -9007199254740991,
                       "maximum": 9007199254740991
+                    },
+                    "conversationId": {
+                      "type": "string"
+                    },
+                    "continuesRunId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
@@ -10559,7 +10925,9 @@
                     "memoryWrites",
                     "pauseRequested",
                     "pause",
-                    "interruptions"
+                    "interruptions",
+                    "conversationId",
+                    "continuesRunId"
                   ],
                   "additionalProperties": false
                 }
@@ -10792,6 +11160,20 @@
                                     "type": "null"
                                   }
                                 ]
+                              },
+                              "conversationId": {
+                                "default": null,
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "continuesRunId": {
+                                "default": null,
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
                               }
                             },
                             "required": [
@@ -10802,7 +11184,9 @@
                               "parentRunId",
                               "depth",
                               "inheritedTaint",
-                              "budgetCap"
+                              "budgetCap",
+                              "conversationId",
+                              "continuesRunId"
                             ],
                             "additionalProperties": false
                           }
@@ -14460,6 +14844,15 @@
                       "type": "integer",
                       "minimum": -9007199254740991,
                       "maximum": 9007199254740991
+                    },
+                    "conversationId": {
+                      "type": "string"
+                    },
+                    "continuesRunId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
@@ -14502,7 +14895,9 @@
                     "memoryWrites",
                     "pauseRequested",
                     "pause",
-                    "interruptions"
+                    "interruptions",
+                    "conversationId",
+                    "continuesRunId"
                   ],
                   "additionalProperties": false
                 }
@@ -15211,6 +15606,15 @@
                       "type": "integer",
                       "minimum": -9007199254740991,
                       "maximum": 9007199254740991
+                    },
+                    "conversationId": {
+                      "type": "string"
+                    },
+                    "continuesRunId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
@@ -15253,7 +15657,9 @@
                     "memoryWrites",
                     "pauseRequested",
                     "pause",
-                    "interruptions"
+                    "interruptions",
+                    "conversationId",
+                    "continuesRunId"
                   ],
                   "additionalProperties": false
                 }
@@ -15536,6 +15942,42 @@
                           "default": "",
                           "type": "string",
                           "maxLength": 20000
+                        },
+                        "avatar": {
+                          "type": "object",
+                          "properties": {
+                            "character": {
+                              "type": "string",
+                              "enum": [
+                                "orb",
+                                "planet",
+                                "star",
+                                "cloud",
+                                "comet",
+                                "robot",
+                                "ghost",
+                                "cat"
+                              ]
+                            },
+                            "color": {
+                              "type": "string",
+                              "enum": [
+                                "violet",
+                                "blue",
+                                "teal",
+                                "green",
+                                "amber",
+                                "coral",
+                                "rose",
+                                "slate"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "character",
+                            "color"
+                          ],
+                          "additionalProperties": false
                         },
                         "model": {
                           "type": "string",
@@ -16949,6 +17391,15 @@
                       "type": "integer",
                       "minimum": -9007199254740991,
                       "maximum": 9007199254740991
+                    },
+                    "conversationId": {
+                      "type": "string"
+                    },
+                    "continuesRunId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
@@ -16991,7 +17442,9 @@
                     "memoryWrites",
                     "pauseRequested",
                     "pause",
-                    "interruptions"
+                    "interruptions",
+                    "conversationId",
+                    "continuesRunId"
                   ],
                   "additionalProperties": false
                 }
@@ -18551,6 +19004,15 @@
                               "type": "integer",
                               "minimum": -9007199254740991,
                               "maximum": 9007199254740991
+                            },
+                            "conversationId": {
+                              "type": "string"
+                            },
+                            "continuesRunId": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
                             }
                           },
                           "required": [
@@ -18593,7 +19055,9 @@
                             "memoryWrites",
                             "pauseRequested",
                             "pause",
-                            "interruptions"
+                            "interruptions",
+                            "conversationId",
+                            "continuesRunId"
                           ],
                           "additionalProperties": false
                         },
@@ -19610,6 +20074,15 @@
                               "type": "integer",
                               "minimum": -9007199254740991,
                               "maximum": 9007199254740991
+                            },
+                            "conversationId": {
+                              "type": "string"
+                            },
+                            "continuesRunId": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
                             }
                           },
                           "required": [
@@ -19652,7 +20125,9 @@
                             "memoryWrites",
                             "pauseRequested",
                             "pause",
-                            "interruptions"
+                            "interruptions",
+                            "conversationId",
+                            "continuesRunId"
                           ],
                           "additionalProperties": false
                         },
@@ -24241,6 +24716,15 @@
                             "type": "integer",
                             "minimum": -9007199254740991,
                             "maximum": 9007199254740991
+                          },
+                          "conversationId": {
+                            "type": "string"
+                          },
+                          "continuesRunId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
                           }
                         },
                         "required": [
@@ -24283,7 +24767,9 @@
                           "memoryWrites",
                           "pauseRequested",
                           "pause",
-                          "interruptions"
+                          "interruptions",
+                          "conversationId",
+                          "continuesRunId"
                         ],
                         "additionalProperties": false
                       }
@@ -24517,6 +25003,690 @@
           }
         },
         "x-orbit-role": "owner"
+      }
+    },
+    "/v1/bots/{bot}/computer": {
+      "get": {
+        "operationId": "getComputer",
+        "summary": "The Bot's computer: what it is doing, its workspace, take-over and web access",
+        "tags": [
+          "computer"
+        ],
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "botId": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "stopped",
+                        "taken_over",
+                        "paused",
+                        "working",
+                        "needs_you",
+                        "waiting",
+                        "idle"
+                      ]
+                    },
+                    "runId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "workspace": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "directory",
+                            "worktree",
+                            "docker"
+                          ]
+                        },
+                        "path": {
+                          "type": "string"
+                        },
+                        "exists": {
+                          "type": "boolean"
+                        },
+                        "network": {
+                          "type": "string",
+                          "enum": [
+                            "none",
+                            "allowlist"
+                          ]
+                        },
+                        "allowedDomains": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "repo": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "path",
+                        "exists",
+                        "network",
+                        "allowedDomains",
+                        "repo"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "takeover": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "pid": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "startedAt": {
+                              "type": "string"
+                            },
+                            "by": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "pid",
+                            "startedAt",
+                            "by"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "web": {
+                      "type": "object",
+                      "properties": {
+                        "browser": {
+                          "type": "string",
+                          "enum": [
+                            "ready",
+                            "off",
+                            "not_added"
+                          ]
+                        },
+                        "fetch": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "browser",
+                        "fetch"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "shellCommand": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "botId",
+                    "state",
+                    "runId",
+                    "workspace",
+                    "takeover",
+                    "web",
+                    "shellCommand"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "hint": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "hint"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "x-orbit-role": "viewer"
+      }
+    },
+    "/v1/bots/{bot}/computer/files": {
+      "get": {
+        "operationId": "computerFiles",
+        "summary": "List a directory of the Bot's workspace (links are listed, never followed; .git is hidden)",
+        "tags": [
+          "computer"
+        ],
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": "",
+              "type": "string",
+              "maxLength": 1024
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "exists": {
+                      "type": "boolean"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "file",
+                              "directory",
+                              "symlink",
+                              "other"
+                            ]
+                          },
+                          "size": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "modifiedAt": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "tainted": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "path",
+                          "kind",
+                          "size",
+                          "modifiedAt",
+                          "tainted"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "exists",
+                    "entries",
+                    "truncated"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "hint": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "hint"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "x-orbit-role": "viewer"
+      }
+    },
+    "/v1/bots/{bot}/computer/file": {
+      "get": {
+        "operationId": "computerFile",
+        "summary": "Preview a file of the Bot's workspace (text only, capped, redacted)",
+        "tags": [
+          "computer"
+        ],
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": "",
+              "type": "string",
+              "maxLength": 1024
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "modifiedAt": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "text",
+                        "binary"
+                      ]
+                    },
+                    "text": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "redacted": {
+                      "type": "boolean"
+                    },
+                    "tainted": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "size",
+                    "modifiedAt",
+                    "kind",
+                    "text",
+                    "truncated",
+                    "redacted",
+                    "tainted"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "hint": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "hint"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "x-orbit-role": "viewer"
+      }
+    },
+    "/v1/bots/{bot}/computer/activity": {
+      "get": {
+        "operationId": "computerActivity",
+        "summary": "The Bot's latest tool calls across its Runs, with decisions and results, newest first",
+        "tags": [
+          "computer"
+        ],
+        "parameters": [
+          {
+            "name": "bot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "runId": {
+                        "type": "string"
+                      },
+                      "conversationId": {
+                        "type": "string"
+                      },
+                      "toolUseId": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "input": {},
+                      "parentToolUseId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "at": {
+                        "type": "string"
+                      },
+                      "decision": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "behavior": {
+                                "type": "string",
+                                "enum": [
+                                  "allow",
+                                  "deny"
+                                ]
+                              },
+                              "tier": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "READ",
+                                      "WRITE_LOCAL",
+                                      "EXTERNAL",
+                                      "FINANCIAL"
+                                    ]
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "reason": {
+                                "type": "string"
+                              },
+                              "approvalId": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "behavior",
+                              "tier",
+                              "reason",
+                              "approvalId"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "result": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "isError": {
+                                "type": "boolean"
+                              },
+                              "content": {
+                                "type": "string"
+                              },
+                              "truncated": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "isError",
+                              "content",
+                              "truncated"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "runId",
+                      "conversationId",
+                      "toolUseId",
+                      "name",
+                      "input",
+                      "parentToolUseId",
+                      "at",
+                      "decision",
+                      "result"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "hint": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "hint"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "x-orbit-role": "viewer"
       }
     },
     "/v1/triage": {

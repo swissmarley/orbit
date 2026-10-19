@@ -394,6 +394,114 @@ export const TaintedFile = z.object({
   updatedAt: z.string(),
 });
 
+// ── the Bot's computer (ADR-020) ───────────────────────────────────────────
+
+/** What a Bot's computer is doing, most pressing first (one per Bot). */
+export const ComputerState = z.enum([
+  /** The global kill switch is engaged. */
+  'stopped',
+  /** The owner's `orbit shell` holds the workspace (ADR-016). */
+  'taken_over',
+  /** The Bot is paused: nothing starts or resumes. */
+  'paused',
+  'working',
+  /** A Run waits for an approval or was paused for the owner. */
+  'needs_you',
+  /** A Run is queued, waits for Bots it delegated to, or for a usage limit. */
+  'waiting',
+  'idle',
+]);
+
+export const ComputerStatus = z.object({
+  botId: z.string(),
+  state: ComputerState,
+  /** The Run behind the state (working, needs you, waiting); null otherwise. */
+  runId: z.string().nullable(),
+  workspace: z.object({
+    kind: z.enum(['directory', 'worktree', 'docker']),
+    /** Host path of the workspace (Docker Bots: the folder mounted into the container). */
+    path: z.string(),
+    /** False until the Bot's first Run creates it. */
+    exists: z.boolean(),
+    /** Outbound network for shell commands. */
+    network: z.enum(['none', 'allowlist']),
+    allowedDomains: z.array(z.string()),
+    /** Worktree Bots: the owner's repository. */
+    repo: z.string().nullable(),
+  }),
+  takeover: z.object({ pid: z.int(), startedAt: z.string(), by: z.string() }).nullable(),
+  /** How the Bot reaches the web. */
+  web: z.object({
+    /** The Browser plugin: listed and enabled (`ready`), listed but off, or not listed. */
+    browser: z.enum(['ready', 'off', 'not_added']),
+    /** WebFetch / WebSearch among the Bot's tools. */
+    fetch: z.boolean(),
+  }),
+  /** What the owner types to take this computer over in a terminal; null for Docker Bots. */
+  shellCommand: z.string().nullable(),
+});
+
+export const ComputerPathQuery = z.object({ path: z.string().max(1024).default('') });
+
+export const ComputerEntry = z.object({
+  name: z.string(),
+  /** Relative to the workspace, `/`-separated. */
+  path: z.string(),
+  kind: z.enum(['file', 'directory', 'symlink', 'other']),
+  size: z.int().nullable(),
+  modifiedAt: z.string().nullable(),
+  /** Written while untrusted content was in a Run (a directory: something in it). */
+  tainted: z.boolean(),
+});
+
+export const ComputerListing = z.object({
+  path: z.string(),
+  exists: z.boolean(),
+  entries: z.array(ComputerEntry),
+  truncated: z.boolean(),
+});
+
+export const ComputerFile = z.object({
+  path: z.string(),
+  size: z.int(),
+  modifiedAt: z.string(),
+  /** binary files are not shown. */
+  kind: z.enum(['text', 'binary']),
+  text: z.string().nullable(),
+  /** Only the start of the file is shown. */
+  truncated: z.boolean(),
+  /** A credential or vault secret in the text was masked. */
+  redacted: z.boolean(),
+  tainted: z.boolean(),
+});
+
+export const ComputerActivityQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+
+/** One tool call of the Bot, with the decision and the (redacted, shortened) result. */
+export const ComputerAction = z.object({
+  runId: z.string(),
+  conversationId: z.string(),
+  toolUseId: z.string(),
+  name: z.string(),
+  input: z.unknown(),
+  /** A subagent's call: the Task call that spawned the subagent. */
+  parentToolUseId: z.string().nullable(),
+  at: z.string(),
+  decision: z
+    .object({
+      behavior: z.enum(['allow', 'deny']),
+      tier: Tier.nullable(),
+      reason: z.string(),
+      approvalId: z.string().nullable(),
+    })
+    .nullable(),
+  result: z
+    .object({ isError: z.boolean(), content: z.string(), truncated: z.boolean() })
+    .nullable(),
+});
+
 export const ProposeBotBody = z.object({ goal: z.string().trim().min(3).max(4000) });
 export const BotProposalResult = z.object({
   proposal: BotProposal,
@@ -413,6 +521,12 @@ export const StartRunBody = z.object({
   prompt: z.string().trim().max(20_000).optional(),
   fixture,
   priority: z.int().min(-100).max(100).optional(),
+  /**
+   * A reply (ADR-020): the Run id of the conversation's latest turn, which
+   * must have ended. The new Run resumes that conversation's engine session
+   * and starts with its taint.
+   */
+  continues: z.string().trim().min(1).max(100).optional(),
 });
 
 export const ResumeRunBody = z.object({
@@ -592,6 +706,8 @@ const limitQuery = (max: number) => z.coerce.number().int().min(1).max(max).opti
 
 export const ListRunsQuery = z.object({
   bot: z.string().optional(),
+  /** Only the turns of one conversation: its first Run's id (ADR-020). */
+  conversation: z.string().optional(),
   status: z
     .string()
     .transform((s) => s.split(',').filter(Boolean))
@@ -1103,6 +1219,39 @@ export const routes = {
     summary: 'Forget workspace taint after you reviewed the files',
     tag: 'memory',
     response: z.object({ cleared: z.int() }),
+  },
+  getComputer: {
+    method: 'GET',
+    path: '/v1/bots/{bot}/computer',
+    summary: "The Bot's computer: what it is doing, its workspace, take-over and web access",
+    tag: 'computer',
+    response: ComputerStatus,
+  },
+  computerFiles: {
+    method: 'GET',
+    path: '/v1/bots/{bot}/computer/files',
+    summary:
+      "List a directory of the Bot's workspace (links are listed, never followed; .git is hidden)",
+    tag: 'computer',
+    query: ComputerPathQuery,
+    response: ComputerListing,
+  },
+  computerFile: {
+    method: 'GET',
+    path: '/v1/bots/{bot}/computer/file',
+    summary: "Preview a file of the Bot's workspace (text only, capped, redacted)",
+    tag: 'computer',
+    query: ComputerPathQuery,
+    response: ComputerFile,
+  },
+  computerActivity: {
+    method: 'GET',
+    path: '/v1/bots/{bot}/computer/activity',
+    summary:
+      "The Bot's latest tool calls across its Runs, with decisions and results, newest first",
+    tag: 'computer',
+    query: ComputerActivityQuery,
+    response: z.array(ComputerAction),
   },
   triageUsage: {
     method: 'GET',
