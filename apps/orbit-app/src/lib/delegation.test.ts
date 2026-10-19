@@ -21,6 +21,8 @@ function run(runId: string, botId: string, children: string[] = []): RunState {
         depth: 0,
         inheritedTaint: [],
         budgetCap: null,
+        conversationId: null,
+        continuesRunId: null,
       },
     },
   ])!;

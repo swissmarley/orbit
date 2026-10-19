@@ -1,3 +1,5 @@
+import { lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { type RunEventBody, event, isTerminalEvent } from '@orbit/core';
 import { FIXTURES_DIR, loadFixture } from './fixtures';
@@ -10,6 +12,8 @@ export interface MockDriverOptions {
   delayMs?: number;
   defaultFixture?: string;
   fixturesDir?: string;
+  /** Do what an allowed Write or Edit did to the workspace (default true; see applyFileEffect). */
+  fileEffects?: boolean;
 }
 
 type Msg = Record<string, unknown>;
@@ -31,6 +35,51 @@ function relocate(value: unknown, cwd: string): unknown {
     return out;
   }
   return value;
+}
+
+/**
+ * Demo mode does to the workspace what an allowed Write or Edit did when it
+ * was recorded, as a real engine would, so the Bot's computer shows its files
+ * (ADR-020). Only plain paths inside the workspace: a path through a link,
+ * or outside, is left alone. Failures are ignored (the replay goes on).
+ */
+export function applyFileEffect(cwd: string, toolName: string, input: Msg): void {
+  if (toolName !== 'Write' && toolName !== 'Edit') return;
+  const path = input.file_path;
+  if (typeof path !== 'string' || !isAbsolute(path)) return;
+  const rel = relative(cwd, path);
+  if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return;
+  try {
+    let at = cwd;
+    const names = rel.split(sep);
+    for (const [i, name] of names.entries()) {
+      at = join(at, name);
+      let st: ReturnType<typeof lstatSync> | undefined;
+      try {
+        st = lstatSync(at);
+      } catch {
+        break; // the rest does not exist yet
+      }
+      if (st.isSymbolicLink() || (i < names.length - 1 && !st.isDirectory())) return;
+    }
+    if (toolName === 'Write' && typeof input.content === 'string') {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, input.content);
+    } else if (
+      toolName === 'Edit' &&
+      typeof input.old_string === 'string' &&
+      typeof input.new_string === 'string'
+    ) {
+      const text = readFileSync(path, 'utf8');
+      const next =
+        input.replace_all === true
+          ? text.split(input.old_string).join(input.new_string)
+          : text.replace(input.old_string, () => input.new_string as string);
+      if (next !== text) writeFileSync(path, next);
+    }
+  } catch {
+    // A demo replay never fails on the side effect.
+  }
 }
 
 /** Tool-use ids the recording shows as denied (so replay stays consistent). */
@@ -71,11 +120,13 @@ export class MockDriver implements AgentDriver {
   private readonly delayMs: number;
   private readonly defaultFixture: string;
   private readonly fixturesDir: string;
+  private readonly fileEffects: boolean;
 
   constructor(options: MockDriverOptions = {}) {
     this.delayMs = options.delayMs ?? 0;
     this.defaultFixture = options.defaultFixture ?? 'read-then-write-denied';
     this.fixturesDir = options.fixturesDir ?? FIXTURES_DIR;
+    this.fileEffects = options.fileEffects ?? true;
   }
 
   async *run(req: DriverRunRequest): AsyncGenerator<RunEventBody> {
@@ -185,6 +236,9 @@ export class MockDriver implements AgentDriver {
             const m = /^mcp__([a-z][a-z0-9-]*)__(.+)$/.exec(toolName);
             const server = m ? req.pluginServers?.find((p) => p.name === m[1]) : undefined;
             if (m && server) orbitResults.set(toolUseId, await server.call(m[2] ?? '', args));
+            else if (this.fileEffects && !denied.has(toolUseId)) {
+              applyFileEffect(req.cwd, toolName, args);
+            }
           }
         }
         if (decision.behavior === 'deny' && decision.interrupt) {

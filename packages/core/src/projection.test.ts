@@ -27,6 +27,8 @@ const happy: RunEvent[] = [
       depth: 0,
       inheritedTaint: [],
       budgetCap: null,
+      conversationId: null,
+      continuesRunId: null,
     },
   }),
   envelope(2, {
@@ -170,6 +172,8 @@ describe('resume scheduling and older projections', () => {
           depth: 1,
           inheritedTaint: ['WebFetch'],
           budgetCap: { toolCalls: 5, tokens: null, costUsd: null, wallClockMinutes: 10 },
+          conversationId: null,
+          continuesRunId: null,
           ...data,
         },
       });
@@ -379,5 +383,62 @@ describe('pause and interruption (ADR-016)', () => {
     expect(s.pause?.autoResume).toBe(true);
     s = foldRun(s, envelope(8, { type: 'run.cancelled', data: { reason: 'x', sessionId: 's1' } }));
     expect(s.pause).toBeNull();
+  });
+});
+
+describe('conversations (ADR-020)', () => {
+  const queued = (
+    data: Partial<Extract<RunEventBody, { type: 'run.queued' }>['data']>,
+  ): RunEvent => ({
+    ...envelope(1, {
+      type: 'run.queued',
+      data: {
+        trigger: { kind: 'manual', source: null },
+        prompt: 'and now?',
+        priority: 0,
+        fixture: null,
+        parentRunId: null,
+        depth: 0,
+        inheritedTaint: [],
+        budgetCap: null,
+        conversationId: null,
+        continuesRunId: null,
+        ...data,
+      },
+    }),
+    runId: 'run_2',
+  });
+
+  it('a first turn is its own conversation and answers nothing', () => {
+    const s = replayRun(happy)!;
+    expect(s.conversationId).toBe('run_1');
+    expect(s.continuesRunId).toBeNull();
+  });
+
+  it('a reply records its conversation, the turn it answers and the taint it inherits', () => {
+    const s = replayRun([
+      queued({ conversationId: 'run_1', continuesRunId: 'run_1', inheritedTaint: ['WebFetch'] }),
+    ])!;
+    expect(s).toMatchObject({
+      runId: 'run_2',
+      conversationId: 'run_1',
+      continuesRunId: 'run_1',
+      taintSources: ['WebFetch'],
+    });
+  });
+
+  it('events and stored projections from before conversations read as their own conversation', () => {
+    const old = envelope(1, {
+      type: 'run.queued',
+      data: { trigger: { kind: 'manual', source: null }, prompt: 'p', priority: 0, fixture: null },
+    } as unknown as RunEventBody);
+    expect(replayRun([old])).toMatchObject({ conversationId: 'run_1', continuesRunId: null });
+    const stored = { ...replayRun(happy)! } as Partial<RunState>;
+    delete stored.conversationId;
+    delete stored.continuesRunId;
+    expect(normalizeRunState(stored as RunState)).toMatchObject({
+      conversationId: 'run_1',
+      continuesRunId: null,
+    });
   });
 });

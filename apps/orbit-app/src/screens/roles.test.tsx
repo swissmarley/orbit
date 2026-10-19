@@ -78,7 +78,8 @@ describe('Run view by role', () => {
     const { h, runId, resume } = await runView('viewer');
     expect(gated(resume)).toBe(true);
     expect(resume.textContent).toMatch(/needs the operator role/);
-    const stop = screen.getByRole('button', { name: /^Stop/ });
+    // The Run's Stop (the top bar's "Stop all" is the kill switch).
+    const stop = within(screen.getByRole('main')).getByRole('button', { name: /^Stop/ });
     expect(gated(stop)).toBe(true);
     const pauseBot = await screen.findByRole('button', { name: /Pause Bot/ });
     expect(pauseBot.textContent).toMatch(/needs the owner role/);
@@ -94,7 +95,9 @@ describe('Run view by role', () => {
   it('an operator controls the Run, not the Bot', async () => {
     const { resume } = await runView('operator');
     expect(gated(resume)).toBe(false);
-    expect(gated(screen.getByRole('button', { name: /^Stop/ }))).toBe(false);
+    expect(gated(within(screen.getByRole('main')).getByRole('button', { name: /^Stop/ }))).toBe(
+      false,
+    );
     expect(gated(await screen.findByRole('button', { name: /Pause Bot/ }))).toBe(true);
     expect(screen.queryByRole('button', { name: /Take over/ })).toBeNull();
   });
@@ -210,7 +213,7 @@ describe('Settings, Memory, Integrations and the palette by role', () => {
     const user = userEvent.setup();
     await user.keyboard('{Control>}k{/Control}');
     const palette = await screen.findByRole('dialog', { name: 'Command palette' });
-    await within(palette).findByText('Notes');
+    await within(palette).findByText('Chat with Notes');
     expect(within(palette).queryByText(/Kill switch/)).toBeNull();
     expect(within(palette).queryByText(/Import memories/)).toBeNull();
     expect(within(palette).queryByText(/Take over/)).toBeNull();

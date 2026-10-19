@@ -27,5 +27,13 @@ export function TabsTrigger({ className, ...props }: ComponentProps<typeof T.Tri
 }
 
 export function TabsContent({ className, ...props }: ComponentProps<typeof T.Content>) {
-  return <T.Content className={cn('pt-4 focus-visible:outline-none', className)} {...props} />;
+  return (
+    <T.Content
+      className={cn(
+        'rounded-sm pt-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        className,
+      )}
+      {...props}
+    />
+  );
 }

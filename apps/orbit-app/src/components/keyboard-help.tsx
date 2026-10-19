@@ -1,5 +1,6 @@
 /** @jsxRuntime automatic @jsxImportSource react */
 import { useEffect } from 'react';
+import { CHAT_KEYS } from '../lib/chat-keys';
 import { INBOX_KEYS } from '../lib/inbox';
 import { MOD } from '../lib/platform';
 import { otherModalOpen } from '../lib/modal';
@@ -102,7 +103,8 @@ export function KeyboardHelp() {
         >
           <div className="flex flex-col gap-5">
             <Section title="Everywhere" keys={GLOBAL_KEYS} />
-            <Section title="Inbox" keys={INBOX_KEYS} />
+            <Section title="Chat" keys={CHAT_KEYS} />
+            <Section title="Needs you" keys={INBOX_KEYS} />
             <Section title="Run view" keys={RUN_KEYS} />
             <Section title="Memory" keys={MEMORY_KEYS} />
           </div>

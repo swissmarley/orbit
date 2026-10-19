@@ -111,15 +111,17 @@ export async function follow(
 export async function runBot(
   ctx: Context,
   botRef: string,
-  o: { prompt?: string; fixture?: string; json?: boolean },
+  o: { prompt?: string; continue?: string; fixture?: string; json?: boolean },
 ): Promise<number> {
   const client = await ctx.client();
   const bot = await client.bots.get(botRef);
   const p = painter(ctx.io);
-  if (!o.json) ctx.io.out(p('bold', `▶ ${bot.spec.name}`));
+  if (!o.json)
+    ctx.io.out(p('bold', `▶ ${bot.spec.name}${o.continue ? ` · replying to ${o.continue}` : ''}`));
   const run = await client.runs.start(bot.id, {
     ...(o.prompt ? { prompt: o.prompt } : {}),
     ...(o.fixture ? { fixture: o.fixture } : {}),
+    ...(o.continue ? { continues: o.continue } : {}),
   });
   // run.started shows the driver and auth method; `orbit doctor` explains them.
   return follow(ctx, client, run.runId, 0, o);

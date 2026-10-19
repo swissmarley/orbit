@@ -51,6 +51,8 @@ export const mailerEvents = (runId: string, botId: string) =>
         depth: 0,
         inheritedTaint: [],
         budgetCap: null,
+        conversationId: null,
+        continuesRunId: null,
       },
     },
     {
@@ -97,6 +99,8 @@ export function run(runId: string, botId: string, status: RunState['status']): R
           depth: 0,
           inheritedTaint: [],
           budgetCap: null,
+          conversationId: null,
+          continuesRunId: null,
         },
       },
     ]),

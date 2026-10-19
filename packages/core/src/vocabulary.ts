@@ -241,6 +241,20 @@ export function formatCost(usd: number, estimate = true): string {
 }
 
 /** "950", "12.3k", "1.2M". */
+/** A file size in words people read: "812 B", "4.2 KB", "1.3 MB" (1 KB = 1024 B). */
+export function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return '?';
+  if (n < 1024) return `${n} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i] ?? 'TB'}`;
+}
+
 export function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);

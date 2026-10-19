@@ -14,7 +14,7 @@ test.describe('approval flow (MockDriver)', () => {
     // Arrives over SSE, without a reload.
     const row = page.getByTestId('inbox-row').filter({ hasText: 'send email' });
     await expect(row).toBeVisible();
-    await expect(page.getByRole('link', { name: /Inbox/ })).toContainText('1');
+    await expect(page.getByRole('link', { name: /^Needs you/ })).toContainText('1');
 
     // a in the list only opens the card.
     await page.keyboard.press('a');

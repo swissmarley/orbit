@@ -240,10 +240,16 @@ answers of delegated Bots.
   Nothing a parent was allowed transfers to a child.
 - **Inbound triggers** (ADR-014): a Run started by a webhook, Slack message,
   file or git change starts tainted with the trigger as its source.
+- **Conversations** (ADR-020): a message that answers a Run resumes the same
+  engine session, which still holds whatever untrusted content entered
+  earlier, so the new Run starts with the previous turn's taint. A
+  conversation that read the web stays tainted until it ends.
 - **Feedback** memories are composed by Orbit from facts it controls and your
   own words, never quoted from model output or inbound prompts.
 - **Rendering.** Clients show model-written text as text: the App never
-  renders it as HTML, and the TUI and CLI strip terminal control sequences.
+  renders it as HTML (chat messages are a small markdown subset turned into
+  elements; links are shown with their address, never followed), and the
+  TUI and CLI strip terminal control sequences.
 
 ## Budgets and kill switches
 
@@ -294,6 +300,18 @@ refused, and nothing restarts by itself after you release it.
   a role — `viewer`, `operator` (Runs and approvals) or `owner` (everything) —
   enforced on every route, and every action is recorded under that principal.
   Cookies are `__Host-` and `Secure`; responses carry HSTS.
+- **The Bot's computer** (ADR-020) is read-only in the App: its files, the
+  pages it read, the commands it ran and its calls with their decisions.
+  Workspace files are listed and previewed by a reader that takes relative
+  paths only and never follows a symbolic link (a Bot could point one at
+  `daemon.token`), nor resolves a path by name again once a folder on it is
+  open, so swapping a folder for a link mid-read changes nothing (Linux:
+  one name at a time inside the open folder through `/proc/self/fd`;
+  macOS: `O_NOFOLLOW_ANY`; other systems do not show workspaces). It
+  refuses hard-linked files, hides `.git`, caps previews and runs them
+  through the event redactor, and flags files a tainted Run wrote. Status
+  and activity are open to viewers, as Run events are; files need an
+  operator, who could have the Bot read them anyway.
 - **Take-over** (`orbit shell <bot>`) opens your own shell in a Bot's
   workspace from the terminal only (the bearer token, never a browser
   session), holds the Bot while it is open and is audited. The App shows the

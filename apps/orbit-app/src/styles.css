@@ -11,23 +11,34 @@
 
 :root {
   color-scheme: light;
-  --bg: #fbfbfd;
+  /* Warm paper and ink (ADR-020: the look of a quiet chat app). */
+  --bg: #f8f7f4;
   --surface: #ffffff;
-  --surface-2: #f3f3f7;
-  --surface-3: #e9e9f0;
-  --fg: #16161d;
-  --fg-muted: #565667;
-  --fg-subtle: #6b6b7d;
-  --border: #dcdce5;
-  --border-strong: #b9b9c8;
+  --surface-2: #f3f2ee;
+  --surface-3: #e9e7e1;
+  --sidebar: #fbfaf8;
+  --fg: #2f313a;
+  --fg-muted: #5d5f6a;
+  --fg-subtle: #696b75;
+  --border: #e7e5e0;
+  --border-strong: #cfccc4;
   /* form-control outlines: ≥ 3:1 against --surface (WCAG 1.4.11) */
-  --border-input: #8c8c9e;
-  --ring: #6d5ae6;
-  --accent: #5b47d6;
+  --border-input: #8b8880;
+  --ring: #3f7a6d;
+  --accent: #3a7266;
   --accent-fg: #ffffff;
-  --accent-subtle: #efecfd;
+  --accent-subtle: #e5f0ec;
+  /* the owner's messages in a chat */
+  --bubble: #3d7569;
+  --bubble-fg: #ffffff;
+  /* Orbit's own mark */
+  --brand: #5b47d6;
   /* text on a solid tone (danger/success buttons) */
   --on-solid: #ffffff;
+  /* a Bot's terminal (the same in both themes) */
+  --terminal: #1d2320;
+  --terminal-fg: #d6e2dc;
+  --terminal-dim: #93a69d;
 
   --tone-neutral: #565667;
   --tone-neutral-bg: #f0f0f4;
@@ -47,28 +58,35 @@
   --diff-del: #fde8e8;
   --diff-del-fg: #7f1d1d;
 
-  --shadow: 0 1px 2px rgb(16 16 30 / 0.06), 0 4px 16px rgb(16 16 30 / 0.06);
-  --radius: 0.625rem;
+  --shadow: 0 1px 2px rgb(40 36 28 / 0.05), 0 6px 20px rgb(40 36 28 / 0.06);
+  --radius: 0.75rem;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
     color-scheme: dark;
-    --bg: #0e0e13;
-    --surface: #15151c;
-    --surface-2: #1c1c25;
-    --surface-3: #262631;
-    --fg: #ececf3;
-    --fg-muted: #a7a7b8;
-    --fg-subtle: #9393a6;
-    --border: #2c2c38;
-    --border-strong: #42424f;
-    --border-input: #6a6a78;
-    --ring: #9d8cff;
-    --accent: #8f7dff;
-    --accent-fg: #0e0e13;
-    --accent-subtle: #231f3d;
+    --bg: #121413;
+    --surface: #191c1a;
+    --surface-2: #202421;
+    --surface-3: #2a2f2c;
+    --sidebar: #151816;
+    --fg: #e8ebe9;
+    --fg-muted: #a9b0ab;
+    --fg-subtle: #98a09a;
+    --border: #2b302d;
+    --border-strong: #414843;
+    --border-input: #6b736e;
+    --ring: #7cc4b3;
+    --accent: #7cc4b3;
+    --accent-fg: #0f1412;
+    --accent-subtle: #1c2c28;
+    --bubble: #2d5c52;
+    --bubble-fg: #eef7f4;
+    --brand: #8f7dff;
     --on-solid: #0e0e13;
+    --terminal: #0c0f0d;
+    --terminal-fg: #d6e2dc;
+    --terminal-dim: #8d9e96;
     --tone-neutral: #a7a7b8;
     --tone-neutral-bg: #22222c;
     --tone-info: #7fb0ff;
@@ -85,27 +103,34 @@
     --diff-add-fg: #b4f0c8;
     --diff-del: #331417;
     --diff-del-fg: #ffc9cb;
-    --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 16px rgb(0 0 0 / 0.3);
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 6px 20px rgb(0 0 0 / 0.3);
   }
 }
 
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --bg: #0e0e13;
-  --surface: #15151c;
-  --surface-2: #1c1c25;
-  --surface-3: #262631;
-  --fg: #ececf3;
-  --fg-muted: #a7a7b8;
-  --fg-subtle: #9393a6;
-  --border: #2c2c38;
-  --border-strong: #42424f;
-  --border-input: #6a6a78;
-  --ring: #9d8cff;
-  --accent: #8f7dff;
-  --accent-fg: #0e0e13;
-  --accent-subtle: #231f3d;
+  --bg: #121413;
+  --surface: #191c1a;
+  --surface-2: #202421;
+  --surface-3: #2a2f2c;
+  --sidebar: #151816;
+  --fg: #e8ebe9;
+  --fg-muted: #a9b0ab;
+  --fg-subtle: #98a09a;
+  --border: #2b302d;
+  --border-strong: #414843;
+  --border-input: #6b736e;
+  --ring: #7cc4b3;
+  --accent: #7cc4b3;
+  --accent-fg: #0f1412;
+  --accent-subtle: #1c2c28;
+  --bubble: #2d5c52;
+  --bubble-fg: #eef7f4;
+  --brand: #8f7dff;
   --on-solid: #0e0e13;
+  --terminal: #0c0f0d;
+  --terminal-fg: #d6e2dc;
+  --terminal-dim: #8d9e96;
   --tone-neutral: #a7a7b8;
   --tone-neutral-bg: #22222c;
   --tone-info: #7fb0ff;
@@ -122,7 +147,7 @@
   --diff-add-fg: #b4f0c8;
   --diff-del: #331417;
   --diff-del-fg: #ffc9cb;
-  --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 16px rgb(0 0 0 / 0.3);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 6px 20px rgb(0 0 0 / 0.3);
 }
 
 @theme inline {
@@ -140,6 +165,13 @@
   --color-accent: var(--accent);
   --color-accent-fg: var(--accent-fg);
   --color-accent-subtle: var(--accent-subtle);
+  --color-sidebar: var(--sidebar);
+  --color-bubble: var(--bubble);
+  --color-bubble-fg: var(--bubble-fg);
+  --color-brand: var(--brand);
+  --color-terminal: var(--terminal);
+  --color-terminal-fg: var(--terminal-fg);
+  --color-terminal-dim: var(--terminal-dim);
   --color-on-solid: var(--on-solid);
   --color-neutral: var(--tone-neutral);
   --color-neutral-bg: var(--tone-neutral-bg);
@@ -207,5 +239,45 @@
   }
   to {
     background-position: 200% 0;
+  }
+}
+
+/* Avatars and the chat (ADR-020). Reduced motion stops them (see the base layer). */
+@keyframes orbit-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes orbit-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes orbit-typing {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes orbit-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
   }
 }

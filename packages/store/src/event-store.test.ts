@@ -133,6 +133,48 @@ describe('EventStore', () => {
     expect(store.listRuns({ botId: 'bot_1' }).map((r) => r.runId)).toEqual(['run_a']);
   });
 
+  it('lists the turns of a conversation (ADR-020) and keeps the column on rebuild', () => {
+    const turn = (conversationId: string | null, continuesRunId: string | null) =>
+      event('run.queued', {
+        trigger: { kind: 'manual', source: null },
+        prompt: 'more',
+        conversationId,
+        continuesRunId,
+      });
+    store.append('run_a', 'bot_1', [turn(null, null)]);
+    store.append('run_b', 'bot_1', [turn('run_a', 'run_a')]);
+    store.append('run_c', 'bot_1', [turn(null, null)]);
+    const ids = () =>
+      store
+        .listRuns({ conversationId: 'run_a' })
+        .map((r) => r.runId)
+        .sort();
+    expect(ids()).toEqual(['run_a', 'run_b']);
+    expect(store.listRuns({ conversationId: 'run_c' }).map((r) => r.runId)).toEqual(['run_c']);
+    store.rebuildProjections();
+    expect(ids()).toEqual(['run_a', 'run_b']);
+  });
+
+  it("lists a Bot's latest events of some types, newest first", () => {
+    store.append('run_a', 'bot_1', run);
+    store.append('run_b', 'bot_2', run);
+    const got = store.listBotEvents('bot_1', ['run.started', 'run.completed'], 10);
+    expect(got.map((e) => [e.runId, e.type])).toEqual([
+      ['run_a', 'run.completed'],
+      ['run_a', 'run.started'],
+    ]);
+    expect(
+      store.listBotEvents('bot_1', ['run.queued', 'run.started', 'run.completed'], 1),
+    ).toHaveLength(1);
+    const started = got[1]?.id ?? 0;
+    expect(
+      store
+        .listBotEvents('bot_1', ['run.started', 'run.completed'], 10, started)
+        .map((e) => e.type),
+    ).toEqual(['run.completed', 'run.started']);
+    expect(store.listBotEvents('bot_1', ['run.started'], 10, started + 1)).toEqual([]);
+  });
+
   it('compare-and-set append refuses a stale writer and writes nothing', () => {
     const first = store.append('run_a', 'bot_1', run.slice(0, 2), { expectSeq: 0 });
     expect(first).toHaveLength(2);

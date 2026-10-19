@@ -16,6 +16,7 @@ import {
   type ToolResultHandler,
   type TriggerRef,
   INTERRUPT_RETRY_LIMIT,
+  TERMINAL_RUN_STATUSES,
   event,
   inputHash,
   isTerminalEvent,
@@ -269,6 +270,12 @@ export interface EnqueueOptions {
   depth?: number;
   inheritedTaint?: readonly string[];
   budgetCap?: BudgetCap;
+  /**
+   * The earlier turn this Run answers (ADR-020): an ended, top-level Run of
+   * the same Bot and the latest turn of its conversation. The new Run resumes
+   * the conversation's engine session and starts with its taint.
+   */
+  continues?: string;
 }
 
 export interface ExecuteOptions {
@@ -373,6 +380,7 @@ export class Orchestrator {
         ...(options.prompt !== undefined ? { prompt: options.prompt } : {}),
         ...(options.trigger ? { trigger: options.trigger } : {}),
         ...(options.priority !== undefined ? { priority: options.priority } : {}),
+        ...(options.continues !== undefined ? { continues: options.continues } : {}),
       });
       const { onEvent: _alreadyObserved, ...rest } = options;
       return await this.execute(runId, rest);
@@ -393,6 +401,7 @@ export class Orchestrator {
     const bot = this.deps.bots.get(typeof botRef === 'string' ? botRef : botRef.id);
     this.assertMayStart(bot);
     const trigger = options.trigger ?? { kind: 'manual', source: null };
+    const turn = options.continues === undefined ? null : this.previousTurn(bot, options.continues);
     const prompt = options.prompt?.trim() ? options.prompt.trim() : bot.spec.goal;
     const priority =
       options.priority ??
@@ -408,13 +417,85 @@ export class Orchestrator {
           fixture: options.mockFixture ?? null,
           parentRunId: options.parentRunId ?? null,
           depth: options.depth ?? 0,
-          inheritedTaint: [...(options.inheritedTaint ?? [])],
+          inheritedTaint: [...new Set([...(options.inheritedTaint ?? []), ...(turn?.taint ?? [])])],
           budgetCap: options.budgetCap ?? null,
+          conversationId: turn?.conversationId ?? null,
+          continuesRunId: turn?.runId ?? null,
         }),
       ],
       { expectSeq: 0 },
     );
     return this.state(runId);
+  }
+
+  /**
+   * Check that a new turn may answer `runId` (ADR-020) and return what it
+   * carries over: the conversation and its taint (the resumed session holds
+   * whatever untrusted content entered before). orbitd checks and appends
+   * synchronously as the single writer, so two turns cannot answer one.
+   */
+  private previousTurn(
+    bot: Bot,
+    runId: string,
+  ): { runId: string; conversationId: string; taint: string[] } {
+    const prev = this.deps.store.getRun(runId);
+    if (!prev) throw new OrbitError('not_found', `Run ${runId} not found`);
+    if (prev.botId !== bot.id) {
+      throw new OrbitError(
+        'invalid_input',
+        `Run ${runId} is not one of ${bot.spec.name}'s conversations`,
+      );
+    }
+    if (prev.parentRunId) {
+      throw new OrbitError(
+        'invalid_input',
+        `Run ${runId} was delegated by ${prev.parentRunId}; it has no conversation of its own`,
+      );
+    }
+    if (!TERMINAL_RUN_STATUSES.includes(prev.status)) {
+      const hint =
+        prev.status === 'waiting_approval'
+          ? 'Decide its approvals first: orbit approvals'
+          : prev.status === 'delegating'
+            ? 'It continues when the Bots it delegated to answer.'
+            : prev.status === 'rate_limited'
+              ? `It resumes after the usage limit resets (or: orbit resume ${runId}).`
+              : prev.status === 'paused'
+                ? `Resume it (orbit resume ${runId}) or stop it (orbit stop ${runId}).`
+                : `Wait for it to finish, or stop it: orbit stop ${runId}`;
+      throw new OrbitError(
+        'conflict',
+        `Run ${runId} is ${prev.status}; a conversation continues once its latest turn has ended`,
+        { hint },
+      );
+    }
+    // A chain has no forks: only its newest turn may be answered (review ADR-020 L3).
+    const latest = this.deps.store.listRuns({ conversationId: prev.conversationId, limit: 1 })[0];
+    if (latest && latest.runId !== runId) {
+      throw new OrbitError(
+        'conflict',
+        `Run ${runId} was already answered; continue the latest turn instead (${latest.runId})`,
+      );
+    }
+    return { runId, conversationId: prev.conversationId, taint: [...prev.taintSources] };
+  }
+
+  /**
+   * The engine session a turn resumes (ADR-020): the newest one among the
+   * turns before it, skipping turns that never reached an engine; null for a
+   * first turn, or when no earlier turn had a session.
+   */
+  private conversationSession(run: RunState): string | null {
+    const seen = new Set<string>();
+    let ref = run.continuesRunId;
+    while (ref && !seen.has(ref)) {
+      seen.add(ref);
+      const prev = this.deps.store.getRun(ref);
+      if (!prev) return null;
+      if (prev.sessionId) return prev.sessionId;
+      ref = prev.continuesRunId;
+    }
+    return null;
   }
 
   /** Execute a queued Run. Exactly one caller wins (compare-and-set on its first event). */
@@ -477,7 +558,7 @@ export class Orchestrator {
         runId,
         bot,
         prompt: queued.prompt,
-        resumeSessionId: null,
+        resumeSessionId: this.conversationSession(queued),
         signal: options.signal,
         mockFixture: options.mockFixture ?? this.queuedFixture(runId),
         expectSeq: queued.lastSeq,

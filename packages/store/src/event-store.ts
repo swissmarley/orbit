@@ -116,10 +116,11 @@ export class EventStore {
           state: s,
           createdAt: s.createdAt,
           updatedAt,
+          conversationId: s.conversationId,
         })
         .onConflictDoUpdate({
           target: runs.id,
-          set: { status: s.status, state: s, updatedAt },
+          set: { status: s.status, state: s, updatedAt, conversationId: s.conversationId },
         })
         .run();
       return out;
@@ -161,17 +162,50 @@ export class EventStore {
       .map(toEvent);
   }
 
+  /**
+   * A Bot's latest events of these types across its Runs, newest first (its
+   * computer, ADR-020); with `fromId`, only that event and newer ones.
+   */
+  listBotEvents(
+    botId: string,
+    types: readonly RunEvent['type'][],
+    limit = 500,
+    fromId?: number,
+  ): RunEvent[] {
+    return this.db.orm
+      .select()
+      .from(events)
+      .where(
+        and(
+          eq(events.botId, botId),
+          inArray(events.type, [...types]),
+          fromId === undefined ? undefined : gte(events.id, fromId),
+        ),
+      )
+      .orderBy(desc(events.id))
+      .limit(limit)
+      .all()
+      .map(toEvent);
+  }
+
   getRun(runId: string): RunState | undefined {
     const row = this.db.orm.select().from(runs).where(eq(runs.id, runId)).get();
     return row ? normalizeRunState(row.state as RunState) : undefined;
   }
 
   listRuns(
-    opts: { botId?: string; status?: readonly RunStatus[]; limit?: number } = {},
+    opts: {
+      botId?: string;
+      status?: readonly RunStatus[];
+      /** Only the turns of this conversation (ADR-020). */
+      conversationId?: string;
+      limit?: number;
+    } = {},
   ): RunState[] {
     const conds = [
       opts.botId ? eq(runs.botId, opts.botId) : undefined,
       opts.status ? inArray(runs.status, [...opts.status]) : undefined,
+      opts.conversationId ? eq(runs.conversationId, opts.conversationId) : undefined,
     ].filter((c) => c !== undefined);
     return this.db.orm
       .select()
@@ -225,6 +259,7 @@ export class EventStore {
             state: s,
             createdAt: s.createdAt,
             updatedAt: s.endedAt ?? s.createdAt,
+            conversationId: s.conversationId,
           })
           .run();
       }

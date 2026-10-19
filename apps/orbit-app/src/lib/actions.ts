@@ -12,6 +12,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { useMemo } from 'react';
 import { toast } from 'sonner';
 import { csrfSecret, errorText, useClient } from './api';
+import { orderTurns } from './conversation';
 import { saveFile } from './download';
 import { readExportHeader } from './memory-list';
 import { keys } from './queries';
@@ -73,9 +74,36 @@ export function useActions() {
         toast.success(`Queued a run of ${bot.spec.name}`, {
           action: {
             label: 'Open',
-            onClick: () => void navigate({ to: '/runs/$runId', params: { runId: run.runId } }),
+            onClick: () =>
+              void navigate({
+                to: '/chat/$botId',
+                params: { botId: bot.id },
+                search: { c: run.conversationId },
+              }),
           },
         });
+        return run;
+      },
+
+      /**
+       * Say something to a Bot (ADR-020): a new conversation, or the next turn
+       * of one (`continues`: its latest turn). The chat shows the result, so
+       * only a failure toasts.
+       */
+      async sendMessage(bot: Bot, text: string, continues?: string): Promise<RunState> {
+        const run = await c.runs
+          .start(bot.id, { prompt: text, ...(continues ? { continues } : {}) })
+          .catch(fail(`Could not send that to ${bot.spec.name}`));
+        qc.setQueryData<RunState[]>(keys.conversation(run.conversationId), (list) =>
+          list === undefined
+            ? continues
+              ? undefined
+              : [run]
+            : list.some((r) => r.runId === run.runId)
+              ? list
+              : orderTurns([...list, run]),
+        );
+        void refresh(keys.runs, keys.queue, keys.computerStatus(bot.id));
         return run;
       },
 

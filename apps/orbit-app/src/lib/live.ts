@@ -48,6 +48,12 @@ export function staleKeysFor(e: RunEvent): (readonly unknown[])[] {
   if (e.type === 'run.tainted') out.push(keys.memory);
   if (e.type === 'approval.requested' || e.type === 'approval.decided') out.push(keys.approvals);
   if (e.type === 'run.killed') out.push(keys.kill, keys.bots);
+  // The Bot's computer (ADR-020): a call shows in its activity; a result may change its files.
+  if (e.type === 'tool.call' || e.type === 'permission.decision') {
+    out.push(keys.computerActivity(e.botId));
+  }
+  if (e.type === 'tool.result') out.push(keys.computer(e.botId));
+  if (out.includes(keys.runs)) out.push(keys.computerStatus(e.botId));
   return out;
 }
 

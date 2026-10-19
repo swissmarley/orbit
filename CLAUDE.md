@@ -22,6 +22,7 @@ pnpm orbit stop <run> | bot pause <bot> | kill [--off] | audit verify | secret s
 pnpm orbit daemon start|stop|status|restart | queue | schedules | bot create … --cron '0 9 * * 1-5'
 pnpm orbit              # in a terminal: the full-screen TUI (also `orbit tui`; ? shows the keys)
 pnpm orbit tail <run> | bot run|logs <bot> | completion bash|zsh|fish
+pnpm orbit run <bot> --continue <run> --prompt …   # answer an ended turn: the next message of its conversation (ADR-020)
 pnpm orbit memory list|show|add|edit|rm … | feedback <run> up|down | tree <run> | triage
 pnpm orbit plugins | plugin show|enable|disable|check|add|rm <id> | plugin secret <id> NAME < file
 pnpm orbit plugin setting <id> NAME value | triggers | trigger webhook-secret <bot> <name>
@@ -45,7 +46,9 @@ pnpm --filter @orbit/desktop build         # Tauri shell (Rust; WebKitGTK on Lin
 
 - `packages/core` domain types, zod schemas, `RunEvent`, run projection, config,
   permission types, redaction, the shared status/tier vocabulary and local
-  times (`vocabulary.ts`); `@orbit/core/browser` is the Node-free subset
+  times (`vocabulary.ts`), Bot avatars (`avatar.ts`), the trigger prompt's
+  untrusted block (`untrusted.ts`); `@orbit/core/browser` is the Node-free
+  subset
 - `packages/store` SQLite (Drizzle): append-only events, run projections, bots
 - `packages/runtime` orchestrator, scheduler, drivers (Sdk/Cli/Mock),
   AuthResolver, rate limits, Orbit's MCP tools (`src/orbit-tools`: toolset,
@@ -63,7 +66,8 @@ pnpm --filter @orbit/desktop build         # Tauri shell (Rust; WebKitGTK on Lin
   (`src/proxy`: key-injecting API proxy, egress allowlist proxy, address
   classes, key sources, `ProxyHost`, `host-key-proxy.ts` for host engines),
   plugin OS sandbox (`plugin-sandbox.ts`:
-  bwrap args, Seatbelt profiles)
+  bwrap args, Seatbelt profiles), the read-only workspace reader behind the
+  Bot's computer (`workspace-files.ts`)
 - `packages/memory` memory store (SQLite FTS5 + markdown mirror under
   `$ORBIT_HOME/memory`), provenance/taint helpers, workspace-file taint,
   context and feedback text, summarizer prompts, triage-call ledger (ADR-012),
@@ -71,7 +75,8 @@ pnpm --filter @orbit/desktop build         # Tauri shell (Rust; WebKitGTK on Lin
 - `packages/api` Hono REST + SSE (`src/app.ts`) plus the engines' `/mcp/orbit`
   endpoint (not a client route), the route/zod contract (`src/contract.ts`,
   also `@orbit/api/contract`), OpenAPI, and `OrbitService` (queue, scheduler,
-  rate limits, approval expiry, delegation, memory, feedback, summaries)
+  rate limits, approval expiry, delegation, memory, feedback, summaries,
+  conversations, the Bot's computer)
 - `packages/sdk-client` typed client (validated responses), SSE reconnect with
   Last-Event-ID, local discovery (`$ORBIT_HOME/daemon.json` + `daemon.token`);
   `@orbit/sdk-client/browser` is the client without discovery (no `node:fs`)
@@ -82,11 +87,14 @@ pnpm --filter @orbit/desktop build         # Tauri shell (Rust; WebKitGTK on Lin
   shared by views and the mouse hit test, `mouse.ts` SGR parser,
   `terminal-mouse.ts`); `apps/orbit-app` the
   web App (React 19, Vite, Tailwind v4, Radix/shadcn-style `components/ui`,
-  TanStack Router/Query): pure logic in `src/lib` (`inbox.ts` key model,
-  `timeline.ts`, `diff.ts`, `wizard.ts`, `actions.ts` writes with toasts/Undo,
-  `live.ts` SSE feed), `src/components`, `src/screens` (Settings →
-  Integrations in `integrations.tsx`), stories in `src/stories`, Playwright in
-  `e2e/`
+  TanStack Router/Query): pure logic in `src/lib` (`conversation.ts` chat
+  turns from Run events, `markdown.ts` the message subset, `avatar.ts`,
+  `chat-keys.ts` and `inbox.ts` key models, `timeline.ts`, `diff.ts`, `wizard.ts`, `actions.ts`
+  writes with toasts/Undo, `live.ts` SSE feed, `ui.ts` small stores),
+  `src/components` (`shell.tsx` sidebar, `chat.tsx` messages and tool cards,
+  `computer-panel.tsx`, `avatar.tsx`), `src/screens` (`chat.tsx` the home,
+  Settings → Integrations in `integrations.tsx`), stories in `src/stories`,
+  Playwright in `e2e/`
 - `packaging/npm` the public `orbit-bots` package (esbuild bundles, bundle
   guard, smoke test); `apps/orbit-desktop` Tauri 2 shell (Rust in
   `src-tauri`, loads the App from orbitd via `orbit app --json`);
@@ -123,8 +131,24 @@ Plugins depend on `@orbit/plugin-kit` only (they run as separate processes).
 - App: imports only `@orbit/core/browser` and `@orbit/sdk-client/browser`
   (guarded); never holds the bearer token (HttpOnly session cookie + CSRF
   header, ADR-011); approvals are decided only from the full card; key
-  bindings live in pure, unit-tested models (`src/lib/inbox.ts`); model text
-  goes through `scrubControls` and is rendered as text, never as HTML.
+  bindings live in pure, unit-tested models (`src/lib/inbox.ts`,
+  `chat-keys.ts`); a trigger's delivered content is shown as untrusted data,
+  never as the owner's message (`splitTriggerPrompt`); model text
+  goes through `scrubControls` and is rendered as text, never as HTML (chat
+  messages: the `markdown.ts` subset as elements; links shown, not followed).
+- Conversations (ADR-020): a message is a Run that `continues` the latest,
+  ended, top-level turn of the same Bot (no forks); it resumes the newest
+  engine session in the chain and inherits that turn's taint; budgets stay
+  per Run. Bot avatars are `{ character, color }` from the fixed vocabulary in
+  `@orbit/core` (`avatarFor` derives the default), drawn as inline SVG; never
+  an image, URL or upload.
+- The Bot's computer (ADR-020) is read-only GET routes over the workspace and
+  Run events: relative paths only, never through a symlink nor by name again
+  once a folder on the path is open (Linux `/proc/self/fd/<dir>/<name>` +
+  `O_NOFOLLOW`, macOS `O_NOFOLLOW_ANY`, refused elsewhere), no hard-linked
+  files, `.git` hidden, previews capped and redacted, untrusted files flagged;
+  files need an operator. The App never gets a shell or browser control;
+  take-over stays `orbit shell`.
 - TUI: bindings live in `model.ts` (`onKey`, `HELP`) and are unit-tested
   there; views only render. 16 basic colors only, never colour alone (a
   symbol or word too). Every `.tsx` file starts with

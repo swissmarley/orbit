@@ -4,6 +4,7 @@
  * status vocabulary. It leaves out hash.ts (node:crypto); a guard test keeps
  * this entry free of Node built-ins.
  */
+export * from './avatar';
 export * from './bot';
 export * from './canonical';
 export * from './config';
@@ -19,4 +20,5 @@ export * from './redact';
 export * from './templates';
 export * from './text';
 export * from './triage';
+export * from './untrusted';
 export * from './vocabulary';

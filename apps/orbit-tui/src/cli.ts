@@ -127,10 +127,17 @@ export async function main(argv: string[], io: Io): Promise<number> {
     .description('Run a Bot now and stream its events')
     .argument('<bot>', 'bot name or id')
     .option('-p, --prompt <text>', 'task for this run (default: the bot goal)')
+    .option(
+      '-c, --continue <run>',
+      "reply in that run's conversation (its latest turn, once it has ended)",
+    )
     .option('--fixture <name>', 'mock scenario (MockDriver only)')
     .option('--json', 'stream events as NDJSON')
-    .action((botRef: string, o: { prompt?: string; fixture?: string; json?: boolean }) =>
-      set(runBot(context(), botRef, o)),
+    .action(
+      (
+        botRef: string,
+        o: { prompt?: string; continue?: string; fixture?: string; json?: boolean },
+      ) => set(runBot(context(), botRef, o)),
     );
 
   program
@@ -491,10 +498,17 @@ export async function main(argv: string[], io: Io): Promise<number> {
     .description('Run a Bot now and stream its events (same as `orbit run`)')
     .argument('<bot>', 'bot name or id')
     .option('-p, --prompt <text>', 'task for this run (default: the bot goal)')
+    .option(
+      '-c, --continue <run>',
+      "reply in that run's conversation (its latest turn, once it has ended)",
+    )
     .option('--fixture <name>', 'mock scenario (MockDriver only)')
     .option('--json', 'stream events as NDJSON')
-    .action((botRef: string, o: { prompt?: string; fixture?: string; json?: boolean }) =>
-      set(runBot(context(), botRef, o)),
+    .action(
+      (
+        botRef: string,
+        o: { prompt?: string; continue?: string; fixture?: string; json?: boolean },
+      ) => set(runBot(context(), botRef, o)),
     );
   bot
     .command('logs')

@@ -20,6 +20,7 @@ Directory = engine version the shapes were taken from.
 | `delegate-to-peer-resumed.jsonl` | synthesized (M6)                                                       | the resumed segment after the peer answered             |
 | `web-then-write.jsonl`           | synthesized (M6)                                                       | WebFetch (taint) then Write → the file is marked        |
 | `read-notes-page.jsonl`          | synthesized (M6)                                                       | Read of that file → the later Run is tainted            |
+| `web-then-write-resumed.jsonl`   | synthesized (ADR-020)                                                  | a reply in that conversation: Read of the notes, answer |
 
 Orbit's own tools (`mcp__orbit__*`) run for real during a replay: the
 recorded result is replaced by the toolset's answer. A resumed segment replays

@@ -2,6 +2,8 @@
 import {
   BotSpec,
   type Bot,
+  type BotAvatar as BotAvatarValue,
+  avatarFor,
   PLUGIN_STATE,
   TRIGGER_KIND_WORD,
   formatWhen,
@@ -12,6 +14,7 @@ import {
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { History, Pencil, Save } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { AvatarPicker, BotAvatar } from '../components/avatar';
 import { DiffView } from '../components/diff-view';
 import { RunsTable } from '../components/runs-table';
 import { RunSparkline } from '../components/sparkline';
@@ -46,6 +49,48 @@ function Def({ term, children }: { term: string; children: React.ReactNode }) {
       <dt className="text-fg-muted">{term}</dt>
       <dd className="min-w-0 text-fg">{children}</dd>
     </>
+  );
+}
+
+/** How the Bot looks (ADR-020): pick a character and a colour; saving is a new version. */
+function Appearance({ bot }: { bot: Bot }) {
+  const actions = useActions();
+  const [avatar, setAvatar] = useState<BotAvatarValue>(() => avatarFor(bot));
+  const [busy, setBusy] = useState(false);
+  const current = avatarFor(bot);
+  const changed = avatar.character !== current.character || avatar.color !== current.color;
+  return (
+    <Card className="lg:col-span-2">
+      <CardHeader>
+        <CardTitle>Appearance</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <AvatarPicker value={avatar} onChange={setAvatar} name={bot.spec.name} />
+        <div className="flex items-center justify-end gap-2">
+          {changed ? (
+            <Button variant="ghost" size="sm" onClick={() => setAvatar(current)}>
+              Cancel
+            </Button>
+          ) : null}
+          <RoleGate route="updateBot">
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={!changed || busy}
+              onClick={() => {
+                setBusy(true);
+                void actions
+                  .updateBot(bot, { ...bot.spec, avatar })
+                  .catch(() => undefined)
+                  .finally(() => setBusy(false));
+              }}
+            >
+              <Save aria-hidden /> Save the avatar
+            </Button>
+          </RoleGate>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -207,6 +252,7 @@ function Overview({ bot }: { bot: Bot }) {
           </dl>
         </CardContent>
       </Card>
+      <Appearance bot={bot} />
     </div>
   );
 }
@@ -677,26 +723,36 @@ export function BotDetailScreen() {
   const latest = runs.data?.[0];
   return (
     <div>
-      <PageHeader
-        title={scrubControls(b.spec.name)}
-        description={
-          <>
-            version {b.version} · created <Time iso={b.createdAt} />
-          </>
-        }
-        actions={<BotActions bot={b} />}
-      >
-        <div className="mt-2 flex flex-wrap items-center gap-3">
-          {b.pausedAt ? (
-            <PausedBadge />
-          ) : latest ? (
-            <StatusBadge status={latest.status} />
-          ) : (
-            <Badge>never run</Badge>
-          )}
-          <RunSparkline runs={runs.data ?? []} max={30} className="h-6" />
+      <div className="flex items-start gap-4">
+        <BotAvatar
+          bot={b}
+          size={64}
+          state={b.pausedAt ? 'paused' : 'idle'}
+          className="mt-0.5 hidden sm:inline-flex"
+        />
+        <div className="min-w-0 flex-1">
+          <PageHeader
+            title={scrubControls(b.spec.name)}
+            description={
+              <>
+                version {b.version} · created <Time iso={b.createdAt} />
+              </>
+            }
+            actions={<BotActions bot={b} />}
+          >
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              {b.pausedAt ? (
+                <PausedBadge />
+              ) : latest ? (
+                <StatusBadge status={latest.status} />
+              ) : (
+                <Badge>never run</Badge>
+              )}
+              <RunSparkline runs={runs.data ?? []} max={30} className="h-6" />
+            </div>
+          </PageHeader>
         </div>
-      </PageHeader>
+      </div>
       <Tabs
         value={tab}
         onValueChange={(v) =>

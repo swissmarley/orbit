@@ -32,7 +32,7 @@ function m7Database(): void {
 describe('migration 6 (audit-mac)', () => {
   it('adds a nullable mac column to an existing audit log and keeps it append-only', () => {
     m7Database();
-    expect(migrate(sqlite)).toEqual([6]);
+    expect(migrate(sqlite)).toEqual([6, 7]);
     expect(migrationAppliedAt(sqlite, 6)).not.toBeNull();
     const cols = (sqlite.prepare('PRAGMA table_info(audit)').all() as { name: string }[]).map(
       (c) => c.name,
@@ -54,5 +54,33 @@ describe('migration 6 (audit-mac)', () => {
       )
       .run();
     expect(sqlite.prepare('SELECT mac FROM audit').get()).toEqual({ mac: 'm' });
+  });
+});
+
+describe('migration 7 (run-conversations)', () => {
+  it('adds an indexed conversation_id to the runs projection, each existing Run its own', () => {
+    sqlite.exec(`CREATE TABLE schema_migrations (
+      id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)`);
+    for (const m of MIGRATIONS.filter((x) => x.id <= 6)) {
+      sqlite.exec(m.sql);
+      sqlite
+        .prepare('INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)')
+        .run(m.id, m.name, '2026-10-01T00:00:00.000Z');
+    }
+    sqlite
+      .prepare(
+        `INSERT INTO runs (id, bot_id, status, state, created_at, updated_at)
+         VALUES ('run_old', 'bot_1', 'completed', '{}', 't', 't')`,
+      )
+      .run();
+    expect(migrate(sqlite)).toEqual([7]);
+    expect(sqlite.prepare('SELECT conversation_id FROM runs').get()).toEqual({
+      conversation_id: 'run_old',
+    });
+    const indexes = (sqlite.prepare('PRAGMA index_list(runs)').all() as { name: string }[]).map(
+      (i) => i.name,
+    );
+    expect(indexes).toContain('runs_conversation_idx');
+    expect(migrate(sqlite)).toEqual([]);
   });
 });

@@ -14,7 +14,7 @@ import { ApprovalQueue, AuditLog, PolicyEngine, RuleStore } from '@orbit/policy'
 import { BotRepo, Controls, EventStore, type OrbitDb, openDatabase } from '@orbit/store';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MockDriver, type MockDriverOptions } from './drivers/mock';
-import type { AgentDriver } from './drivers/types';
+import type { AgentDriver, DriverRunRequest } from './drivers/types';
 import { Orchestrator } from './orchestrator';
 
 interface World {
@@ -980,6 +980,132 @@ describe('Orchestrator — per-Run pause and interruptions (ADR-016)', () => {
       // A kill switch (allowResume false) keeps today's outcome.
       const [killed] = o.interruption(run.runId, { allowResume: false });
       expect(killed?.type).toBe('run.failed');
+    });
+  });
+  describe('conversations (ADR-020)', () => {
+    /** The MockDriver, keeping every request it gets. */
+    const recording = () => {
+      const inner = new MockDriver();
+      const requests: DriverRunRequest[] = [];
+      const driver: AgentDriver = {
+        kind: inner.kind,
+        authMethod: inner.authMethod,
+        run: (req) => {
+          requests.push(req);
+          return inner.run(req);
+        },
+      };
+      return { driver, requests };
+    };
+
+    it("a reply resumes the conversation's engine session with the owner's message", async () => {
+      const { driver, requests } = recording();
+      const o = w.orchestrator(driver);
+      const bot = w.bot({ fixture: 'pong' });
+      const first = await o.run(bot, { prompt: 'Hello' });
+      expect(first).toMatchObject({ conversationId: first.runId, continuesRunId: null });
+      expect(first.sessionId).toBeTruthy();
+      const second = await o.run(bot, { prompt: 'And now?', continues: first.runId });
+      expect(second).toMatchObject({
+        status: 'completed',
+        prompt: 'And now?',
+        conversationId: first.runId,
+        continuesRunId: first.runId,
+        trigger: { kind: 'manual', source: null },
+      });
+      expect(requests[1]).toMatchObject({ resumeSessionId: first.sessionId, prompt: 'And now?' });
+      const started = w.store.listRunEvents(second.runId).find((e) => e.type === 'run.started');
+      expect(started?.type === 'run.started' && started.data.resumeSessionId).toBe(first.sessionId);
+      const third = await o.run(bot, { prompt: 'Thanks', continues: second.runId });
+      expect(third.conversationId).toBe(first.runId);
+      expect(requests[2]?.resumeSessionId).toBe(second.sessionId);
+      expect(
+        w.store
+          .listRuns({ conversationId: first.runId })
+          .map((r) => r.runId)
+          .sort(),
+      ).toEqual([first.runId, second.runId, third.runId].sort());
+    });
+
+    it("a reply starts with the earlier turn's taint: the session holds that content", async () => {
+      const o = w.orchestrator();
+      const bot = w.bot({ fixture: 'web-then-write' });
+      const first = await o.run(bot);
+      expect(first.taintSources).toEqual(['WebFetch']);
+      const reply = o.enqueue(bot, { prompt: 'Send it to Ada', continues: first.runId });
+      expect(reply.taintSources).toEqual(['WebFetch']);
+      const queued = w.store.listRunEvents(reply.runId)[0];
+      expect(queued?.type === 'run.queued' && queued.data.inheritedTaint).toEqual(['WebFetch']);
+    });
+
+    it('a turn after one that never reached an engine resumes the newest session before it', async () => {
+      const { driver, requests } = recording();
+      const o = w.orchestrator(driver);
+      const bot = w.bot({ fixture: 'pong' });
+      const first = await o.run(bot, { prompt: 'Hello' });
+      const refused = o.enqueue(bot, { prompt: 'Again', continues: first.runId });
+      w.store.append(refused.runId, bot.id, [
+        event('run.failed', {
+          code: 'budget_exceeded',
+          message: 'Daily budget reached',
+          retryable: true,
+          sessionId: null,
+        }),
+      ]);
+      await o.run(bot, { prompt: 'Once more', continues: refused.runId });
+      expect(requests.at(-1)?.resumeSessionId).toBe(first.sessionId);
+    });
+
+    it('refuses to fork a conversation or to answer a turn that has not ended', async () => {
+      const o = w.orchestrator();
+      const bot = w.bot({ fixture: 'pong' });
+      const first = await o.run(bot);
+      await o.run(bot, { continues: first.runId });
+      const fork = () => o.enqueue(bot, { continues: first.runId });
+      expect(fork).toThrow(expect.objectContaining({ code: 'conflict' }));
+      expect(fork).toThrow(/already answered/);
+      const mailer = w.bot({ fixture: 'send-email' });
+      const parked = await o.run(mailer);
+      expect(parked.status).toBe('waiting_approval');
+      const answerParked = () => o.enqueue(mailer, { continues: parked.runId });
+      expect(answerParked).toThrow(expect.objectContaining({ code: 'conflict' }));
+      expect(answerParked).toThrow(
+        expect.objectContaining({ hint: 'Decide its approvals first: orbit approvals' }),
+      );
+      const queued = o.enqueue(bot, { prompt: 'Later' });
+      expect(() => o.enqueue(bot, { continues: queued.runId })).toThrow(
+        expect.objectContaining({ code: 'conflict' }),
+      );
+    });
+
+    it("refuses another Bot's Run, a delegated Run and an unknown one", async () => {
+      const o = w.orchestrator();
+      const bot = w.bot({ fixture: 'pong' });
+      const other = w.bot({ fixture: 'pong' });
+      const theirs = await o.run(other);
+      expect(() => o.enqueue(bot, { continues: theirs.runId })).toThrow(
+        expect.objectContaining({ code: 'invalid_input' }),
+      );
+      const child = o.enqueue(bot, { prompt: 'sub-task', parentRunId: theirs.runId, depth: 1 });
+      w.store.append(child.runId, bot.id, [
+        event('run.cancelled', { reason: 'parent ended', sessionId: null }),
+      ]);
+      const answerChild = () => o.enqueue(bot, { continues: child.runId });
+      expect(answerChild).toThrow(expect.objectContaining({ code: 'invalid_input' }));
+      expect(answerChild).toThrow(/delegated/);
+      expect(() => o.enqueue(bot, { continues: 'run_nope' })).toThrow(
+        expect.objectContaining({ code: 'not_found' }),
+      );
+    });
+
+    it('a paused Bot or the kill switch refuses a reply like any start', async () => {
+      const o = w.orchestrator();
+      const bot = w.bot({ fixture: 'pong' });
+      const first = await o.run(bot);
+      w.controls.setGlobalKill(true, 'owner');
+      expect(() => o.enqueue(bot, { continues: first.runId })).toThrow(
+        expect.objectContaining({ code: 'blocked' }),
+      );
     });
   });
 });

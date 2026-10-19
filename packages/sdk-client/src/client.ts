@@ -241,6 +241,23 @@ export class OrbitClient {
     endTakeover: (bot: string) => this.call('endTakeover', { params: { bot } }),
   };
 
+  /** A Bot's computer (ADR-020): its state, workspace files and recent tool calls. Read-only. */
+  readonly computer = {
+    get: (bot: string) => this.call('getComputer', { params: { bot } }),
+    /** One directory of the workspace ('' = its root). */
+    files: (bot: string, path = '') =>
+      this.call('computerFiles', { params: { bot }, query: { path } }),
+    /** A text preview of one workspace file. */
+    file: (bot: string, path: string) =>
+      this.call('computerFile', { params: { bot }, query: { path } }),
+    /** The Bot's latest tool calls across its Runs, newest first. */
+    activity: (bot: string, limit?: number) =>
+      this.call('computerActivity', {
+        params: { bot },
+        query: limit === undefined ? {} : { limit },
+      }),
+  };
+
   readonly runs = {
     start: (bot: string, body: RouteBody<'startRun'> = {}) =>
       this.call('startRun', { params: { bot }, body }),

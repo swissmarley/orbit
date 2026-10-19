@@ -17,8 +17,9 @@ test.describe('Inbox Triage demo (M7)', () => {
     await page.getByRole('button', { name: /Next/ }).click();
     await page.getByRole('button', { name: /Next/ }).click();
     await page.getByRole('button', { name: /Create Bot/ }).click();
-    await page.waitForURL(/\/bots\/bot_/);
-    const botId = /\/bots\/(bot_[0-9a-z]+)/.exec(page.url())?.[1] ?? '';
+    // A new Bot opens in a chat (ADR-020).
+    await page.waitForURL(/\/chat\/bot_/);
+    const botId = /\/chat\/(bot_[0-9a-z]+)/.exec(page.url())?.[1] ?? '';
     const bot = await orbitd.api<Bot & { spec: { plugins: string[] } }>('GET', `/v1/bots/${botId}`);
     expect(bot.spec.plugins).toEqual(['google']);
 

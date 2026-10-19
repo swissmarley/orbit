@@ -1,6 +1,6 @@
 /** @jsxRuntime automatic @jsxImportSource react */
 import { RUN_STATUS, scrubControls } from '@orbit/core/browser';
-import { useNavigate } from '@tanstack/react-router';
+import { useNavigate, useRouterState } from '@tanstack/react-router';
 import { Command, useCommandState } from 'cmdk';
 import {
   Bot as BotIcon,
@@ -9,6 +9,8 @@ import {
   LayoutGrid,
   ListTree,
   LogOut,
+  MessageCircle,
+  Monitor,
   Moon,
   Octagon,
   Play,
@@ -31,6 +33,8 @@ import { setTheme } from '../lib/theme';
 import { textMark } from '../lib/tone';
 import { confirmAction } from './confirm';
 import { takeoverStore } from './takeover';
+import { BotAvatar } from './avatar';
+import { computerStore } from '../lib/ui';
 
 export const paletteStore = createStore(false);
 
@@ -96,6 +100,7 @@ export function CommandPalette() {
   const approvals = usePendingApprovals();
   const kill = useKill();
   const role = useRole();
+  const onChat = useRouterState({ select: (s) => s.location.pathname.startsWith('/chat/') });
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -133,15 +138,39 @@ export function CommandPalette() {
           Nothing matches.
         </Command.Empty>
         <Command.Group heading="Go to" className={group}>
-          <Command.Item className={item} onSelect={run(() => navigate({ to: '/inbox' }))}>
-            <Inbox aria-hidden /> Inbox — needs you
+          <Command.Item className={item} onSelect={run(() => navigate({ to: '/' }))}>
+            <MessageCircle aria-hidden /> Chat — the Bot you last talked to
+          </Command.Item>
+          <Command.Item
+            className={item}
+            keywords={['inbox', 'approvals']}
+            onSelect={run(() => navigate({ to: '/inbox' }))}
+          >
+            <Inbox aria-hidden /> Needs you — requests waiting for your decision
           </Command.Item>
           <Command.Item className={item} onSelect={run(() => navigate({ to: '/bots' }))}>
             <LayoutGrid aria-hidden /> Bots
           </Command.Item>
-          <Command.Item className={item} onSelect={run(() => navigate({ to: '/runs' }))}>
-            <ListTree aria-hidden /> Runs
+          <Command.Item
+            className={item}
+            keywords={['activity', 'history']}
+            onSelect={run(() => navigate({ to: '/runs' }))}
+          >
+            <ListTree aria-hidden /> Runs — every Run
           </Command.Item>
+          {/* Only where there is a computer to show: a chat (ui review M8). */}
+          {onChat ? (
+            <Command.Item
+              className={item}
+              keywords={['computer', 'workspace', 'files', 'terminal', 'browser']}
+              onSelect={run(() => {
+                const store = computerStore();
+                store.set(!store.get());
+              })}
+            >
+              <Monitor aria-hidden /> Show or hide the Bot’s computer
+            </Command.Item>
+          ) : null}
           <Command.Item className={item} onSelect={run(() => navigate({ to: '/bots/new' }))}>
             <Plus aria-hidden /> New Bot
           </Command.Item>
@@ -180,13 +209,24 @@ export function CommandPalette() {
           <Command.Group heading="Bots" className={group}>
             {bots.data.map((b) => (
               <Command.Item
+                key={`chat-${b.id}`}
+                value={`Chat with ${b.spec.name} ${b.id}`}
+                keywords={['bot', 'chat', 'talk', 'message', 'conversation']}
+                className={item}
+                onSelect={run(() => navigate({ to: '/chat/$botId', params: { botId: b.id } }))}
+              >
+                <BotAvatar bot={b} size={18} decorative /> Chat with {scrubControls(b.spec.name)}
+              </Command.Item>
+            ))}
+            {bots.data.map((b) => (
+              <Command.Item
                 key={b.id}
-                value={`${b.spec.name} ${b.id}`}
-                keywords={['bot', 'open']}
+                value={`${b.spec.name} settings ${b.id}`}
+                keywords={['bot', 'open', 'settings', 'config']}
                 className={item}
                 onSelect={run(() => navigate({ to: '/bots/$botId', params: { botId: b.id } }))}
               >
-                <BotIcon aria-hidden /> {scrubControls(b.spec.name)}
+                <BotIcon aria-hidden /> {scrubControls(b.spec.name)} — settings
               </Command.Item>
             ))}
             {role.can('startRun')

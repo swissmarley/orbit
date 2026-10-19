@@ -1,11 +1,12 @@
 /** @jsxRuntime automatic @jsxImportSource react */
 import { type Bot, type RunState, formatTokens, scrubControls } from '@orbit/core/browser';
 import { Link } from '@tanstack/react-router';
-import { Bot as BotIcon, LayoutGrid, List, Pause, Play, Plus } from 'lucide-react';
+import { Bot as BotIcon, LayoutGrid, List, MessageCircle, Pause, Play, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { confirmAction } from '../components/confirm';
 import { IfRole, RoleGate } from '../components/role-gate';
 import { TakeOverButton } from '../components/takeover';
+import { BotAvatar } from '../components/avatar';
 import { RunSparkline } from '../components/sparkline';
 import { EmptyState, ErrorState, PageHeader } from '../components/states';
 import { PausedBadge, StatusBadge, Time } from '../components/status';
@@ -34,6 +35,11 @@ export function BotActions({ bot, compact = false }: { bot: Bot; compact?: boole
   const paused = bot.pausedAt !== null;
   return (
     <div className="flex items-center gap-1.5">
+      <Button asChild size={compact ? 'sm' : 'md'} variant={compact ? 'secondary' : 'primary'}>
+        <Link to="/chat/$botId" params={{ botId: bot.id }} aria-label={`Chat with ${name}`}>
+          <MessageCircle aria-hidden /> Chat
+        </Link>
+      </Button>
       <RoleGate route="startRun">
         <Button
           size={compact ? 'sm' : 'md'}
@@ -126,7 +132,8 @@ function BotCard({ row }: { row: Row }) {
   return (
     <Card className="flex flex-col gap-3 p-4" data-testid="bot-card">
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <h2 className="min-w-[8rem] flex-1 text-sm font-semibold">
+        <h2 className="flex min-w-[8rem] flex-1 items-center gap-2.5 text-sm font-semibold">
+          <BotAvatar bot={bot} size={36} decorative state={bot.pausedAt ? 'paused' : 'idle'} />
           <Link
             to="/bots/$botId"
             params={{ botId: bot.id }}
@@ -261,7 +268,7 @@ export function BotsScreen() {
           Give a Bot a goal; Orbit suggests the tools, schedule and limits.
         </EmptyState>
       ) : view === 'grid' ? (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {rows.map((row) => (
             <BotCard key={row.bot.id} row={row} />
           ))}
