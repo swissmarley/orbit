@@ -102,7 +102,14 @@ orbit bot create --name Notes --goal 'Every weekday, summarize new files in note
 orbit run notes                     # run it now and follow it
 orbit runs                          # recent Runs
 orbit tail <run>                    # follow a Run started elsewhere
+orbit run notes --continue <run> --prompt 'Also say who wrote each note'   # answer it
 ```
+
+Answering an ended Run continues its conversation: the new Run resumes the
+same engine session with your message, under the same policy and budgets. In
+the App this is simply the chat: it opens on your last Bot, every message is a
+turn, and the computer button (top right) shows the Bot's workspace files, the
+pages it read, the commands it ran and every call with its decision.
 
 When a Bot wants to act on the outside world (send, post, push, write outside
 its workspace) the Run **parks** and waits for you:
@@ -113,9 +120,10 @@ orbit approve <id>                  # or: --edit '{"to":"…"}'  --always
 orbit deny <id> --reason 'not this customer'
 ```
 
-In the App, the **Inbox** shows the same cards (`j`/`k` to move, `Enter` to
-open, `a` approve, `e` edit, `d` deny). Anything involving money is never
-executed — the Bot prepares it and hands it back to you.
+In the App the card appears in the Bot's chat, and the **Inbox** lists every
+card (`j`/`k` to move, `Enter` to open, `a` approve, `e` edit, `d` deny).
+Anything involving money is never executed — the Bot prepares it and hands it
+back to you.
 
 Plugins (GitHub, Slack, Gmail & Calendar, Filesystem, Browser) are off until
 you enable them:

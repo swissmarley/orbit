@@ -47,25 +47,26 @@ Dependency direction is strictly one way:
 Clients reach orbitd only through `@orbit/sdk-client`; plugins depend only on
 `@orbit/plugin-kit` because they run as separate processes.
 
-| Package               | Role                                                                                                                                                       |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/core`       | Domain types and zod schemas (Bot, Run, `RunEvent`, config, plugin manifest), run projection, redaction, the shared status/tier vocabulary and times       |
-| `packages/store`      | SQLite through Drizzle: append-only `events`, Bots and versions, trigger state                                                                             |
-| `packages/policy`     | Tier classifier, PolicyEngine, rules, approval queue and grants, approval cards, hash-chained audit log, secrets vault                                     |
-| `packages/memory`     | Memory store (FTS5 + markdown mirror), provenance and taint, workspace-file taint, triage-call ledger                                                      |
-| `packages/sandbox`    | Directory / git-worktree workspaces with Claude Code's native sandbox settings; Docker containers in API-key mode                                          |
-| `packages/runtime`    | Orchestrator, queue, scheduler, rate limits, AuthResolver and the three drivers, Orbit's MCP tools, delegation, the triage path, plugins, inbound triggers |
-| `packages/api`        | Hono REST + SSE, the route/zod contract, OpenAPI, `OrbitService`, the engine MCP endpoints and webhooks                                                    |
-| `packages/sdk-client` | Typed, validated client with SSE reconnect (`Last-Event-ID`) and local daemon discovery; a browser entry without Node built-ins                            |
-| `apps/orbitd`         | Composition root: config → checks → database → service → HTTP(S) server                                                                                    |
-| `apps/orbit-tui`      | The `orbit` bin: commander CLI and the Ink TUI                                                                                                             |
-| `apps/orbit-app`      | The web App (React 19, Vite, Tailwind v4, Radix, TanStack), served by orbitd                                                                               |
-| `plugins/*`           | Reference plugins (MCP servers with an `orbit-plugin.json` manifest)                                                                                       |
+| Package               | Role                                                                                                                                                              |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/core`       | Domain types and zod schemas (Bot, Run, `RunEvent`, config, plugin manifest), run projection, redaction, the shared status/tier vocabulary and times, Bot avatars |
+| `packages/store`      | SQLite through Drizzle: append-only `events`, Bots and versions, trigger state                                                                                    |
+| `packages/policy`     | Tier classifier, PolicyEngine, rules, approval queue and grants, approval cards, hash-chained audit log, secrets vault                                            |
+| `packages/memory`     | Memory store (FTS5 + markdown mirror), provenance and taint, workspace-file taint, triage-call ledger                                                             |
+| `packages/sandbox`    | Directory / git-worktree workspaces with Claude Code's native sandbox settings; Docker containers in API-key mode; the read-only reader behind the Bot's computer |
+| `packages/runtime`    | Orchestrator, queue, scheduler, rate limits, AuthResolver and the three drivers, Orbit's MCP tools, delegation, the triage path, plugins, inbound triggers        |
+| `packages/api`        | Hono REST + SSE, the route/zod contract, OpenAPI, `OrbitService` (incl. conversations and the Bot's computer), the engine MCP endpoints and webhooks              |
+| `packages/sdk-client` | Typed, validated client with SSE reconnect (`Last-Event-ID`) and local daemon discovery; a browser entry without Node built-ins                                   |
+| `apps/orbitd`         | Composition root: config → checks → database → service → HTTP(S) server                                                                                           |
+| `apps/orbit-tui`      | The `orbit` bin: commander CLI and the Ink TUI                                                                                                                    |
+| `apps/orbit-app`      | The chat-first web App (React 19, Vite, Tailwind v4, Radix, TanStack), served by orbitd                                                                           |
+| `plugins/*`           | Reference plugins (MCP servers with an `orbit-plugin.json` manifest)                                                                                              |
 
 ## A Run, end to end
 
-1. **Something starts it**: you (`orbit run`, the App), a schedule, a webhook,
-   a Slack message, a file or git change, or another Bot delegating. The
+1. **Something starts it**: you (`orbit run`, a message in the App's chat), a
+   schedule, a webhook, a Slack message, a file or git change, or another Bot
+   delegating. The
    service checks the kill switch, the Bot's pause state, `maxRunsPerDay` and
    daily cost, and enqueues `run.queued`.
 2. **The queue** (priority, FIFO, per-driver concurrency — 2 in subscription
@@ -91,6 +92,12 @@ Clients reach orbitd only through `@orbit/sdk-client`; plugins depend only on
 7. **The Run ends** (`completed`, `failed`, `cancelled`), its summary may be
    written to memory, and the projection everyone sees is updated. Clients
    learn about every step over SSE.
+
+**Conversations** (ADR-020) are chains of Runs. Answering an ended Run starts
+a new Run with `continues`: it goes through the same checks and queue, the
+orchestrator resumes the newest engine session of the conversation with your
+message, and the new Run starts with the previous turn's taint. The App's
+chat is a projection of those Runs' events.
 
 ## Events and projections
 
