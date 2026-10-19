@@ -9,6 +9,8 @@ import {
   LayoutGrid,
   ListTree,
   LogOut,
+  MessageCircle,
+  Monitor,
   Moon,
   Octagon,
   Play,
@@ -31,6 +33,8 @@ import { setTheme } from '../lib/theme';
 import { textMark } from '../lib/tone';
 import { confirmAction } from './confirm';
 import { takeoverStore } from './takeover';
+import { BotAvatar } from './avatar';
+import { computerOpenStore } from '../lib/ui';
 
 export const paletteStore = createStore(false);
 
@@ -133,6 +137,9 @@ export function CommandPalette() {
           Nothing matches.
         </Command.Empty>
         <Command.Group heading="Go to" className={group}>
+          <Command.Item className={item} onSelect={run(() => navigate({ to: '/' }))}>
+            <MessageCircle aria-hidden /> Chat — the Bot you last talked to
+          </Command.Item>
           <Command.Item className={item} onSelect={run(() => navigate({ to: '/inbox' }))}>
             <Inbox aria-hidden /> Inbox — needs you
           </Command.Item>
@@ -140,7 +147,16 @@ export function CommandPalette() {
             <LayoutGrid aria-hidden /> Bots
           </Command.Item>
           <Command.Item className={item} onSelect={run(() => navigate({ to: '/runs' }))}>
-            <ListTree aria-hidden /> Runs
+            <ListTree aria-hidden /> Activity — every Run
+          </Command.Item>
+          <Command.Item
+            className={item}
+            keywords={['computer', 'workspace', 'files', 'terminal', 'browser']}
+            onSelect={run(() => {
+              computerOpenStore.set(!computerOpenStore.get());
+            })}
+          >
+            <Monitor aria-hidden /> Show or hide the Bot’s computer
           </Command.Item>
           <Command.Item className={item} onSelect={run(() => navigate({ to: '/bots/new' }))}>
             <Plus aria-hidden /> New Bot
@@ -180,13 +196,24 @@ export function CommandPalette() {
           <Command.Group heading="Bots" className={group}>
             {bots.data.map((b) => (
               <Command.Item
+                key={`chat-${b.id}`}
+                value={`Chat with ${b.spec.name} ${b.id}`}
+                keywords={['bot', 'chat', 'talk', 'message', 'conversation']}
+                className={item}
+                onSelect={run(() => navigate({ to: '/chat/$botId', params: { botId: b.id } }))}
+              >
+                <BotAvatar bot={b} size={18} decorative /> Chat with {scrubControls(b.spec.name)}
+              </Command.Item>
+            ))}
+            {bots.data.map((b) => (
+              <Command.Item
                 key={b.id}
-                value={`${b.spec.name} ${b.id}`}
-                keywords={['bot', 'open']}
+                value={`${b.spec.name} settings ${b.id}`}
+                keywords={['bot', 'open', 'settings', 'config']}
                 className={item}
                 onSelect={run(() => navigate({ to: '/bots/$botId', params: { botId: b.id } }))}
               >
-                <BotIcon aria-hidden /> {scrubControls(b.spec.name)}
+                <BotIcon aria-hidden /> {scrubControls(b.spec.name)} — settings
               </Command.Item>
             ))}
             {role.can('startRun')

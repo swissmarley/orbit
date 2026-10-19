@@ -17,7 +17,7 @@ export const test = base.extend<{ signedIn: Page }, { orbitd: Orbitd }>({
   ],
   signedIn: async ({ page, orbitd }, use) => {
     await page.goto(await orbitd.signInUrl());
-    await page.waitForURL(/\/(welcome|inbox)/);
+    await page.waitForURL(/\/(welcome|inbox|chat|bots)/);
     await use(page);
   },
 });

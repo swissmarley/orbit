@@ -101,9 +101,27 @@ try {
       { kind: 'file', paths: [o.home], name: 'Drop folder' },
     ],
   });
+  // ADR-020: a chat with a reply (the conversation resumes), a Bot with its own avatar.
+  const scout = await o.api<{ id: string }>('POST', '/v1/bots', {
+    name: 'Scout',
+    goal: 'Research launch pages and keep tidy notes in your workspace.',
+    mock: { fixture: 'web-then-write' },
+    avatar: { character: 'star', color: 'violet' },
+  });
+  const talk = await o.api<{ runId: string }>('POST', `/v1/bots/${scout.id}/runs`, {
+    prompt: 'Open the launch page and save what you learn to notes/page.md.',
+  });
+  await new Promise((r) => setTimeout(r, 2000));
+  await o.api('POST', `/v1/bots/${scout.id}/runs`, {
+    prompt: 'Thanks! Who owns the launch?',
+    continues: talk.runId,
+  });
   await new Promise((r) => setTimeout(r, 2000));
 
   const screens: [string, string][] = [
+    ['chat', `/chat/${scout.id}?c=${talk.runId}`],
+    ['chat-new', `/chat/${scout.id}`],
+    ['chat-approval', `/chat/${bot.id}?c=${run.runId}`],
     ['settings-integrations', '/settings?tab=integrations'],
     ['run-inbox-triage', `/runs/${triageRun.runId}`],
     ['bot-inbox-triage', `/bots/${triage.id}`],
@@ -139,13 +157,25 @@ try {
         if (r.status() >= 400) errors.push(`${r.status()} ${r.request().method()} ${r.url()}`);
       });
       await page.goto(await o.signInUrl());
-      await page.waitForURL(/\/(welcome|inbox)/);
+      await page.waitForURL(/\/(welcome|inbox|chat|bots)/);
       for (const [name, path] of screens) {
         await page.goto(o.url + path);
         await page.locator('main h1').first().waitFor();
         await page.waitForTimeout(500);
         await page.screenshot({ path: `${out}/${name}-${scheme}-${width}.png`, fullPage: true });
       }
+      // The Bot's computer beside the chat (ADR-020).
+      await page.goto(`${o.url}/chat/${scout.id}?c=${talk.runId}`);
+      await page.getByTestId('chat-log').waitFor();
+      await page.getByRole('button', { name: 'Show the computer' }).click();
+      for (const tab of ['Files', 'Browser', 'Terminal', 'Activity']) {
+        await page.getByTestId('computer-panel').getByRole('tab', { name: tab }).click();
+        await page.waitForTimeout(300);
+        await page.screenshot({
+          path: `${out}/computer-${tab.toLowerCase()}-${scheme}-${width}.png`,
+        });
+      }
+      await page.getByRole('button', { name: 'Hide the computer' }).click();
       await page.goto(`${o.url}/inbox`);
       await page.getByTestId('inbox-row').first().waitFor();
       await page.keyboard.press('Enter');

@@ -1,6 +1,7 @@
 /** @jsxRuntime automatic @jsxImportSource react */
 import {
   BOT_TEMPLATES,
+  type BotAvatar,
   type BotTemplate,
   PLUGIN_STATE,
   type BotProposal,
@@ -8,14 +9,17 @@ import {
   type BotSpecInput,
   type SubagentSpec,
   TriggerSpec,
+  avatarFor,
   formatCost,
   formatTokens,
+  freeAvatar,
   scrubControls,
 } from '@orbit/core/browser';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { ArrowLeft, ArrowRight, Bot as BotIcon, Check, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { AvatarPicker } from '../components/avatar';
 import { PageHeader } from '../components/states';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
@@ -25,7 +29,7 @@ import { useActions } from '../lib/actions';
 import { cn } from '../lib/cn';
 import { prettyJson } from '../lib/diff';
 import { errorText, useClient } from '../lib/api';
-import { useDoctor, usePlugins, useTriage } from '../lib/queries';
+import { useBots, useDoctor, usePlugins, useTriage } from '../lib/queries';
 import { ENGINE_TOOLS, proposeSpec } from '../lib/wizard';
 
 const STEPS = ['Goal', 'Setup', 'Limits', 'Review'] as const;
@@ -50,6 +54,8 @@ interface Draft {
   subagents: Record<string, SubagentSpec>;
   /** Plugin ids the Bot may use (each enabled by the owner in Settings → Integrations). */
   plugins: string[];
+  /** How it looks (ADR-020); null until one is picked or suggested. */
+  avatar: BotAvatar | null;
 }
 
 /** A template as wizard fields: every one of them stays editable. */
@@ -102,6 +108,7 @@ export function draftToSpec(d: Draft): BotSpecInput {
     memory: { summarize: d.summarize },
     ...(Object.keys(d.subagents).length > 0 ? { subagents: d.subagents } : {}),
     ...(d.fixture ? { mock: { fixture: d.fixture } } : {}),
+    ...(d.avatar ? { avatar: d.avatar } : {}),
   };
 }
 
@@ -154,8 +161,17 @@ export function NewBotScreen() {
     summarize: 'result',
     subagents: {},
     plugins: [],
+    avatar: null,
   });
   const plugins = usePlugins();
+  // A face nobody else has yet, until the owner picks one.
+  const bots = useBots();
+  const [seed] = useState(() => Math.random().toString(36).slice(2));
+  useEffect(() => {
+    if (bots.data && d.avatar === null) {
+      setD((x) => ({ ...x, avatar: freeAvatar(seed, bots.data.map(avatarFor)) }));
+    }
+  }, [bots.data, d.avatar, seed]);
   const notReady = d.plugins.flatMap((id) => {
     const p = plugins.data?.find((x) => x.id === id);
     return p?.state === 'ready' ? [] : [p ? scrubControls(p.name) : id];
@@ -220,7 +236,8 @@ export function NewBotScreen() {
     setBusy(true);
     try {
       const bot = await actions.createBot(spec);
-      await navigate({ to: '/bots/$botId', params: { botId: bot.id } });
+      // Straight into a chat with the new Bot (ADR-020).
+      await navigate({ to: '/chat/$botId', params: { botId: bot.id } });
     } catch {
       // toast shown
     } finally {
@@ -357,6 +374,12 @@ export function NewBotScreen() {
                   maxLength={80}
                 />
               </Field>
+              {d.avatar ? (
+                <section aria-label="Avatar" className="flex flex-col gap-1">
+                  <p className="text-xs font-medium text-fg-muted">Avatar</p>
+                  <AvatarPicker value={d.avatar} onChange={(a) => set('avatar', a)} name={d.name} />
+                </section>
+              ) : null}
               <Field
                 id={`${ids}-instr`}
                 label="Instructions (optional)"

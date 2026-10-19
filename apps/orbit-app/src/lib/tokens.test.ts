@@ -30,13 +30,28 @@ describe('design tokens meet WCAG AA in both themes', () => {
   for (const [name, t] of Object.entries(THEMES)) {
     it(`${name}: text on every surface ≥ 4.5:1`, () => {
       for (const fg of ['fg', 'fg-muted', 'fg-subtle']) {
-        for (const bg of ['bg', 'surface', 'surface-2']) {
+        for (const bg of ['bg', 'surface', 'surface-2', 'sidebar']) {
           expect(contrast(t[fg] ?? '', t[bg] ?? ''), `${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5);
         }
       }
       for (const tone of ['neutral', 'info', 'success', 'warning', 'danger', 'attention']) {
         const pair = contrast(t[`tone-${tone}`] ?? '', t[`tone-${tone}-bg`] ?? '');
         expect(pair, `tone ${tone}`).toBeGreaterThanOrEqual(4.5);
+      }
+    });
+
+    it(`${name}: chat bubbles, accent buttons, links and the terminal ≥ 4.5:1 (ADR-020)`, () => {
+      const pairs: [string, string][] = [
+        ['bubble-fg', 'bubble'],
+        ['accent-fg', 'accent'],
+        ['accent', 'bg'],
+        ['accent', 'surface'],
+        ['accent', 'accent-subtle'],
+        ['terminal-fg', 'terminal'],
+        ['terminal-dim', 'terminal'],
+      ];
+      for (const [fg, bg] of pairs) {
+        expect(contrast(t[fg] ?? '', t[bg] ?? ''), `${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5);
       }
     });
 

@@ -49,6 +49,7 @@ export function ApprovalCard({
   onDeny,
   busy = false,
   titled = false,
+  inline = false,
 }: {
   approval: Approval;
   mode: CardMode;
@@ -58,6 +59,11 @@ export function ApprovalCard({
   busy?: boolean;
   /** The surrounding dialog's title already says what the Bot wants: don't repeat it. */
   titled?: boolean;
+  /**
+   * In a chat (ADR-020): no sticky footer, and no hints for the Inbox's
+   * single-key shortcuts (they work only there).
+   */
+  inline?: boolean;
 }) {
   const c = approval.card;
   const ids = useId();
@@ -253,13 +259,21 @@ export function ApprovalCard({
           <p id={`${ids}-always`} className="font-medium">
             {alwaysAllowText(approval)}
           </p>
-          <p className="mt-1 text-xs">
-            Press <Kbd>y</Kbd> to confirm, <Kbd>n</Kbd> or <Kbd>Esc</Kbd> to cancel.
-          </p>
+          {inline ? null : (
+            <p className="mt-1 text-xs">
+              Press <Kbd>y</Kbd> to confirm, <Kbd>n</Kbd> or <Kbd>Esc</Kbd> to cancel.
+            </p>
+          )}
         </div>
       ) : null}
 
-      <div className="sticky bottom-0 -mx-5 -mb-4 flex flex-wrap items-center justify-end gap-2 border-t border-border bg-surface px-5 py-3">
+      <div
+        className={
+          inline
+            ? 'flex flex-wrap items-center justify-end gap-2 border-t border-border pt-3'
+            : 'sticky bottom-0 -mx-5 -mb-4 flex flex-wrap items-center justify-end gap-2 border-t border-border bg-surface px-5 py-3'
+        }
+      >
         {mode === 'card' ? (
           <>
             <RoleGate route="deny">
@@ -269,7 +283,7 @@ export function ApprovalCard({
                 onClick={() => onMode('deny')}
                 disabled={busy}
               >
-                <X aria-hidden /> Deny <Kbd>d</Kbd>
+                <X aria-hidden /> Deny {inline ? null : <Kbd>d</Kbd>}
               </Button>
             </RoleGate>
             <RoleGate route="approve">
@@ -278,18 +292,20 @@ export function ApprovalCard({
                 onClick={() => onMode('edit')}
                 disabled={busy || financial}
               >
-                <Pencil aria-hidden /> Edit <Kbd>e</Kbd>
+                <Pencil aria-hidden /> Edit {inline ? null : <Kbd>e</Kbd>}
               </Button>
             </RoleGate>
             <RoleGate role={ALWAYS_ALLOW_ROLE}>
               <Button onClick={() => onMode('always')} disabled={busy || financial}>
-                Always allow <Kbd>⇧A</Kbd>
+                Always allow {inline ? null : <Kbd>⇧A</Kbd>}
               </Button>
             </RoleGate>
             <RoleGate route="approve">
               <Button variant="success" onClick={() => onApprove({})} disabled={busy || financial}>
                 <Check aria-hidden /> Approve{' '}
-                <Kbd className="border-transparent bg-black/15 text-inherit">a</Kbd>
+                {inline ? null : (
+                  <Kbd className="border-transparent bg-black/15 text-inherit">a</Kbd>
+                )}
               </Button>
             </RoleGate>
           </>
@@ -331,7 +347,8 @@ export function ApprovalCard({
               disabled={busy || financial}
               onClick={() => onApprove({ always: true })}
             >
-              Yes, always allow <Kbd className="border-transparent bg-black/15 text-inherit">y</Kbd>
+              Yes, always allow{' '}
+              {inline ? null : <Kbd className="border-transparent bg-black/15 text-inherit">y</Kbd>}
             </Button>
           </>
         ) : null}

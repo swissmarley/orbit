@@ -660,6 +660,16 @@ export function RunScreen() {
               </span>
             ) : null}
             <span className="font-mono text-xs">{r.runId}</span>
+            {r.parentRunId ? null : (
+              <Link
+                to="/chat/$botId"
+                params={{ botId: r.botId }}
+                search={{ c: r.conversationId }}
+                className="text-accent hover:underline"
+              >
+                open the conversation
+              </Link>
+            )}
           </span>
         }
         actions={<Controls run={r} />}

@@ -17,6 +17,11 @@ export const GLOBAL_KEYS: readonly { keys: string; does: string }[] = [
   { keys: 'y', does: 'confirm a question (any other key cancels)' },
   { keys: 'Esc', does: 'close a dialog or step back' },
 ];
+export const CHAT_KEYS: readonly { keys: string; does: string }[] = [
+  { keys: 'Enter', does: 'send the message (in the message box)' },
+  { keys: 'Shift+Enter', does: 'a new line in the message' },
+  { keys: 'Esc', does: 'close the menu or the computer on a narrow screen' },
+];
 export const MEMORY_KEYS: readonly { keys: string; does: string }[] = [
   { keys: 'j k / ↓ ↑', does: 'move through the memories' },
   { keys: '/', does: 'search the full text' },
@@ -102,6 +107,7 @@ export function KeyboardHelp() {
         >
           <div className="flex flex-col gap-5">
             <Section title="Everywhere" keys={GLOBAL_KEYS} />
+            <Section title="Chat" keys={CHAT_KEYS} />
             <Section title="Inbox" keys={INBOX_KEYS} />
             <Section title="Run view" keys={RUN_KEYS} />
             <Section title="Memory" keys={MEMORY_KEYS} />

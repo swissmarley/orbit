@@ -3,6 +3,7 @@ import { TIER_WORD, Tier } from '@orbit/core/browser';
 import { useNavigate } from '@tanstack/react-router';
 import { Octagon, Play, Plus, ShieldCheck, Wallet } from 'lucide-react';
 import { useState } from 'react';
+import { Avatar } from '../components/avatar';
 import { ErrorState, ListSkeleton } from '../components/states';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
@@ -44,10 +45,16 @@ export function WelcomeScreen() {
         goal: 'Draft and send a reply to Ada about Tuesday’s meeting.',
         tools: ['Read', 'Write'],
         mock: { fixture: 'send-email' },
+        avatar: { character: 'star', color: 'violet' },
       });
-      const run = await actions.runBot(bot);
+      // The demo is a chat: the Bot drafts, then asks before it sends (ADR-020).
+      const run = await actions.sendMessage(bot, bot.spec.goal);
       markOnboarded();
-      await navigate({ to: '/runs/$runId', params: { runId: run.runId } });
+      await navigate({
+        to: '/chat/$botId',
+        params: { botId: bot.id },
+        search: { c: run.conversationId },
+      });
     } catch {
       // toast shown
     } finally {
@@ -58,9 +65,15 @@ export function WelcomeScreen() {
   return (
     <div className="flex max-w-3xl flex-col gap-4">
       <header>
+        <div className="mb-3 flex items-end gap-1">
+          <Avatar avatar={{ character: 'star', color: 'violet' }} size={64} decorative />
+          <Avatar avatar={{ character: 'robot', color: 'teal' }} size={52} decorative />
+          <Avatar avatar={{ character: 'planet', color: 'amber' }} size={44} decorative />
+        </div>
         <h1 className="text-2xl font-semibold tracking-tight">Welcome to Orbit</h1>
         <p className="mt-1 text-fg-muted">
-          Always-on Bots that work toward a goal — and ask you before anything leaves their sandbox.
+          Always-on Bots you talk to, each with its own computer — and they ask you before anything
+          leaves it.
         </p>
       </header>
 
@@ -122,9 +135,9 @@ export function WelcomeScreen() {
             ))}
           </ul>
           <p className="flex items-start gap-2 text-fg-muted">
-            <ShieldCheck className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden /> Requests wait
-            in your Inbox with the exact arguments; you approve, edit, or deny with a reason the Bot
-            sees.
+            <ShieldCheck className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden /> Requests
+            appear right in the chat (and in your Inbox) with the exact arguments; you approve,
+            edit, or deny with a reason the Bot sees.
           </p>
           <p className="flex items-start gap-2 text-fg-muted">
             <Wallet className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden /> Budgets (tool
@@ -153,14 +166,14 @@ export function WelcomeScreen() {
           </Button>
           {d?.driver === 'mock' ? (
             <Button disabled={busy} onClick={() => void demo()}>
-              <Play aria-hidden /> Try a demo that asks for approval
+              <Play aria-hidden /> Try a demo chat that asks for approval
             </Button>
           ) : null}
           <Button
             variant="ghost"
             onClick={() => {
               markOnboarded();
-              void navigate({ to: '/inbox' });
+              void navigate({ to: '/bots' });
             }}
           >
             Skip for now

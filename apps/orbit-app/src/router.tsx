@@ -9,6 +9,7 @@ import {
 import { AppShell } from './components/shell';
 import { BotDetailScreen } from './screens/bot-detail';
 import { BotsScreen } from './screens/bots';
+import { ChatScreen } from './screens/chat';
 import { InboxScreen } from './screens/inbox';
 import { MemoryScreen } from './screens/memory';
 import { NewBotScreen } from './screens/new-bot';
@@ -20,6 +21,7 @@ import { WelcomeScreen, onboarded } from './screens/welcome';
 import type { QueryClient } from '@tanstack/react-query';
 import type { OrbitClient } from '@orbit/sdk-client/browser';
 import { keys } from './lib/queries';
+import { lastBotStore } from './lib/ui';
 
 export interface RouterContext {
   client: OrbitClient;
@@ -42,24 +44,31 @@ const shellRoute = createRoute({
   component: AppShell,
 });
 
-/** Home: the first-run welcome when there are no Bots yet, otherwise the Inbox. */
+/**
+ * Home and /chat: the chat with the Bot you last talked to (ADR-020); the
+ * first-run welcome when there are no Bots yet; the Bots page when you
+ * skipped it; the Inbox when orbitd cannot list Bots.
+ */
+async function home(ctx: () => RouterContext): Promise<never> {
+  const { client, queryClient } = ctx();
+  const bots = await queryClient
+    .query({ queryKey: keys.bots, queryFn: () => client.bots.list() })
+    .catch(() => null);
+  // TanStack Router's redirect is thrown by design.
+  /* eslint-disable @typescript-eslint/only-throw-error */
+  if (bots === null) throw redirect({ to: '/inbox' });
+  if (bots.length === 0) throw redirect({ to: onboarded() ? '/bots' : '/welcome' });
+  const last = lastBotStore.get();
+  const bot = bots.find((b) => b.id === last) ?? bots[0];
+  throw redirect({ to: '/chat/$botId', params: { botId: bot?.id ?? '' } });
+  /* eslint-enable @typescript-eslint/only-throw-error */
+}
+
 function makeIndex(ctx: () => RouterContext) {
   return createRoute({
     getParentRoute: () => shellRoute,
     path: '/',
-    beforeLoad: async () => {
-      if (!onboarded()) {
-        const { client, queryClient } = ctx();
-        const bots = await queryClient
-          .query({ queryKey: keys.bots, queryFn: () => client.bots.list() })
-          .catch(() => null);
-        // TanStack Router's redirect is thrown by design.
-        // eslint-disable-next-line @typescript-eslint/only-throw-error
-        if (bots?.length === 0) throw redirect({ to: '/welcome' });
-      }
-      // eslint-disable-next-line @typescript-eslint/only-throw-error
-      throw redirect({ to: '/inbox' });
-    },
+    beforeLoad: () => home(ctx),
   });
 }
 
@@ -69,6 +78,17 @@ export function buildRouter(context: RouterContext) {
     shellRoute.addChildren([
       makeIndex(() => context),
       createRoute({ getParentRoute: () => shellRoute, path: '/welcome', component: WelcomeScreen }),
+      createRoute({
+        getParentRoute: () => shellRoute,
+        path: '/chat',
+        beforeLoad: () => home(() => context),
+      }),
+      createRoute({
+        getParentRoute: () => shellRoute,
+        path: '/chat/$botId',
+        component: ChatScreen,
+        validateSearch: (s: Record<string, unknown>) => ({ c: str(s.c) }),
+      }),
       createRoute({
         getParentRoute: () => shellRoute,
         path: '/inbox',

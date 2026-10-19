@@ -2,6 +2,7 @@ import type { RunEvent } from '@orbit/core/browser';
 import type { RouteQuery } from '@orbit/sdk-client/browser';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useClient } from './api';
+import { orderTurns } from './conversation';
 
 /** Query keys: one place, so live events can invalidate precisely. */
 export const keys = {
@@ -36,7 +37,69 @@ export const keys = {
   /** Not under `plugins`: reading the catalog is a request to its host. */
   pluginCatalog: ['orbit', 'plugin-catalog'] as const,
   inbound: ['orbit', 'inbound'] as const,
+  /** Under `runs`: run events invalidate conversations too (ADR-020). */
+  conversation: (id: string) => ['orbit', 'runs', 'conversation', id] as const,
+  /** Everything about one Bot's computer (status, files, activity) shares this prefix. */
+  computer: (botId: string) => ['orbit', 'computer', botId] as const,
+  computerStatus: (botId: string) => ['orbit', 'computer', botId, 'status'] as const,
+  computerFiles: (botId: string, path: string) =>
+    ['orbit', 'computer', botId, 'files', path] as const,
+  computerFile: (botId: string, path: string) =>
+    ['orbit', 'computer', botId, 'file', path] as const,
+  computerActivity: (botId: string) => ['orbit', 'computer', botId, 'activity'] as const,
 };
+
+/** The turns of one conversation, oldest first (ADR-020). */
+export function useConversation(id: string) {
+  const c = useClient();
+  return useQuery({
+    queryKey: keys.conversation(id),
+    queryFn: async () => orderTurns(await c.runs.list({ conversation: id, limit: 500 })),
+    enabled: id !== '',
+  });
+}
+
+/** What a Bot's computer is doing (live events refresh it; a slow poll catches take-overs). */
+export function useComputer(botId: string, enabled = true) {
+  const c = useClient();
+  return useQuery({
+    queryKey: keys.computerStatus(botId),
+    queryFn: () => c.computer.get(botId),
+    enabled: enabled && botId !== '',
+    refetchInterval: 15_000,
+  });
+}
+
+export function useComputerFiles(botId: string, path: string, enabled = true) {
+  const c = useClient();
+  return useQuery({
+    queryKey: keys.computerFiles(botId, path),
+    queryFn: () => c.computer.files(botId, path),
+    enabled: enabled && botId !== '',
+    placeholderData: keepPreviousData,
+    retry: false,
+  });
+}
+
+export function useComputerFile(botId: string, path: string | null) {
+  const c = useClient();
+  return useQuery({
+    queryKey: keys.computerFile(botId, path ?? ''),
+    queryFn: () => c.computer.file(botId, path ?? ''),
+    enabled: botId !== '' && path !== null,
+    retry: false,
+  });
+}
+
+/** The Bot's latest tool calls across its Runs (Terminal, Browser, Activity). */
+export function useComputerActivity(botId: string, enabled = true) {
+  const c = useClient();
+  return useQuery({
+    queryKey: keys.computerActivity(botId),
+    queryFn: () => c.computer.activity(botId, 100),
+    enabled: enabled && botId !== '',
+  });
+}
 
 /** Plugins and their state (Settings → Integrations). */
 export function usePlugins() {

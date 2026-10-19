@@ -42,13 +42,13 @@ describe('hosted sign-in', () => {
     expect(screen.queryByText('orbit app')).toBeNull();
   });
 
-  it('signed in, the header names the principal and its role, with Sign out', async () => {
+  it('signed in, the sidebar names the principal and its role, with Sign out', async () => {
     m = mountApp('/inbox', { h: hosted() });
     const who = await screen.findByTestId('signed-in-as');
     expect(who.textContent).toBe('Server operator · owner');
-    const header = who.closest('header');
-    expect(header).not.toBeNull();
-    expect(within(header!).getByRole('button', { name: 'Sign out Server operator' })).toBeTruthy();
+    const sidebar = who.closest('aside');
+    expect(sidebar).not.toBeNull();
+    expect(within(sidebar!).getByRole('button', { name: 'Sign out Server operator' })).toBeTruthy();
   });
 
   it('local mode keeps the one-time link from `orbit app`', async () => {

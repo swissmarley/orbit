@@ -4,6 +4,7 @@ import {
   RUN_STATUS,
   STATUS_LEGEND,
   TIER_WORD,
+  formatBytes,
   formatClock,
   formatDuration,
   formatRelative,
@@ -89,5 +90,16 @@ describe('pause reasons (ADR-016)', () => {
     expect(pauseReason({ ...base, by: 'alice', reason: 'owner', toolName: 'Bash' })).toBe(
       'Paused by alice before Bash ran.',
     );
+  });
+});
+
+describe('formatBytes', () => {
+  it('says sizes the way people read them', () => {
+    expect(formatBytes(0)).toBe('0 B');
+    expect(formatBytes(812)).toBe('812 B');
+    expect(formatBytes(4300)).toBe('4.2 KB');
+    expect(formatBytes(20 * 1024)).toBe('20 KB');
+    expect(formatBytes(1.3 * 1024 * 1024)).toBe('1.3 MB');
+    expect(formatBytes(-1)).toBe('?');
   });
 });

@@ -29,6 +29,8 @@ test.describe('accessibility (axe, WCAG 2.1 AA, both themes)', () => {
         `/bots/${bot.id}?tab=config`,
         `/bots/${bot.id}?tab=memory`,
         `/runs/${run.runId}`,
+        `/chat/${bot.id}`,
+        `/chat/${bot.id}?c=${run.runId}`,
       ];
       for (const path of pages) {
         await page.goto(orbitd.url + path);
@@ -69,6 +71,8 @@ test.describe('accessibility (axe, WCAG 2.1 AA, both themes)', () => {
       `/bots/${bot.id}?tab=config`,
       `/bots/${bot.id}?tab=memory`,
       `/runs/${run.runId}`,
+      `/chat/${bot.id}`,
+      `/chat/${bot.id}?c=${run.runId}`,
     ];
     for (const width of [768, 1024]) {
       await page.setViewportSize({ width, height: 900 });

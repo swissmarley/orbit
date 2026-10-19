@@ -9,7 +9,7 @@ test.describe('browser security (ADR-011)', () => {
   }) => {
     const link = await orbitd.signInUrl();
     await page.goto(link);
-    await page.waitForURL(/\/(welcome|inbox)/);
+    await page.waitForURL(/\/(welcome|inbox|chat|bots)/);
     expect(page.url()).not.toContain('ticket');
     // The session cookie is HttpOnly: scripts cannot see it; nothing is in storage.
     expect(await page.evaluate(() => document.cookie)).toBe('');
