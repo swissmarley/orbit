@@ -1234,8 +1234,7 @@ export const routes = {
     method: 'GET',
     role: 'operator',
     path: '/v1/bots/{bot}/computer/files',
-    summary:
-      "List a directory of the Bot's workspace (links are never followed; .git is hidden)",
+    summary: "List a directory of the Bot's workspace (links are never followed; .git is hidden)",
     tag: 'computer',
     query: ComputerPathQuery,
     response: ComputerListing,
