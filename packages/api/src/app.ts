@@ -283,8 +283,19 @@ export function createApp(opts: AppOptions): Hono {
       c.req.method === 'GET' &&
       c.req.path === OIDC_CALLBACK_PATH &&
       c.req.header('sec-fetch-mode') === 'navigate';
+    // `orbit app` opens a private file that redirects to /login. Browsers
+    // mark that top-level GET as cross-site. Only the public page may load:
+    // the ticket stays in the fragment and its same-origin POST still goes
+    // through the normal origin, single-use ticket and CSRF checks.
+    const appSignIn =
+      isAppPath(c.req.method, c.req.path) &&
+      c.req.method === 'GET' &&
+      c.req.path === '/login' &&
+      origin === undefined &&
+      c.req.header('sec-fetch-mode') === 'navigate' &&
+      c.req.header('sec-fetch-dest') === 'document';
     // A cross-site request without an Origin we know (old browsers, odd fetch modes).
-    if (c.req.header('sec-fetch-site') === 'cross-site' && !okOrigin && !oidcReturn) {
+    if (c.req.header('sec-fetch-site') === 'cross-site' && !okOrigin && !oidcReturn && !appSignIn) {
       return c.json(errorBody('forbidden', 'Cross-origin requests are not allowed'), 403);
     }
     const cors = okOrigin && !isOwnOrigin(c.req.header('host'), origin);
