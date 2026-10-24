@@ -284,6 +284,76 @@ describe('serving the App', () => {
     expect((await t.req('/assets/missing.js')).status).toBe(404);
   });
 
+  it('loads the public sign-in page after the launcher redirects from a local file', async () => {
+    const t = setup({ appRoot: built() });
+    const navigation = {
+      'sec-fetch-site': 'cross-site',
+      'sec-fetch-mode': 'navigate',
+      'sec-fetch-dest': 'document',
+    };
+    const res = await t.req('/login', { headers: navigation });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toMatch(/text\/html/);
+    expect(res.headers.get('content-security-policy')).toBe(APP_CSP);
+    expect(res.headers.get('x-frame-options')).toBe('DENY');
+    expect(res.headers.get('set-cookie')).toBeNull();
+    expect(res.headers.get('access-control-allow-origin')).toBeNull();
+
+    // Even a signed-in browser cannot use this navigation exception for API access.
+    const { cookie, csrf } = await t.signIn();
+    const credentials = { cookie, [CSRF_HEADER]: csrf };
+    for (const path of ['/v1/bots', '/v1/session', '/v1/health', '/mcp/orbit', '/inbox']) {
+      expect((await t.req(path, { headers: { ...navigation, ...credentials } })).status).toBe(403);
+    }
+    expect(
+      (
+        await t.req('/v1/session', {
+          method: 'POST',
+          headers: { ...navigation, [CSRF_HEADER]: '1' },
+          body: '{}',
+        })
+      ).status,
+    ).toBe(403);
+    expect((await t.req('/v1/bots', { headers: credentials })).status).toBe(200);
+  });
+
+  it('keeps sign-in fetches, frames, writes, foreign origins and hosts blocked', async () => {
+    const t = setup({ appRoot: built() });
+    const navigation = {
+      'sec-fetch-site': 'cross-site',
+      'sec-fetch-mode': 'navigate',
+      'sec-fetch-dest': 'document',
+    };
+    for (const headers of [
+      { ...navigation, 'sec-fetch-mode': 'cors' },
+      { ...navigation, 'sec-fetch-dest': 'iframe' },
+      { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate' },
+      { ...navigation, origin: 'https://evil.example' },
+      { ...navigation, origin: 'null' },
+      { ...navigation, host: 'evil.example' },
+    ]) {
+      expect((await t.req('/login', { headers })).status).toBe(403);
+    }
+    for (const method of ['POST', 'PUT', 'DELETE', 'HEAD']) {
+      expect((await t.req('/login', { method, headers: navigation })).status).toBe(403);
+    }
+  });
+
+  it('does not allow cross-site sign-in navigation when the App is not served', async () => {
+    const t = setup();
+    expect(
+      (
+        await t.req('/login', {
+          headers: {
+            'sec-fetch-site': 'cross-site',
+            'sec-fetch-mode': 'navigate',
+            'sec-fetch-dest': 'document',
+          },
+        })
+      ).status,
+    ).toBe(403);
+  });
+
   it('never serves files outside the App directory, and the API stays protected', async () => {
     const t = setup({ appRoot: built() });
     for (const path of ['/..%2fsecret.txt', '/%2e%2e/secret.txt', '/assets/..%2f..%2fsecret.txt']) {

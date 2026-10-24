@@ -76,7 +76,12 @@ SameSite=Strict; Path=/` **and** a per-session CSRF secret in the JSON body,
   on such a port is trusted too, so it is for App development only.
   Allowlisted foreign origins get CORS headers with
   credentials and preflights; all others get 403, including a `cross-site`
-  `Sec-Fetch-Site` without a known origin. The Host allowlist (DNS
+  `Sec-Fetch-Site` without a known origin. The public sign-in page is the
+  exception: when the App is served, a top-level `GET /login` with
+  `Sec-Fetch-Mode: navigate`, `Sec-Fetch-Dest: document` and no `Origin`
+  may load after the CLI's private-file redirect. This serves only the
+  public page; ticket redemption and every API request still pass the
+  normal origin, authentication and CSRF checks. The Host allowlist (DNS
   rebinding) is unchanged, and a request without a Host header gets 400.
 - **Browser-safe client:** the App imports `@orbit/sdk-client/browser` and
   `@orbit/core/browser` only (no `node:fs` daemon discovery, no
