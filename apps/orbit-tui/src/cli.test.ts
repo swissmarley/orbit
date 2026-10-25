@@ -123,6 +123,28 @@ describe('orbit CLI', () => {
 
   const mockEnv = () => ({ ORBIT_HOME: home, ORBIT_DRIVER: 'mock', PATH: process.env.PATH });
 
+  it('setup selects a persistent engine/model through the daemon and reports JSON status', async () => {
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ driver: 'mock' }));
+    const cli = harness({ ORBIT_HOME: home, PATH: process.env.PATH });
+    expect(await cli.run('setup', '--mode', 'demo', '--model', 'haiku', '--json')).toBe(0);
+    expect(cli.json<{ doctor: { driver: string; models: { default: string } } }>()).toMatchObject({
+      doctor: { driver: 'mock', models: { default: 'haiku' } },
+    });
+    expect(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'))).toMatchObject({
+      driver: 'mock',
+      models: { default: 'haiku' },
+    });
+    cli.reset();
+    expect(await cli.run('setup', '--json')).toBe(0);
+    expect(cli.json<{ canConfigure: boolean }>().canConfigure).toBe(true);
+  });
+
+  it('setup explains an environment override instead of pretending the engine was saved', async () => {
+    const cli = harness(mockEnv());
+    expect(await cli.run('setup', '--mode', 'demo', '--json')).toBe(ExitCode.blocked);
+    expect(cli.text()).toMatch(/ORBIT_DRIVER/);
+  });
+
   it('app prints a one-time sign-in link the App can redeem once (ADR-011)', async () => {
     const cli = harness(mockEnv());
     expect(await cli.run('app', '--json')).toBe(0);

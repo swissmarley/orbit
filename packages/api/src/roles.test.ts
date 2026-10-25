@@ -23,6 +23,8 @@ const EXPECTED: Record<RouteName, PrincipalRole | 'public'> = {
   createSession: 'public',
   // Reads: viewers.
   doctor: 'viewer',
+  getSetup: 'owner',
+  configureSetup: 'owner',
   getSession: 'viewer',
   listBots: 'viewer',
   getBot: 'viewer',

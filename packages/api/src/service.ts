@@ -22,6 +22,7 @@ import {
   type TriggerRef,
   type TriggerSpec,
   errorMessage,
+  isLoopbackHost,
   pluginSecretKey,
   event,
   humanPrincipalCount,
@@ -142,6 +143,7 @@ import type {
   ComputerFile,
   ComputerListing,
   ComputerStatus,
+  ConfigureSetupBody,
   CreateRuleBody,
   DecisionResult,
   DenyBody,
@@ -150,8 +152,10 @@ import type {
   EngineKeyStatus,
   QueueSnapshot,
   SessionPrincipal,
+  SetupState,
   Takeover as TakeoverInfo,
 } from './contract';
+import { readSetupConfig, writeSetupConfig } from './setup-config';
 
 /**
  * The bearer token's principal id, and the actor recorded for API calls made
@@ -159,6 +163,8 @@ import type {
  * record their own principal (ADR-015).
  */
 export const OWNER = 'owner';
+/** Engine credential reserved for the guided setup flow; never exposed to clients. */
+export const SETUP_API_KEY = 'orbit_engine_api_key';
 const DAY_MS = 86_400_000;
 /** Decisions and results read for one computer Activity page (a few per call at most). */
 const ACTIVITY_SCAN_LIMIT = 10_000;
@@ -281,17 +287,35 @@ export class OrbitService {
   /** The principal of the API request being served (set by the auth middleware). */
   private readonly requestPrincipal = new AsyncLocalStorage<SessionPrincipal>();
   /** Workspaces, containers and the Docker sandbox's host-side proxies (ADR-004, ADR-018). */
-  private readonly sandbox: SandboxManager;
+  private sandbox: SandboxManager;
   /** Where orbitd's key proxies (host engines and Docker sandboxes) get the key. */
-  private readonly keyCredential: EngineCredential;
+  private keyCredential: EngineCredential;
+  private setupChanging = false;
+  private readonly externalSetupReason: string | null;
   /** Set at start when the audit key predates a log without keyed records (doctor shows it). */
   private auditKeyWarning: string | null = null;
   /** When retention last swept memory (ms); orbitd sweeps at start and once a day. */
   private memorySweptAt = Number.NEGATIVE_INFINITY;
 
   constructor(private readonly opts: ServiceOptions) {
-    const { config, env, db } = opts;
+    // Setup may update its private credential copy, never the caller's env
+    // (which could be process.env in an embedded deployment).
+    this.opts = { ...opts, env: { ...opts.env } };
+    const { config, env, db } = this.opts;
     this.config = config;
+    const override = [
+      'ORBIT_DRIVER',
+      'ORBIT_DEFAULT_MODEL',
+      'ORBIT_API_KEY_FILE',
+      'ORBIT_API_KEY_HELPER',
+      'ANTHROPIC_API_KEY',
+      'ANTHROPIC_BASE_URL',
+      'CLAUDE_CODE_USE_BEDROCK',
+      'CLAUDE_CODE_USE_VERTEX',
+    ].find((name) => (env[name]?.trim() ?? '') !== '');
+    this.externalSetupReason = override
+      ? `Engine setup is managed by ${override}. Remove that setting from the server's launch environment and restart Orbit to use guided setup.`
+      : null;
     this.now = opts.now ?? (() => new Date());
     this.startedAt = this.now().toISOString();
     this.version = opts.version;
@@ -338,6 +362,11 @@ export class OrbitService {
       ...(opts.vaultKeySource ? { keySource: opts.vaultKeySource } : {}),
     });
     for (const v of this.vault.values()) this.redactor.addSecret(v);
+    // A saved setup key is decrypted only inside orbitd's in-memory env.
+    // Child environments still use the existing allowlists and key proxy.
+    if (!env.ANTHROPIC_API_KEY && this.vault.has(SETUP_API_KEY)) {
+      env.ANTHROPIC_API_KEY = this.vault.get(SETUP_API_KEY);
+    }
     this.memory = new MemoryStore(db, {
       redactor: this.redactor,
       dir: opts.memoryDir === undefined ? join(config.home, 'memory') : opts.memoryDir,
@@ -398,6 +427,7 @@ export class OrbitService {
       },
       maxCallsPerDay: () => config.triage.maxCallsPerDay,
       hold: () => {
+        if (this.setupChanging) return 'engine setup is changing';
         const kill = this.controls.globalKill();
         if (kill) return `the global kill switch is engaged (by ${kill})`;
         return this.rateLimits.hold();
@@ -409,17 +439,7 @@ export class OrbitService {
     this.keyCredential = keyProxyCredential(env, config.sdk.apiKeyHelper, (k) =>
       this.redactor.addSecret(k),
     );
-    this.sandbox = createSandboxManager(config.home, env, {
-      legacyName: (bot) => this.m2WorkspaceName(bot),
-      apiKeyHelper: config.sdk.apiKeyHelper,
-      credential: this.keyCredential,
-      // Refusals name a host:port or an API route, never a query string or a header.
-      onProxyRefusal: (botId, proxy, r) =>
-        this.log(
-          'warn',
-          `sandbox ${proxy} proxy refused ${r.target} for Bot ${botId}: ${r.reason}`,
-        ),
-    });
+    this.sandbox = this.newSandbox();
 
     this.orchestrator = new Orchestrator({
       config,
@@ -438,7 +458,8 @@ export class OrbitService {
       },
       redactor: this.redactor,
       audit: this.audit,
-      workspaces: opts.workspaces ?? sandboxWorkspaces(this.sandbox, env),
+      workspaces:
+        opts.workspaces ?? ((bot, driver) => sandboxWorkspaces(this.sandbox, env)(bot, driver)),
       ...(opts.killPollMs ? { killPollMs: opts.killPollMs } : {}),
       now: this.now,
       memory: this.memory,
@@ -617,6 +638,171 @@ export class OrbitService {
 
   // ── engine ────────────────────────────────────────────────────────────────
 
+  private newSandbox(): SandboxManager {
+    return createSandboxManager(this.config.home, this.opts.env, {
+      legacyName: (bot) => this.m2WorkspaceName(bot),
+      apiKeyHelper: this.config.sdk.apiKeyHelper,
+      credential: this.keyCredential,
+      onProxyRefusal: (botId, proxy, r) =>
+        this.log(
+          'warn',
+          `sandbox ${proxy} proxy refused ${r.target} for Bot ${botId}: ${r.reason}`,
+        ),
+    });
+  }
+
+  private setupBlockedReason(): string | null {
+    if (
+      this.config.mode !== 'local' ||
+      !isLoopbackHost(this.config.api.host) ||
+      this.opts.listen?.container
+    ) {
+      return 'Engine setup is managed by the server administrator for hosted and container installations.';
+    }
+    if (this.externalSetupReason) return this.externalSetupReason;
+    if (this.setupChanging) return 'Another engine setup change is in progress. Try again shortly.';
+    if (
+      this.engineStarting ||
+      this.triage.busy ||
+      this.queue.snapshot().active.length > 0 ||
+      this.store.listRuns({ status: IN_FLIGHT, limit: 1 }).length > 0
+    ) {
+      return 'Finish or cancel the current Runs and wait for model calls to finish before changing the engine.';
+    }
+    if (this.bots.list().some((b) => this.controls.takeover(b.id))) {
+      return 'Exit all Bot shells before changing the engine.';
+    }
+    return null;
+  }
+
+  /** Owner-only setup status; checking readiness never sends a model request. */
+  async getSetup(): Promise<SetupState> {
+    const reason = this.setupBlockedReason();
+    return {
+      doctor: await this.doctor(),
+      apiKeyStored: this.vault.has(SETUP_API_KEY),
+      canConfigure: reason === null,
+      reason,
+    };
+  }
+
+  /** Persist and apply engine selection while all model work is idle. */
+  async configureSetup(body: ConfigureSetupBody): Promise<SetupState> {
+    // Redact even rejected credential input before any later error can quote it.
+    if (body.apiKey) this.redactor.addSecret(body.apiKey);
+    const reason = this.setupBlockedReason();
+    if (reason) throw new OrbitError('blocked', reason);
+    this.setupChanging = true;
+    try {
+      const before = readSetupConfig(this.config.home);
+      const driver: 'mock' | 'sdk' | 'cli' =
+        body.mode === 'demo' ? 'mock' : body.mode === 'api' ? 'sdk' : 'cli';
+      if (body.apiKey !== undefined && body.mode !== 'api') {
+        throw new OrbitError(
+          'invalid_input',
+          'An API key can only be saved when connecting the API engine.',
+        );
+      }
+      if (body.forgetApiKey && body.mode !== 'demo') {
+        throw new OrbitError('invalid_input', 'Switch to demo mode to remove the saved API key.');
+      }
+      const suppliedKey = body.apiKey?.trim();
+      if (
+        body.apiKey !== undefined &&
+        (!suppliedKey || !/^sk-ant-[\x21-\x7e]{20,}$/.test(suppliedKey))
+      ) {
+        throw new OrbitError(
+          'invalid_input',
+          'Enter a valid Anthropic API key beginning with sk-ant-.',
+        );
+      }
+      if (suppliedKey) this.redactor.addSecret(suppliedKey);
+      const key = body.forgetApiKey
+        ? undefined
+        : (suppliedKey ?? this.vault.get(SETUP_API_KEY) ?? this.opts.env.ANTHROPIC_API_KEY);
+      if (body.mode === 'api' && !key && !this.config.sdk.apiKeyHelper) {
+        throw new OrbitError(
+          'auth_required',
+          'Add an Anthropic API key to connect the API engine.',
+        );
+      }
+      const config = {
+        ...this.config,
+        driver,
+        models: { ...this.config.models, default: body.model },
+      };
+      // Only credentials are copied to this private candidate; never process.env.
+      const env: Env = { ...this.opts.env };
+      if (key) env.ANTHROPIC_API_KEY = key;
+      else if (body.forgetApiKey) Reflect.deleteProperty(env, 'ANTHROPIC_API_KEY');
+      const resolution = await resolveAuth({
+        config,
+        env,
+        probes: this.opts.probes ?? systemProbes(config, env),
+      });
+      if (resolution.driver !== driver) {
+        throw new OrbitError(
+          resolution.refusal?.code ?? 'auth_required',
+          body.mode === 'cli'
+            ? 'Claude Code is not ready. Run `claude auth login` on this computer, then check again.'
+            : (resolution.refusal?.message ?? 'The selected engine is not ready.'),
+          {
+            hint:
+              resolution.refusal?.hint ??
+              'Complete authentication on this computer before connecting the engine.',
+          },
+        );
+      }
+
+      // The setup lock blocks new Runs and triage throughout these awaits.
+      // No running or resumable Run may outlive its engine/key proxy.
+      const oldEngine = this.engine;
+      this.engine = null;
+      await oldEngine?.handle.close();
+      await this.sandbox.close();
+      const oldKey = this.vault.get(SETUP_API_KEY);
+      try {
+        if (suppliedKey) this.vault.set(SETUP_API_KEY, suppliedKey);
+        else if (body.forgetApiKey) this.vault.remove(SETUP_API_KEY);
+        writeSetupConfig(this.config.home, before, driver, body.model);
+      } catch (err) {
+        if (suppliedKey || body.forgetApiKey) {
+          if (oldKey) this.vault.set(SETUP_API_KEY, oldKey);
+          else this.vault.remove(SETUP_API_KEY);
+        }
+        // Keep the old engine settings usable if persisting setup failed.
+        this.sandbox = this.newSandbox();
+        throw err;
+      }
+      this.config.driver = driver;
+      this.config.models.default = body.model;
+      if (key) this.opts.env.ANTHROPIC_API_KEY = key;
+      else if (body.forgetApiKey) Reflect.deleteProperty(this.opts.env, 'ANTHROPIC_API_KEY');
+      this.keyCredential = keyProxyCredential(this.opts.env, this.config.sdk.apiKeyHelper, (k) =>
+        this.redactor.addSecret(k),
+      );
+      this.sandbox = this.newSandbox();
+      this.audit.append({
+        actor: this.actor(),
+        action: 'setup.configured',
+        data: {
+          mode: body.mode,
+          model: body.model,
+          apiKeyStored: this.vault.has(SETUP_API_KEY),
+        },
+      });
+    } finally {
+      this.setupChanging = false;
+      this.queue.pump();
+    }
+    return this.getSetup();
+  }
+
+  private requireSetupStable(): void {
+    if (this.setupChanging)
+      throw new OrbitError('blocked', 'Engine setup is changing. Try again shortly.');
+  }
+
   private resolve(): Promise<AuthResolution> {
     return resolveAuth({
       config: this.config,
@@ -627,6 +813,7 @@ export class OrbitService {
 
   /** Resolve auth and create the driver once; retried while nothing is configured. */
   async ensureEngine(): Promise<{ resolution: AuthResolution; handle: DriverHandle }> {
+    this.requireSetupStable();
     if (this.engine) return this.engine;
     this.engineStarting ??= (async () => {
       const resolution = await this.resolve();
@@ -668,6 +855,7 @@ export class OrbitService {
   }
 
   private hold(job: QueueJob): string | null {
+    if (this.setupChanging) return 'engine setup is changing';
     const kill = this.controls.globalKill();
     if (kill) return `global kill switch engaged by ${kill}`;
     if (this.bots.find(job.botId)?.pausedAt) {
@@ -902,6 +1090,7 @@ export class OrbitService {
    * whose CLI process is gone is stale and ends when a new one starts.
    */
   async startTakeover(botRef: string, pid: number): Promise<z.infer<typeof TakeoverInfo>> {
+    this.requireSetupStable();
     const bot = this.bots.get(botRef);
     const name = slugify(bot.spec.name);
     if (bot.spec.sandbox.kind === 'docker') {
@@ -964,6 +1153,7 @@ export class OrbitService {
     let git: TakeoverGit | null;
     try {
       const ws = await this.orchestrator.hostWorkspace(bot);
+      this.requireSetupStable();
       workspace = ws.path;
       // The workspace's .git must be Orbit's (worktree Bots) or absent
       // (directory Bots) before the owner's git-aware shell opens there.
@@ -1064,6 +1254,7 @@ export class OrbitService {
     }
     // Fail fast with the onboarding / compliance message instead of queueing a doomed Run.
     await this.ensureEngine();
+    this.requireSetupStable();
     const mockFixture = this.fixture(body.fixture);
     // Checked and appended without an await in between: two replies cannot
     // both continue one turn (ADR-020; orbitd is the single writer).
@@ -1078,6 +1269,7 @@ export class OrbitService {
   }
 
   private fireTrigger(bot: Bot, trigger: TriggerSpec, ref: TriggerRef) {
+    this.requireSetupStable();
     const run = this.orchestrator.enqueue(bot, {
       trigger: ref,
       ...(trigger.prompt ? { prompt: trigger.prompt } : {}),
@@ -1097,6 +1289,7 @@ export class OrbitService {
     ref: TriggerRef,
     content: InboundContent,
   ): { fired: true; runId: string } | { fired: false; reason: string } {
+    if (this.setupChanging) return { fired: false, reason: 'engine setup is changing' };
     const key = triggerKey(bot.id, trigger);
     const previous = this.triggerState.get(key);
     if (bot.pausedAt) return { fired: false, reason: 'Bot is paused' };
@@ -1316,6 +1509,7 @@ export class OrbitService {
       );
     }
     await this.ensureEngine();
+    this.requireSetupStable();
     const mockFixture = this.fixture(body.fixture);
     this.pushResume(run, {
       ...(body.prompt ? { prompt: body.prompt } : {}),
@@ -2267,6 +2461,8 @@ export class OrbitService {
   }
 
   setSecret(name: string, value: string): { name: string; keySource: 'keychain' | 'file' } {
+    if (name === SETUP_API_KEY)
+      throw new OrbitError('invalid_input', 'Manage the engine API key through guided setup.');
     this.vault.set(name, value);
     this.redactor.addSecret(value);
     this.audit.append({ actor: this.actor(), action: 'secret.set', subject: name, data: {} });
@@ -2274,6 +2470,8 @@ export class OrbitService {
   }
 
   removeSecret(name: string): void {
+    if (name === SETUP_API_KEY)
+      throw new OrbitError('invalid_input', 'Manage the engine API key through guided setup.');
     if (!this.vault.remove(name)) throw new OrbitError('not_found', `Secret ${name} not found`);
     this.audit.append({ actor: this.actor(), action: 'secret.removed', subject: name, data: {} });
   }

@@ -15,6 +15,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useId, useRef, useState } from 'react';
 import type { RouteName } from '@orbit/sdk-client/browser';
 import { confirmAction } from '../components/confirm';
+import { EngineSetup } from '../components/engine-setup';
 import { RoleGate } from '../components/role-gate';
 import { EmptyState, ErrorState, ListSkeleton, PageHeader } from '../components/states';
 import { Time } from '../components/status';
@@ -180,154 +181,159 @@ function Engine() {
     return <ErrorState error={doctor.error} retry={() => void doctor.refetch()} />;
   const d = doctor.data;
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <Card>
-        <CardHeader>
-          <CardTitle>Auth & driver</CardTitle>
-          <Badge tone={d.ok ? 'success' : 'danger'}>{d.ok ? '✔ ready' : '✘ needs attention'}</Badge>
-        </CardHeader>
-        <CardContent>
-          <dl className="grid grid-cols-[9rem_1fr] gap-x-3 gap-y-1 text-sm">
-            <Row term="Driver">
-              {d.driver ?? 'none'} (
-              {d.driverSource === 'forced' ? 'set by ORBIT_DRIVER' : 'chosen automatically'})
-            </Row>
-            <Row term="Authentication">{d.authLabel}</Row>
-            <Row term="Mode">
-              {d.mode} · {d.humanPrincipals} human principal{d.humanPrincipals === 1 ? '' : 's'}
-            </Row>
-            {d.cli ? (
-              <Row term="Claude Code CLI">
-                {d.cli.version ?? 'unknown version'} ·{' '}
-                {d.cli.loggedIn ? 'logged in' : 'not logged in'}
-                {d.cli.authMethod ? ` (${d.cli.authMethod})` : ''}
+    <div className="flex flex-col gap-4">
+      <EngineSetup />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Auth & driver</CardTitle>
+            <Badge tone={d.ok ? 'success' : 'danger'}>
+              {d.ok ? '✔ ready' : '✘ needs attention'}
+            </Badge>
+          </CardHeader>
+          <CardContent>
+            <dl className="grid grid-cols-[9rem_1fr] gap-x-3 gap-y-1 text-sm">
+              <Row term="Driver">
+                {d.driver ?? 'none'} (
+                {d.driverSource === 'forced' ? 'selected in configuration' : 'chosen automatically'}
+                )
               </Row>
+              <Row term="Authentication">{d.authLabel}</Row>
+              <Row term="Mode">
+                {d.mode} · {d.humanPrincipals} human principal{d.humanPrincipals === 1 ? '' : 's'}
+              </Row>
+              {d.cli ? (
+                <Row term="Claude Code CLI">
+                  {d.cli.version ?? 'unknown version'} ·{' '}
+                  {d.cli.loggedIn ? 'logged in' : 'not logged in'}
+                  {d.cli.authMethod ? ` (${d.cli.authMethod})` : ''}
+                </Row>
+              ) : null}
+              <Row term="API credential">{d.apiCredential ?? 'none'}</Row>
+              <Row term="Models">
+                default <code>{d.models.default}</code> · triage <code>{d.models.triage}</code>
+              </Row>
+              <Row term="Compliance">
+                {d.compliance.allowed ? 'OK' : scrubControls(d.compliance.message ?? 'refused')}
+              </Row>
+            </dl>
+            {d.refusal ? (
+              <div
+                role="alert"
+                className="mt-3 rounded-md bg-danger-bg px-3 py-2 text-sm text-danger"
+              >
+                <p className="font-medium">{d.refusal.message}</p>
+                <p>{d.refusal.hint}</p>
+              </div>
             ) : null}
-            <Row term="API credential">{d.apiCredential ?? 'none'}</Row>
-            <Row term="Models">
-              default <code>{d.models.default}</code> · triage <code>{d.models.triage}</code>
-            </Row>
-            <Row term="Compliance">
-              {d.compliance.allowed ? 'OK' : scrubControls(d.compliance.message ?? 'refused')}
-            </Row>
-          </dl>
-          {d.refusal ? (
-            <div
-              role="alert"
-              className="mt-3 rounded-md bg-danger-bg px-3 py-2 text-sm text-danger"
-            >
-              <p className="font-medium">{d.refusal.message}</p>
-              <p>{d.refusal.hint}</p>
-            </div>
-          ) : null}
-          {d.onboarding ? (
-            <div className="mt-3 rounded-md bg-info-bg px-3 py-2 text-sm text-info">
-              <p className="font-medium">{d.onboarding.reason}</p>
-              <ol className="mt-1 list-decimal pl-5">
-                {d.onboarding.steps.map((s) => (
-                  <li key={s}>{s}</li>
+            {d.onboarding ? (
+              <div className="mt-3 rounded-md bg-info-bg px-3 py-2 text-sm text-info">
+                <p className="font-medium">{d.onboarding.reason}</p>
+                <ol className="mt-1 list-decimal pl-5">
+                  {d.onboarding.steps.map((s) => (
+                    <li key={s}>{s}</li>
+                  ))}
+                </ol>
+              </div>
+            ) : null}
+            {d.warnings.length > 0 ? (
+              <ul className="mt-3 flex flex-col gap-1 text-sm text-warning">
+                {d.warnings.map((w) => (
+                  <li key={w.code}>⚠ {w.message}</li>
                 ))}
-              </ol>
-            </div>
-          ) : null}
-          {d.warnings.length > 0 ? (
-            <ul className="mt-3 flex flex-col gap-1 text-sm text-warning">
-              {d.warnings.map((w) => (
-                <li key={w.code}>⚠ {w.message}</li>
-              ))}
-            </ul>
-          ) : null}
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>Daemon & sandbox</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <dl className="grid grid-cols-[9rem_1fr] gap-x-3 gap-y-1 text-sm">
-            <Row term="orbitd">
-              {d.daemon.url} · pid {d.daemon.pid}
-            </Row>
-            <Row term="Up since">
-              <Time iso={d.daemon.startedAt} />
-            </Row>
-            <Row term="Concurrency">
-              {d.daemon.concurrency} run{d.daemon.concurrency === 1 ? '' : 's'} at a time
-            </Row>
-            <Row term="Home">{d.home}</Row>
-            <Row term="Engine sandbox">
-              {d.sandbox.engineSandbox.available ? (
-                <Check tone="success">available</Check>
-              ) : (
-                <Check tone="warning">
-                  unavailable (missing {d.sandbox.engineSandbox.missing.join(', ') || '?'})
-                </Check>
-              )}
-            </Row>
-            <Row term="Plugin sandbox">
-              {d.sandbox.plugins.mode === 'off' ? (
-                <Check tone="warning">off (plugins.sandbox): plugins run as your user</Check>
-              ) : d.sandbox.plugins.available ? (
-                <Check tone="success">
-                  {d.sandbox.plugins.engine ?? 'available'}
-                  {d.sandbox.plugins.mode === 'required' ? ' · required for every plugin' : ''}
-                </Check>
-              ) : d.sandbox.plugins.mode === 'required' ? (
-                <Check tone="danger">
-                  unavailable: {d.sandbox.plugins.reason ?? '?'} — plugins do not start
-                </Check>
-              ) : (
-                <Check tone="warning">
-                  unavailable: {d.sandbox.plugins.reason ?? '?'} — plugins run as your user
-                </Check>
-              )}
-            </Row>
-            <Row term="Docker">
-              {d.sandbox.docker.available
-                ? `available ${d.sandbox.docker.version ?? ''}`
-                : 'not available'}
-            </Row>
-            {d.engineKey ? (
-              <Row term="Engine key">
-                <Check
-                  tone={
-                    d.engineKey.delivery === 'proxied' && d.engineKey.subprocessScrub !== false
-                      ? 'success'
-                      : 'warning'
-                  }
-                >
-                  {d.engineKey.delivery === 'proxied'
-                    ? 'proxied — the API key stays in orbitd (key proxy)'
-                    : "in the engine — Bedrock / Vertex credentials are in the engine's environment"}
-                  {d.engineKey.subprocessScrub === false
-                    ? ' · subprocess scrub off (no bubblewrap)'
-                    : ''}
-                </Check>
-              </Row>
+              </ul>
             ) : null}
-            <Row term="Docker Bots">
-              {d.sandbox.dockerSandbox.ready ? (
-                <Check tone="success">ready — the API key stays on the host (key proxy)</Check>
-              ) : (
-                <Check tone="warning">
-                  not ready —{' '}
-                  {d.sandbox.docker.available
-                    ? scrubControls(d.sandbox.dockerSandbox.detail)
-                    : 'install or start Docker, then reopen this tab'}
-                </Check>
-              )}
-            </Row>
-            <Row term="Runtime">
-              Node {d.node} · {d.platform}
-            </Row>
-          </dl>
-          <p className="mt-3 text-xs text-fg-subtle">
-            Models and the driver come from orbitd's environment (ORBIT_DEFAULT_MODEL,
-            ORBIT_TRIAGE_MODEL, ORBIT_DRIVER); change them there and run{' '}
-            <code>orbit daemon restart</code>.
-          </p>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Daemon & sandbox</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <dl className="grid grid-cols-[9rem_1fr] gap-x-3 gap-y-1 text-sm">
+              <Row term="orbitd">
+                {d.daemon.url} · pid {d.daemon.pid}
+              </Row>
+              <Row term="Up since">
+                <Time iso={d.daemon.startedAt} />
+              </Row>
+              <Row term="Concurrency">
+                {d.daemon.concurrency} run{d.daemon.concurrency === 1 ? '' : 's'} at a time
+              </Row>
+              <Row term="Home">{d.home}</Row>
+              <Row term="Engine sandbox">
+                {d.sandbox.engineSandbox.available ? (
+                  <Check tone="success">available</Check>
+                ) : (
+                  <Check tone="warning">
+                    unavailable (missing {d.sandbox.engineSandbox.missing.join(', ') || '?'})
+                  </Check>
+                )}
+              </Row>
+              <Row term="Plugin sandbox">
+                {d.sandbox.plugins.mode === 'off' ? (
+                  <Check tone="warning">off (plugins.sandbox): plugins run as your user</Check>
+                ) : d.sandbox.plugins.available ? (
+                  <Check tone="success">
+                    {d.sandbox.plugins.engine ?? 'available'}
+                    {d.sandbox.plugins.mode === 'required' ? ' · required for every plugin' : ''}
+                  </Check>
+                ) : d.sandbox.plugins.mode === 'required' ? (
+                  <Check tone="danger">
+                    unavailable: {d.sandbox.plugins.reason ?? '?'} — plugins do not start
+                  </Check>
+                ) : (
+                  <Check tone="warning">
+                    unavailable: {d.sandbox.plugins.reason ?? '?'} — plugins run as your user
+                  </Check>
+                )}
+              </Row>
+              <Row term="Docker">
+                {d.sandbox.docker.available
+                  ? `available ${d.sandbox.docker.version ?? ''}`
+                  : 'not available'}
+              </Row>
+              {d.engineKey ? (
+                <Row term="Engine key">
+                  <Check
+                    tone={
+                      d.engineKey.delivery === 'proxied' && d.engineKey.subprocessScrub !== false
+                        ? 'success'
+                        : 'warning'
+                    }
+                  >
+                    {d.engineKey.delivery === 'proxied'
+                      ? 'proxied — the API key stays in orbitd (key proxy)'
+                      : "in the engine — Bedrock / Vertex credentials are in the engine's environment"}
+                    {d.engineKey.subprocessScrub === false
+                      ? ' · subprocess scrub off (no bubblewrap)'
+                      : ''}
+                  </Check>
+                </Row>
+              ) : null}
+              <Row term="Docker Bots">
+                {d.sandbox.dockerSandbox.ready ? (
+                  <Check tone="success">ready — the API key stays on the host (key proxy)</Check>
+                ) : (
+                  <Check tone="warning">
+                    not ready —{' '}
+                    {d.sandbox.docker.available
+                      ? scrubControls(d.sandbox.dockerSandbox.detail)
+                      : 'install or start Docker, then reopen this tab'}
+                  </Check>
+                )}
+              </Row>
+              <Row term="Runtime">
+                Node {d.node} · {d.platform}
+              </Row>
+            </dl>
+            <p className="mt-3 text-xs text-fg-subtle">
+              Use Connect Orbit above to save the engine and default model. Environment settings
+              take precedence and must be changed by the person managing this installation.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

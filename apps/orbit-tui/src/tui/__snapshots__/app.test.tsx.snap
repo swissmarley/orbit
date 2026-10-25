@@ -168,5 +168,5 @@ exports[`TUI rendering > wide: three panes, status bar, the parked Run and its a
 ┃                             ┃│                                               ││                                      │
 ┃ shell: orbit shell mailer   ┃│                                               ││                                      │
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛╰───────────────────────────────────────────────╯╰──────────────────────────────────────╯
-j/k select · r run · p pause · m memory · i plugins · [ ] runs · Tab panes · ? help · q quit"
+j/k select · r run · p pause · O setup · m memory · i plugins · [ ] runs · Tab panes · ? help · q quit"
 `;
