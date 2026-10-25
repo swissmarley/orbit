@@ -189,7 +189,7 @@ export function BotsPane(props: {
         <Text color="gray">░░░░░░░░ loading…</Text>
       ) : data.bots.length === 0 ? (
         <Text color="gray" wrap="wrap">
-          No bots yet. orbit bot create --name … --goal …
+          No bots yet. Press O to set up an engine, then orbit bot create --name … --goal …
         </Text>
       ) : (
         data.bots.slice(first, first + listRows).map((b, i) => {

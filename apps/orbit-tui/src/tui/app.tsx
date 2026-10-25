@@ -1,5 +1,5 @@
 /** @jsxRuntime automatic @jsxImportSource react */
-import { errorMessage } from '@orbit/core';
+import { defaultRedactor, errorMessage } from '@orbit/core';
 import { Box, Text, useApp, useInput, useWindowSize } from 'ink';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Feed, type TuiClient } from './feed';
@@ -16,6 +16,7 @@ import {
 } from './model';
 import { screenLayout } from './layout';
 import type { MouseEvent } from './mouse';
+import { SetupOverlay } from './setup';
 import { scrubControls } from '../render';
 import {
   ApprovalsPane,
@@ -109,6 +110,8 @@ export async function perform(
     case 'loadMemory':
     case 'loadTree':
     case 'loadIntegrations':
+    case 'loadSetup':
+    case 'configureSetup':
     case 'refresh':
     case 'mouse':
     case 'quit':
@@ -149,6 +152,7 @@ export function App({ client, paint, size, refreshDelayMs, mouse }: AppProps) {
   const [data, setData] = useState<Data>(feed.snapshot());
   const [ui, setUi] = useState<Ui>(() => ({ ...INITIAL_UI, mouse: mouse?.enabled === true }));
   const uiRef = useRef(ui);
+  const setupRequest = useRef(0);
   uiRef.current = ui;
 
   useEffect(() => {
@@ -200,6 +204,47 @@ export function App({ client, paint, size, refreshDelayMs, mouse }: AppProps) {
     }
     if (command.kind === 'refresh') {
       void feed.refresh();
+      void feed.refreshDoctor();
+      return;
+    }
+    if (command.kind === 'loadSetup' || command.kind === 'configureSetup') {
+      const requestId = ++setupRequest.current;
+      if (command.kind === 'configureSetup' && command.body.apiKey) {
+        defaultRedactor.addSecret(command.body.apiKey);
+      }
+      const request =
+        command.kind === 'loadSetup'
+          ? client.call('getSetup')
+          : client.call('configureSetup', { body: command.body });
+      void request
+        .then((status) => {
+          if (setupRequest.current !== requestId) return;
+          setUi((u) =>
+            u.overlay?.kind !== 'setup'
+              ? u
+              : {
+                  ...u,
+                  overlay: { ...u.overlay, status, busy: false, apiKey: '' },
+                  toast:
+                    command.kind === 'configureSetup'
+                      ? { text: 'Setup saved. No model request was made.', tone: 'info' }
+                      : null,
+                },
+          );
+          void feed.refreshDoctor();
+        })
+        .catch((err: unknown) => {
+          if (setupRequest.current !== requestId) return;
+          setUi((u) =>
+            u.overlay?.kind !== 'setup'
+              ? u
+              : {
+                  ...u,
+                  overlay: { ...u.overlay, busy: false, apiKey: '' },
+                },
+          );
+          toast(defaultRedactor.redactString(errorMessage(err)), 'error');
+        });
       return;
     }
     if (command.kind === 'loadMemory') {
@@ -277,7 +322,7 @@ export function App({ client, paint, size, refreshDelayMs, mouse }: AppProps) {
   }, [ui.scroll, maxScroll]);
 
   const hints: Record<Ui['focus'], string> = {
-    bots: 'j/k select · r run · p pause · m memory · i plugins · [ ] runs · Tab panes · ? help · q quit',
+    bots: 'j/k select · r run · p pause · O setup · m memory · i plugins · [ ] runs · Tab panes · ? help · q quit',
     timeline:
       'j/k scroll · g/G top/live · s stop · P pause · u resume · t tree · +/- rate · [ ] runs · Tab panes · ? help · q quit',
     approvals: 'j/k select · Enter/a open card to approve · d deny · Tab panes · ? help · q quit',
@@ -323,6 +368,8 @@ export function App({ client, paint, size, refreshDelayMs, mouse }: AppProps) {
       <StatusBar data={data} width={columns} />
       {overlay?.kind === 'help' ? (
         <HelpOverlay width={Math.min(columns, 90)} height={bodyHeight} scroll={overlay.scroll} />
+      ) : overlay?.kind === 'setup' ? (
+        <SetupOverlay overlay={overlay} width={columns} height={bodyHeight} />
       ) : memoryShown ? (
         // The browser stays on screen under its confirm prompts (UI review M5).
         <MemoryOverlay

@@ -26,3 +26,4 @@ deviate from the mission brief or pick between real alternatives.
 | [018](ADR-018-docker-key-proxy-and-egress.md)        | Docker sandbox: host-side key proxy and enforced egress             | Accepted |
 | [019](ADR-019-plugin-sandbox-dns-and-catalog.md)     | Plugin sandbox, DNS-checked browsing and the plugin catalog         | Accepted |
 | [020](ADR-020-chat-avatars-and-the-bots-computer.md) | A chat-first App: conversations, Bot avatars and the Bot's computer | Accepted |
+| [021](ADR-021-guided-engine-setup.md)                | Guided engine setup in the App, CLI and terminal UI                 | Accepted |

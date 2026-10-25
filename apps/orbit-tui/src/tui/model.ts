@@ -7,6 +7,7 @@ import {
   type RunState,
   STATUS_LEGEND,
   TERMINAL_RUN_STATUSES,
+  scrubControls,
 } from '@orbit/core';
 import type { Approval, DoctorReport, RouteResponse } from '@orbit/sdk-client';
 import {
@@ -118,7 +119,18 @@ export type Overlay =
   /** The delegation tree of the selected Run. */
   | { kind: 'tree'; runId: string; scroll: number }
   /** Plugins and inbound triggers: a list, one plugin opened in full. */
-  | { kind: 'integrations'; index: number; open: boolean; scroll: number };
+  | { kind: 'integrations'; index: number; open: boolean; scroll: number }
+  /** Credentials are held only while this form is open and cleared before a request. */
+  | {
+      kind: 'setup';
+      mode: 'api' | 'cli' | 'demo';
+      model: string;
+      apiKey: string;
+      forgetApiKey?: boolean;
+      field: 'mode' | 'model' | 'apiKey' | 'save';
+      busy: boolean;
+      status: RouteResponse<'getSetup'> | null;
+    };
 
 export interface Ui {
   focus: PaneId;
@@ -184,6 +196,16 @@ export type Command =
   /** Load (and keep fresh) the delegation tree of a Run; null stops. */
   | { kind: 'loadTree'; runId: string | null }
   | { kind: 'loadIntegrations'; on: boolean }
+  | { kind: 'loadSetup' }
+  | {
+      kind: 'configureSetup';
+      body: {
+        mode: 'api' | 'cli' | 'demo';
+        model: string;
+        apiKey?: string;
+        forgetApiKey?: boolean;
+      };
+    }
   | { kind: 'setPlugin'; pluginId: string; enabled: boolean }
   | { kind: 'feedback'; runId: string; rating: 'up' | 'down' }
   /** Turn mouse reporting on or off. */
@@ -320,6 +342,90 @@ export function onKey(ui: Ui, data: Data, input: string, key: KeyInfo): KeyResul
 
   // ── overlays capture input ───────────────────────────────────────────────
   const o = ui.overlay;
+  if (o?.kind === 'setup') {
+    if (key.escape || (key.ctrl && input === 'c')) return next({ overlay: null });
+    if (o.busy) return { ui };
+    if (key.ctrl && input === 'r') {
+      return next({ overlay: { ...o, busy: true, apiKey: '' } }, { kind: 'loadSetup' });
+    }
+    const fields: readonly Extract<Overlay, { kind: 'setup' }>['field'][] =
+      o.mode === 'api' ? ['mode', 'model', 'apiKey', 'save'] : ['mode', 'model', 'save'];
+    const advance = () => {
+      const index = fields.indexOf(o.field);
+      const step = key.shift ? fields.length - 1 : 1;
+      return next({ overlay: { ...o, field: fields[(index + step) % fields.length] ?? 'mode' } });
+    };
+    const save = () => {
+      if (!o.status?.canConfigure) {
+        return next({
+          toast: {
+            text: scrubControls(o.status?.reason ?? 'Wait for the setup status'),
+            tone: 'error',
+          },
+        });
+      }
+      const model = o.model.trim();
+      if (!model)
+        return next({ toast: { text: 'Enter a default model, such as sonnet', tone: 'error' } });
+      if (
+        o.mode === 'api' &&
+        !o.apiKey.trim() &&
+        !o.status.apiKeyStored &&
+        !o.status.doctor.apiCredential
+      ) {
+        return next({ toast: { text: 'Enter an API key, or choose Demo', tone: 'error' } });
+      }
+      return next(
+        { overlay: { ...o, model, apiKey: '', busy: true } },
+        {
+          kind: 'configureSetup',
+          body: {
+            mode: o.mode,
+            model,
+            ...(o.apiKey.trim() ? { apiKey: o.apiKey.trim() } : {}),
+            ...(o.mode === 'demo' && o.forgetApiKey ? { forgetApiKey: true } : {}),
+          },
+        },
+      );
+    };
+    if (key.ctrl && input === 's') return save();
+    if (key.tab) return advance();
+    if (key.return) return o.field === 'save' ? save() : advance();
+    if (o.field === 'mode') {
+      if (input === 'x' && o.mode === 'demo') {
+        return next({ overlay: { ...o, forgetApiKey: !o.forgetApiKey } });
+      }
+      const modes = ['api', 'cli', 'demo'] as const;
+      let mode = o.mode;
+      if (input === '1' || input === '2' || input === '3')
+        mode = modes[Number(input) - 1] ?? o.mode;
+      if (key.downArrow || key.rightArrow || input === 'j')
+        mode = modes[(modes.indexOf(o.mode) + 1) % modes.length] ?? o.mode;
+      if (key.upArrow || key.leftArrow || input === 'k')
+        mode = modes[(modes.indexOf(o.mode) + modes.length - 1) % modes.length] ?? o.mode;
+      return next({
+        overlay: {
+          ...o,
+          mode,
+          apiKey: mode !== o.mode ? '' : o.apiKey,
+          forgetApiKey: mode === o.mode && o.forgetApiKey === true,
+        },
+      });
+    }
+    if (o.field === 'model' || o.field === 'apiKey') {
+      const field = o.field;
+      const value = o[field];
+      if (key.backspace || key.delete)
+        return next({ overlay: { ...o, [field]: value.slice(0, -1) } });
+      if (key.ctrl && input === 'u') return next({ overlay: { ...o, [field]: '' } });
+      if (input && !key.ctrl) {
+        const clean = input.replace(/[^\x20-\x7e]/g, '');
+        const limit = field === 'apiKey' ? 4096 : 200;
+        return next({ overlay: { ...o, [field]: (value + clean).slice(0, limit) } });
+      }
+    }
+    return { ui };
+  }
   if (o?.kind === 'help') {
     if (input === '?' || input === 'q' || key.escape) return next({ overlay: o.back ?? null });
     if (input === 'j' || key.downArrow)
@@ -579,6 +685,24 @@ export function onKey(ui: Ui, data: Data, input: string, key: KeyInfo): KeyResul
   if (input === 'q' || (key.ctrl && input === 'c')) return next({}, { kind: 'quit' });
   if (input === '?') return next({ overlay: { kind: 'help', scroll: 0 } });
   if (input === 'R') return next({}, { kind: 'refresh' });
+  if (input === 'O') {
+    return next(
+      {
+        overlay: {
+          kind: 'setup',
+          mode:
+            data.doctor?.driver === 'mock' ? 'demo' : data.doctor?.driver === 'cli' ? 'cli' : 'api',
+          model:
+            data.doctor?.driver === 'mock' ? 'sonnet' : (data.doctor?.models.default ?? 'sonnet'),
+          apiKey: '',
+          field: 'mode',
+          busy: true,
+          status: null,
+        },
+      },
+      { kind: 'loadSetup' },
+    );
+  }
   if (input === 'M') return next({}, { kind: 'mouse', on: !ui.mouse });
   if (key.tab) {
     const i = PANES.indexOf(ui.focus);
@@ -793,6 +917,7 @@ export function onMouse(ui: Ui, data: Data, ev: MouseEvent, layout: ScreenLayout
   const typing =
     o?.kind === 'confirm' ||
     o?.kind === 'deny' ||
+    o?.kind === 'setup' ||
     o?.kind === 'memoryEdit' ||
     (o?.kind === 'memory' && o.search !== null);
   if (typing) return { ui };
@@ -928,6 +1053,7 @@ export const HELP: readonly { keys: string; does: string }[] = [
   { keys: 'A (in the card)', does: 'approve and always allow this tool for the Bot (7 days)' },
   { keys: 'd', does: 'deny, with a reason the Bot will see' },
   { keys: 'i', does: 'integrations: plugins and inbound triggers' },
+  { keys: 'O', does: 'set up an engine, credentials and the default model' },
   { keys: 'Enter  e (integrations)', does: 'open a plugin / enable or disable it (asks first)' },
   { keys: 'K', does: 'global kill switch (asks first; only y confirms)' },
   { keys: 'R', does: 'refresh' },
@@ -947,6 +1073,7 @@ export const PAUSED_RUN_KEYS = 'u resumes · s stops';
 
 /** Terminal commands the help overlay lists after the keys (they are not keys). */
 export const CLI_HELP: readonly { command: string; does: string }[] = [
+  { command: 'orbit setup', does: 'guided engine setup (API key, existing login or demo)' },
   { command: 'orbit shell <bot>', does: "take over the Bot's workspace" },
   { command: 'orbit approve <id> --edit …', does: 'edit a call, then approve it' },
   { command: 'orbit tui --mouse', does: 'start with the mouse on' },

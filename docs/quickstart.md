@@ -19,7 +19,8 @@ own, local, single-user** use; anything shared needs an API key.
 
 ```sh
 npm install --global orbit-bots   # Node.js 22.13 or newer
-orbit doctor                      # what Orbit found, which engine it will use, what is missing
+orbit setup                       # choose an engine, connect credentials, save the setup
+orbit doctor                      # inspect the active engine and what is missing
 ```
 
 `orbit` starts the daemon (`orbitd`) in the background the first time you need
@@ -29,6 +30,32 @@ manages it.
 
 From a checkout instead: `pnpm install`, then use `pnpm orbit …` wherever this
 page says `orbit …` (and `pnpm --filter @orbit/app build` once for the App).
+
+## Guided setup
+
+Open `orbit app` for the welcome flow, or **Settings → Engine** to change an
+existing setup. Choose an Anthropic API key, a credential-free demo, or an
+existing local Claude Code login, then choose the model and save. The App
+explains the next step and checks the credentials Orbit can detect; saving
+does not make a paid model call or prove that an API key is valid.
+
+The terminal offers the same flow through `orbit setup`, or press **O** in
+the full-screen TUI. An API key entered during setup is kept in Orbit's
+encrypted vault. The engine selection and model survive a daemon restart.
+The change applies while Orbit is idle, without signing the browser out.
+Returning to the demo normally keeps your saved key for later. To remove it,
+choose **Remove saved key and use demo** in setup, or run
+`orbit setup --mode demo --forget-api-key`.
+
+For an explicit first model test, create a fresh Bot and ask it to reply in
+one sentence without using tools. Real engines use your provider's usage
+and billing; the demo uses recorded replies. Existing Bot conversations
+keep their history, so use a new Bot when switching from recorded runs to
+a real engine.
+
+If environment variables or a hosted deployment manage this installation,
+setup explains which administrator setting must change. The manual paths
+below remain available for those deployments.
 
 ## 0. Demo mode (no credentials)
 

@@ -171,6 +171,12 @@ export interface TriagePathDeps {
  */
 export class TriagePath {
   private chain: Promise<unknown> = Promise.resolve();
+  private pending = 0;
+
+  /** Includes queued calls, so an engine cannot be replaced beneath a triage call. */
+  get busy(): boolean {
+    return this.pending > 0;
+  }
 
   constructor(private readonly deps: TriagePathDeps) {}
 
@@ -198,6 +204,7 @@ export class TriagePath {
   }
 
   call(req: TriageRequest): Promise<TriageResult> {
+    this.pending += 1;
     const run = async (): Promise<TriageResult> => {
       this.check();
       const engine = await this.deps.engine();
@@ -220,7 +227,9 @@ export class TriagePath {
         throw err;
       }
     };
-    const next = this.chain.then(run, run);
+    const next = this.chain.then(run, run).finally(() => {
+      this.pending -= 1;
+    });
     this.chain = next.catch(() => undefined);
     return next;
   }

@@ -380,6 +380,32 @@ export const DoctorReport = z.object({
 });
 export type DoctorReport = z.infer<typeof DoctorReport>;
 
+/** Owner-only engine setup; never contains credential values. */
+export const SetupState = z.object({
+  doctor: DoctorReport,
+  apiKeyStored: z.boolean(),
+  canConfigure: z.boolean(),
+  reason: z.string().nullable(),
+});
+export type SetupState = z.infer<typeof SetupState>;
+
+export const ConfigureSetupBody = z.object({
+  mode: z.enum(['demo', 'api', 'cli']),
+  model: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/, 'Enter a model alias or model ID')
+    .refine((v) => !v.startsWith('sk-ant-'), 'Enter a model alias, not an API key')
+    .default('sonnet'),
+  apiKey: z
+    .string()
+    .max(16 * 1024)
+    .optional(),
+  /** Remove the encrypted setup key and return to demo mode. */
+  forgetApiKey: z.boolean().default(false),
+});
+export type ConfigureSetupBody = z.infer<typeof ConfigureSetupBody>;
+
 export const RunTree = z.object({
   /** The top-level Run of the delegation tree. */
   root: z.string(),
@@ -785,6 +811,23 @@ export const routes = {
     summary: 'Driver, auth method, compliance, models and sandbox support',
     tag: 'daemon',
     response: DoctorReport,
+  },
+  getSetup: {
+    method: 'GET',
+    path: '/v1/setup',
+    summary: 'Engine setup readiness and saved credential availability (never values)',
+    tag: 'daemon',
+    role: 'owner',
+    response: SetupState,
+  },
+  configureSetup: {
+    method: 'POST',
+    path: '/v1/setup',
+    summary: 'Save and apply local engine setup while Orbit is idle',
+    tag: 'daemon',
+    role: 'owner',
+    body: ConfigureSetupBody,
+    response: SetupState,
   },
   stopDaemon: {
     method: 'POST',

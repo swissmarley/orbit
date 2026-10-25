@@ -16,6 +16,7 @@ import { ZodError, z } from 'zod';
 import {
   API_VERSION,
   CSRF_HEADER,
+  ConfigureSetupBody,
   type ErrorBody,
   OIDC_CALLBACK_PATH,
   OIDC_LOGIN_PATH,
@@ -584,6 +585,8 @@ export function createApp(opts: AppOptions): Hono {
       publicUrl: hosted?.publicUrl ?? null,
     }),
     doctor: () => service.doctor(),
+    getSetup: () => service.getSetup(),
+    configureSetup: ({ body }) => service.configureSetup(ConfigureSetupBody.parse(body)),
     stopDaemon: () => {
       // Answer first, then stop.
       setTimeout(() => opts.onStop?.(), 10).unref();

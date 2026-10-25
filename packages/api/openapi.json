@@ -1053,6 +1053,1912 @@
         "x-orbit-role": "viewer"
       }
     },
+    "/v1/setup": {
+      "get": {
+        "operationId": "getSetup",
+        "summary": "Engine setup readiness and saved credential availability (never values)",
+        "tags": [
+          "daemon"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "doctor": {
+                      "type": "object",
+                      "properties": {
+                        "ok": {
+                          "type": "boolean"
+                        },
+                        "driver": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "sdk",
+                                "cli",
+                                "mock"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "driverSource": {
+                          "type": "string",
+                          "enum": [
+                            "forced",
+                            "auto"
+                          ]
+                        },
+                        "authMethod": {
+                          "type": "string",
+                          "enum": [
+                            "api_key",
+                            "api_key_helper",
+                            "bedrock",
+                            "vertex",
+                            "subscription",
+                            "claude_cli_other",
+                            "mock",
+                            "none"
+                          ]
+                        },
+                        "authLabel": {
+                          "type": "string"
+                        },
+                        "cli": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "path": {
+                                  "type": "string"
+                                },
+                                "version": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "loggedIn": {
+                                  "type": "boolean"
+                                },
+                                "authMethod": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "apiProvider": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "error": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "path",
+                                "version",
+                                "loggedIn",
+                                "authMethod",
+                                "apiProvider",
+                                "error"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "apiCredential": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "api_key",
+                                "api_key_helper",
+                                "bedrock",
+                                "vertex"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "engineKey": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "delivery": {
+                                  "type": "string",
+                                  "enum": [
+                                    "proxied",
+                                    "in_engine"
+                                  ]
+                                },
+                                "subprocessScrub": {
+                                  "type": [
+                                    "boolean",
+                                    "null"
+                                  ]
+                                },
+                                "detail": {
+                                  "type": "string"
+                                },
+                                "proxy": {
+                                  "anyOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "port": {
+                                          "anyOf": [
+                                            {
+                                              "type": "integer",
+                                              "minimum": -9007199254740991,
+                                              "maximum": 9007199254740991
+                                            },
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        },
+                                        "activeSegments": {
+                                          "type": "integer",
+                                          "minimum": -9007199254740991,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "api": {
+                                          "type": "object",
+                                          "properties": {
+                                            "forwarded": {
+                                              "type": "integer",
+                                              "minimum": -9007199254740991,
+                                              "maximum": 9007199254740991
+                                            },
+                                            "refused": {
+                                              "type": "integer",
+                                              "minimum": -9007199254740991,
+                                              "maximum": 9007199254740991
+                                            },
+                                            "failed": {
+                                              "type": "integer",
+                                              "minimum": -9007199254740991,
+                                              "maximum": 9007199254740991
+                                            },
+                                            "recent": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "at": {
+                                                    "type": "string"
+                                                  },
+                                                  "target": {
+                                                    "type": "string"
+                                                  },
+                                                  "reason": {
+                                                    "type": "string"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "at",
+                                                  "target",
+                                                  "reason"
+                                                ],
+                                                "additionalProperties": false
+                                              }
+                                            }
+                                          },
+                                          "required": [
+                                            "forwarded",
+                                            "refused",
+                                            "failed",
+                                            "recent"
+                                          ],
+                                          "additionalProperties": false
+                                        }
+                                      },
+                                      "required": [
+                                        "port",
+                                        "activeSegments",
+                                        "api"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "delivery",
+                                "subprocessScrub",
+                                "detail",
+                                "proxy"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "compliance": {
+                          "type": "object",
+                          "properties": {
+                            "allowed": {
+                              "type": "boolean"
+                            },
+                            "violations": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "message": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "allowed",
+                            "violations",
+                            "message"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "warnings": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "message": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "code",
+                              "message"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "refusal": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "code": {
+                                  "type": "string",
+                                  "enum": [
+                                    "compliance_refused",
+                                    "driver_unavailable"
+                                  ]
+                                },
+                                "message": {
+                                  "type": "string"
+                                },
+                                "hint": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "message",
+                                "hint"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "onboarding": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "reason": {
+                                  "type": "string"
+                                },
+                                "steps": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "reason",
+                                "steps"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "mode": {
+                          "type": "string"
+                        },
+                        "api": {
+                          "type": "object",
+                          "properties": {
+                            "host": {
+                              "type": "string"
+                            },
+                            "port": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "host",
+                            "port"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "humanPrincipals": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "principals": {
+                          "type": "object",
+                          "properties": {
+                            "owner": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "operator": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "viewer": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "owner",
+                            "operator",
+                            "viewer"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "hosted": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "publicUrl": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "issuer": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "tls": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "publicUrl",
+                                "issuer",
+                                "tls"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "listen": {
+                          "type": "object",
+                          "properties": {
+                            "tls": {
+                              "type": "boolean"
+                            },
+                            "container": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "tls",
+                            "container"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "models": {
+                          "type": "object",
+                          "properties": {
+                            "default": {
+                              "type": "string"
+                            },
+                            "triage": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "default",
+                            "triage"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "home": {
+                          "type": "string"
+                        },
+                        "node": {
+                          "type": "string"
+                        },
+                        "platform": {
+                          "type": "string"
+                        },
+                        "sandbox": {
+                          "type": "object",
+                          "properties": {
+                            "docker": {
+                              "type": "object",
+                              "properties": {
+                                "available": {
+                                  "type": "boolean"
+                                },
+                                "version": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "error": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "available",
+                                "version",
+                                "error"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "engineSandbox": {
+                              "type": "object",
+                              "properties": {
+                                "available": {
+                                  "type": "boolean"
+                                },
+                                "missing": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "platform": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "available",
+                                "missing",
+                                "platform"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "dockerSandbox": {
+                              "type": "object",
+                              "properties": {
+                                "ready": {
+                                  "type": "boolean"
+                                },
+                                "keyProxy": {
+                                  "type": "string",
+                                  "enum": [
+                                    "ready",
+                                    "no_api_key",
+                                    "unsupported_provider",
+                                    "subscription"
+                                  ]
+                                },
+                                "detail": {
+                                  "type": "string"
+                                },
+                                "images": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "image": {
+                                        "type": "string"
+                                      },
+                                      "present": {
+                                        "type": "boolean"
+                                      },
+                                      "socat": {
+                                        "type": [
+                                          "boolean",
+                                          "null"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "image",
+                                      "present",
+                                      "socat"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "proxies": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "botId": {
+                                        "type": "string"
+                                      },
+                                      "network": {
+                                        "type": "string",
+                                        "enum": [
+                                          "none",
+                                          "allowlist"
+                                        ]
+                                      },
+                                      "activeRuns": {
+                                        "type": "integer",
+                                        "minimum": -9007199254740991,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "api": {
+                                        "type": "object",
+                                        "properties": {
+                                          "forwarded": {
+                                            "type": "integer",
+                                            "minimum": -9007199254740991,
+                                            "maximum": 9007199254740991
+                                          },
+                                          "refused": {
+                                            "type": "integer",
+                                            "minimum": -9007199254740991,
+                                            "maximum": 9007199254740991
+                                          },
+                                          "failed": {
+                                            "type": "integer",
+                                            "minimum": -9007199254740991,
+                                            "maximum": 9007199254740991
+                                          },
+                                          "recent": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "object",
+                                              "properties": {
+                                                "at": {
+                                                  "type": "string"
+                                                },
+                                                "target": {
+                                                  "type": "string"
+                                                },
+                                                "reason": {
+                                                  "type": "string"
+                                                }
+                                              },
+                                              "required": [
+                                                "at",
+                                                "target",
+                                                "reason"
+                                              ],
+                                              "additionalProperties": false
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "forwarded",
+                                          "refused",
+                                          "failed",
+                                          "recent"
+                                        ],
+                                        "additionalProperties": false
+                                      },
+                                      "egress": {
+                                        "anyOf": [
+                                          {
+                                            "type": "object",
+                                            "properties": {
+                                              "forwarded": {
+                                                "type": "integer",
+                                                "minimum": -9007199254740991,
+                                                "maximum": 9007199254740991
+                                              },
+                                              "refused": {
+                                                "type": "integer",
+                                                "minimum": -9007199254740991,
+                                                "maximum": 9007199254740991
+                                              },
+                                              "failed": {
+                                                "type": "integer",
+                                                "minimum": -9007199254740991,
+                                                "maximum": 9007199254740991
+                                              },
+                                              "recent": {
+                                                "type": "array",
+                                                "items": {
+                                                  "type": "object",
+                                                  "properties": {
+                                                    "at": {
+                                                      "type": "string"
+                                                    },
+                                                    "target": {
+                                                      "type": "string"
+                                                    },
+                                                    "reason": {
+                                                      "type": "string"
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "at",
+                                                    "target",
+                                                    "reason"
+                                                  ],
+                                                  "additionalProperties": false
+                                                }
+                                              }
+                                            },
+                                            "required": [
+                                              "forwarded",
+                                              "refused",
+                                              "failed",
+                                              "recent"
+                                            ],
+                                            "additionalProperties": false
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      },
+                                      "invalidAllowlistEntries": {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string"
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "botId",
+                                      "network",
+                                      "activeRuns",
+                                      "api",
+                                      "egress",
+                                      "invalidAllowlistEntries"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                }
+                              },
+                              "required": [
+                                "ready",
+                                "keyProxy",
+                                "detail",
+                                "images",
+                                "proxies"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "plugins": {
+                              "type": "object",
+                              "properties": {
+                                "mode": {
+                                  "type": "string",
+                                  "enum": [
+                                    "auto",
+                                    "required",
+                                    "off"
+                                  ]
+                                },
+                                "available": {
+                                  "type": "boolean"
+                                },
+                                "engine": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "bwrap",
+                                        "sandbox-exec"
+                                      ]
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "reason": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "notSandboxed": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "id": {
+                                        "type": "string"
+                                      },
+                                      "state": {
+                                        "type": "string",
+                                        "enum": [
+                                          "sandboxed",
+                                          "unsandboxed",
+                                          "refused",
+                                          "off",
+                                          "remote"
+                                        ]
+                                      },
+                                      "reason": {
+                                        "type": [
+                                          "string",
+                                          "null"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "id",
+                                      "state",
+                                      "reason"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                }
+                              },
+                              "required": [
+                                "mode",
+                                "available",
+                                "engine",
+                                "reason",
+                                "notSandboxed"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "docker",
+                            "engineSandbox",
+                            "dockerSandbox",
+                            "plugins"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "daemon": {
+                          "type": "object",
+                          "properties": {
+                            "pid": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "startedAt": {
+                              "type": "string"
+                            },
+                            "url": {
+                              "type": "string"
+                            },
+                            "concurrency": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "pid",
+                            "startedAt",
+                            "url",
+                            "concurrency"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "ok",
+                        "driver",
+                        "driverSource",
+                        "authMethod",
+                        "authLabel",
+                        "cli",
+                        "apiCredential",
+                        "engineKey",
+                        "compliance",
+                        "warnings",
+                        "refusal",
+                        "onboarding",
+                        "mode",
+                        "api",
+                        "humanPrincipals",
+                        "principals",
+                        "hosted",
+                        "listen",
+                        "models",
+                        "home",
+                        "node",
+                        "platform",
+                        "sandbox",
+                        "daemon"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "apiKeyStored": {
+                      "type": "boolean"
+                    },
+                    "canConfigure": {
+                      "type": "boolean"
+                    },
+                    "reason": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "doctor",
+                    "apiKeyStored",
+                    "canConfigure",
+                    "reason"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "hint": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "hint"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "x-orbit-role": "owner"
+      },
+      "post": {
+        "operationId": "configureSetup",
+        "summary": "Save and apply local engine setup while Orbit is idle",
+        "tags": [
+          "daemon"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "doctor": {
+                      "type": "object",
+                      "properties": {
+                        "ok": {
+                          "type": "boolean"
+                        },
+                        "driver": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "sdk",
+                                "cli",
+                                "mock"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "driverSource": {
+                          "type": "string",
+                          "enum": [
+                            "forced",
+                            "auto"
+                          ]
+                        },
+                        "authMethod": {
+                          "type": "string",
+                          "enum": [
+                            "api_key",
+                            "api_key_helper",
+                            "bedrock",
+                            "vertex",
+                            "subscription",
+                            "claude_cli_other",
+                            "mock",
+                            "none"
+                          ]
+                        },
+                        "authLabel": {
+                          "type": "string"
+                        },
+                        "cli": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "path": {
+                                  "type": "string"
+                                },
+                                "version": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "loggedIn": {
+                                  "type": "boolean"
+                                },
+                                "authMethod": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "apiProvider": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "error": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "path",
+                                "version",
+                                "loggedIn",
+                                "authMethod",
+                                "apiProvider",
+                                "error"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "apiCredential": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "api_key",
+                                "api_key_helper",
+                                "bedrock",
+                                "vertex"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "engineKey": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "delivery": {
+                                  "type": "string",
+                                  "enum": [
+                                    "proxied",
+                                    "in_engine"
+                                  ]
+                                },
+                                "subprocessScrub": {
+                                  "type": [
+                                    "boolean",
+                                    "null"
+                                  ]
+                                },
+                                "detail": {
+                                  "type": "string"
+                                },
+                                "proxy": {
+                                  "anyOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "port": {
+                                          "anyOf": [
+                                            {
+                                              "type": "integer",
+                                              "minimum": -9007199254740991,
+                                              "maximum": 9007199254740991
+                                            },
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        },
+                                        "activeSegments": {
+                                          "type": "integer",
+                                          "minimum": -9007199254740991,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "api": {
+                                          "type": "object",
+                                          "properties": {
+                                            "forwarded": {
+                                              "type": "integer",
+                                              "minimum": -9007199254740991,
+                                              "maximum": 9007199254740991
+                                            },
+                                            "refused": {
+                                              "type": "integer",
+                                              "minimum": -9007199254740991,
+                                              "maximum": 9007199254740991
+                                            },
+                                            "failed": {
+                                              "type": "integer",
+                                              "minimum": -9007199254740991,
+                                              "maximum": 9007199254740991
+                                            },
+                                            "recent": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "at": {
+                                                    "type": "string"
+                                                  },
+                                                  "target": {
+                                                    "type": "string"
+                                                  },
+                                                  "reason": {
+                                                    "type": "string"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "at",
+                                                  "target",
+                                                  "reason"
+                                                ],
+                                                "additionalProperties": false
+                                              }
+                                            }
+                                          },
+                                          "required": [
+                                            "forwarded",
+                                            "refused",
+                                            "failed",
+                                            "recent"
+                                          ],
+                                          "additionalProperties": false
+                                        }
+                                      },
+                                      "required": [
+                                        "port",
+                                        "activeSegments",
+                                        "api"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "delivery",
+                                "subprocessScrub",
+                                "detail",
+                                "proxy"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "compliance": {
+                          "type": "object",
+                          "properties": {
+                            "allowed": {
+                              "type": "boolean"
+                            },
+                            "violations": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "message": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "allowed",
+                            "violations",
+                            "message"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "warnings": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "message": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "code",
+                              "message"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "refusal": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "code": {
+                                  "type": "string",
+                                  "enum": [
+                                    "compliance_refused",
+                                    "driver_unavailable"
+                                  ]
+                                },
+                                "message": {
+                                  "type": "string"
+                                },
+                                "hint": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "message",
+                                "hint"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "onboarding": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "reason": {
+                                  "type": "string"
+                                },
+                                "steps": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "reason",
+                                "steps"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "mode": {
+                          "type": "string"
+                        },
+                        "api": {
+                          "type": "object",
+                          "properties": {
+                            "host": {
+                              "type": "string"
+                            },
+                            "port": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "host",
+                            "port"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "humanPrincipals": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "principals": {
+                          "type": "object",
+                          "properties": {
+                            "owner": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "operator": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "viewer": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "owner",
+                            "operator",
+                            "viewer"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "hosted": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "publicUrl": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "issuer": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "tls": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "publicUrl",
+                                "issuer",
+                                "tls"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "listen": {
+                          "type": "object",
+                          "properties": {
+                            "tls": {
+                              "type": "boolean"
+                            },
+                            "container": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "tls",
+                            "container"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "models": {
+                          "type": "object",
+                          "properties": {
+                            "default": {
+                              "type": "string"
+                            },
+                            "triage": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "default",
+                            "triage"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "home": {
+                          "type": "string"
+                        },
+                        "node": {
+                          "type": "string"
+                        },
+                        "platform": {
+                          "type": "string"
+                        },
+                        "sandbox": {
+                          "type": "object",
+                          "properties": {
+                            "docker": {
+                              "type": "object",
+                              "properties": {
+                                "available": {
+                                  "type": "boolean"
+                                },
+                                "version": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "error": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "available",
+                                "version",
+                                "error"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "engineSandbox": {
+                              "type": "object",
+                              "properties": {
+                                "available": {
+                                  "type": "boolean"
+                                },
+                                "missing": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "platform": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "available",
+                                "missing",
+                                "platform"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "dockerSandbox": {
+                              "type": "object",
+                              "properties": {
+                                "ready": {
+                                  "type": "boolean"
+                                },
+                                "keyProxy": {
+                                  "type": "string",
+                                  "enum": [
+                                    "ready",
+                                    "no_api_key",
+                                    "unsupported_provider",
+                                    "subscription"
+                                  ]
+                                },
+                                "detail": {
+                                  "type": "string"
+                                },
+                                "images": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "image": {
+                                        "type": "string"
+                                      },
+                                      "present": {
+                                        "type": "boolean"
+                                      },
+                                      "socat": {
+                                        "type": [
+                                          "boolean",
+                                          "null"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "image",
+                                      "present",
+                                      "socat"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "proxies": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "botId": {
+                                        "type": "string"
+                                      },
+                                      "network": {
+                                        "type": "string",
+                                        "enum": [
+                                          "none",
+                                          "allowlist"
+                                        ]
+                                      },
+                                      "activeRuns": {
+                                        "type": "integer",
+                                        "minimum": -9007199254740991,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "api": {
+                                        "type": "object",
+                                        "properties": {
+                                          "forwarded": {
+                                            "type": "integer",
+                                            "minimum": -9007199254740991,
+                                            "maximum": 9007199254740991
+                                          },
+                                          "refused": {
+                                            "type": "integer",
+                                            "minimum": -9007199254740991,
+                                            "maximum": 9007199254740991
+                                          },
+                                          "failed": {
+                                            "type": "integer",
+                                            "minimum": -9007199254740991,
+                                            "maximum": 9007199254740991
+                                          },
+                                          "recent": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "object",
+                                              "properties": {
+                                                "at": {
+                                                  "type": "string"
+                                                },
+                                                "target": {
+                                                  "type": "string"
+                                                },
+                                                "reason": {
+                                                  "type": "string"
+                                                }
+                                              },
+                                              "required": [
+                                                "at",
+                                                "target",
+                                                "reason"
+                                              ],
+                                              "additionalProperties": false
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "forwarded",
+                                          "refused",
+                                          "failed",
+                                          "recent"
+                                        ],
+                                        "additionalProperties": false
+                                      },
+                                      "egress": {
+                                        "anyOf": [
+                                          {
+                                            "type": "object",
+                                            "properties": {
+                                              "forwarded": {
+                                                "type": "integer",
+                                                "minimum": -9007199254740991,
+                                                "maximum": 9007199254740991
+                                              },
+                                              "refused": {
+                                                "type": "integer",
+                                                "minimum": -9007199254740991,
+                                                "maximum": 9007199254740991
+                                              },
+                                              "failed": {
+                                                "type": "integer",
+                                                "minimum": -9007199254740991,
+                                                "maximum": 9007199254740991
+                                              },
+                                              "recent": {
+                                                "type": "array",
+                                                "items": {
+                                                  "type": "object",
+                                                  "properties": {
+                                                    "at": {
+                                                      "type": "string"
+                                                    },
+                                                    "target": {
+                                                      "type": "string"
+                                                    },
+                                                    "reason": {
+                                                      "type": "string"
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "at",
+                                                    "target",
+                                                    "reason"
+                                                  ],
+                                                  "additionalProperties": false
+                                                }
+                                              }
+                                            },
+                                            "required": [
+                                              "forwarded",
+                                              "refused",
+                                              "failed",
+                                              "recent"
+                                            ],
+                                            "additionalProperties": false
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      },
+                                      "invalidAllowlistEntries": {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string"
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "botId",
+                                      "network",
+                                      "activeRuns",
+                                      "api",
+                                      "egress",
+                                      "invalidAllowlistEntries"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                }
+                              },
+                              "required": [
+                                "ready",
+                                "keyProxy",
+                                "detail",
+                                "images",
+                                "proxies"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "plugins": {
+                              "type": "object",
+                              "properties": {
+                                "mode": {
+                                  "type": "string",
+                                  "enum": [
+                                    "auto",
+                                    "required",
+                                    "off"
+                                  ]
+                                },
+                                "available": {
+                                  "type": "boolean"
+                                },
+                                "engine": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "bwrap",
+                                        "sandbox-exec"
+                                      ]
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "reason": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "notSandboxed": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "id": {
+                                        "type": "string"
+                                      },
+                                      "state": {
+                                        "type": "string",
+                                        "enum": [
+                                          "sandboxed",
+                                          "unsandboxed",
+                                          "refused",
+                                          "off",
+                                          "remote"
+                                        ]
+                                      },
+                                      "reason": {
+                                        "type": [
+                                          "string",
+                                          "null"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "id",
+                                      "state",
+                                      "reason"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                }
+                              },
+                              "required": [
+                                "mode",
+                                "available",
+                                "engine",
+                                "reason",
+                                "notSandboxed"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "docker",
+                            "engineSandbox",
+                            "dockerSandbox",
+                            "plugins"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "daemon": {
+                          "type": "object",
+                          "properties": {
+                            "pid": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "startedAt": {
+                              "type": "string"
+                            },
+                            "url": {
+                              "type": "string"
+                            },
+                            "concurrency": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "pid",
+                            "startedAt",
+                            "url",
+                            "concurrency"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "ok",
+                        "driver",
+                        "driverSource",
+                        "authMethod",
+                        "authLabel",
+                        "cli",
+                        "apiCredential",
+                        "engineKey",
+                        "compliance",
+                        "warnings",
+                        "refusal",
+                        "onboarding",
+                        "mode",
+                        "api",
+                        "humanPrincipals",
+                        "principals",
+                        "hosted",
+                        "listen",
+                        "models",
+                        "home",
+                        "node",
+                        "platform",
+                        "sandbox",
+                        "daemon"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "apiKeyStored": {
+                      "type": "boolean"
+                    },
+                    "canConfigure": {
+                      "type": "boolean"
+                    },
+                    "reason": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "doctor",
+                    "apiKeyStored",
+                    "canConfigure",
+                    "reason"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "hint": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "hint"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "x-orbit-role": "owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "demo",
+                      "api",
+                      "cli"
+                    ]
+                  },
+                  "model": {
+                    "default": "sonnet",
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
+                  },
+                  "apiKey": {
+                    "type": "string",
+                    "maxLength": 16384
+                  },
+                  "forgetApiKey": {
+                    "default": false,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "mode"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/daemon/stop": {
       "post": {
         "operationId": "stopDaemon",

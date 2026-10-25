@@ -4,6 +4,7 @@ import { openApp } from './commands/app';
 import { botCreate, botList } from './commands/bot';
 import { doctor } from './commands/doctor';
 import { loginHelp } from './commands/login-help';
+import { setup } from './commands/setup';
 import { approvalShow, approvalsList, approve, deny } from './commands/approvals';
 import { auditCheckpoint, auditExport, auditList, auditVerify } from './commands/audit';
 import { killSwitch, pauseBot, pauseRun, stopRun } from './commands/controls';
@@ -91,6 +92,16 @@ export async function main(argv: string[], io: Io): Promise<number> {
     .description('Show the active driver, auth method, compliance status and configuration')
     .option('--json', 'machine-readable output')
     .action((o: { json?: boolean }) => set(doctor(context(), o)));
+
+  program
+    .command('setup')
+    .description('Guided engine setup: credentials, default model and readiness')
+    .option('--mode <mode>', 'api, cli (existing Claude Code login), or demo')
+    .option('--model <model>', 'default model alias or ID (default: sonnet)')
+    .option('--api-key-stdin', 'read an Anthropic API key from stdin; never put it in an argument')
+    .option('--forget-api-key', 'remove the saved API key when choosing --mode demo')
+    .option('--json', 'machine-readable setup status or saved configuration')
+    .action((o: Parameters<typeof setup>[1]) => set(setup(context(), o)));
 
   program
     .command('login-help')

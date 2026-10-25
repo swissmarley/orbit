@@ -16,6 +16,7 @@ export type TuiClient = Pick<
   | 'memory'
   | 'plugins'
   | 'triggers'
+  | 'call'
 >;
 
 /** Events that change a memory browser or a delegation tree. */
@@ -96,6 +97,11 @@ export class Feed {
     this.set({ doctor });
     await this.refresh();
     void this.follow();
+  }
+
+  async refreshDoctor(): Promise<void> {
+    const doctor = await this.client.doctor().catch(() => null);
+    this.set({ doctor });
   }
 
   close(): void {

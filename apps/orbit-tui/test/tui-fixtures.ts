@@ -273,9 +273,37 @@ export function fakeClient(
 ) {
   const live: RunEvent[] = [];
   let wake: (() => void) | null = null;
+  let setupDoctor = {
+    driver: 'mock',
+    authLabel: 'Demo mode',
+    warnings: [],
+    ok: true,
+    models: { default: 'sonnet', triage: 'haiku' },
+    apiCredential: null as string | null,
+  };
+  let apiKeyStored = false;
   const client = {
-    doctor: vi.fn(() =>
-      Promise.resolve({ driver: 'mock', authLabel: 'Demo mode', warnings: [] } as never),
+    doctor: vi.fn(() => Promise.resolve(setupDoctor as never)),
+    call: vi.fn(
+      (name: string, args?: { body?: { mode: string; model: string; apiKey?: string } }) => {
+        if (name === 'configureSetup' && args?.body) {
+          const body = args.body;
+          apiKeyStored ||= Boolean(body.apiKey);
+          setupDoctor = {
+            ...setupDoctor,
+            driver: body.mode === 'demo' ? 'mock' : body.mode === 'api' ? 'sdk' : 'cli',
+            authLabel: body.mode === 'demo' ? 'Demo mode' : 'Anthropic API key',
+            models: { default: body.model, triage: 'haiku' },
+            apiCredential: body.mode === 'api' ? 'api_key' : null,
+          };
+        }
+        return Promise.resolve({
+          doctor: setupDoctor,
+          apiKeyStored,
+          canConfigure: true,
+          reason: null,
+        });
+      },
     ),
     bots: {
       list: vi.fn(() => Promise.resolve(d.bots)),

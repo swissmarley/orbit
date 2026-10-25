@@ -19,10 +19,14 @@ a chat assistant; it only comes to you for **approvals**, **blockers** and
 
 ```sh
 npm install --global orbit-bots
-ORBIT_DRIVER=mock orbit bot create --template inbox-triage   # demo mode: no credentials
-ORBIT_DRIVER=mock orbit run inbox-triage                     # drafts replies, waits for your approval to send
-orbit app                                                    # open the App
+orbit setup   # connect an API key, use a local Claude Code login, or choose the free demo
+orbit app     # guided welcome and your first Bot
 ```
+
+You can also set up the engine in the App's welcome flow or **Settings →
+Engine**, or press **O** in the terminal UI. Setup saves your choice for
+future restarts and keeps API keys in Orbit's encrypted vault. It does not
+make a paid model request.
 
 Then read the **[Quickstart](docs/quickstart.md)**: demo mode, your own Claude
 login, an API key, Docker Compose and hosted mode.

@@ -128,6 +128,6 @@ describe('Settings', () => {
   it('shows the engine: driver, auth and models', async () => {
     m = mountApp('/settings?tab=engine');
     expect(await screen.findByText('Auth & driver')).toBeTruthy();
-    expect(screen.getByText(/set by ORBIT_DRIVER|chosen automatically/)).toBeTruthy();
+    expect(screen.getByText(/selected in configuration|chosen automatically/)).toBeTruthy();
   });
 });
