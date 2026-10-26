@@ -86,7 +86,9 @@ jobs:
         if: env.PUBLISH == 'true' && env.HAS_NPM_TOKEN == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish release/orbit-bots-*.tgz --provenance --access public
+        # A slash path without ./ is a GitHub shorthand (user/repo). npm then
+        # runs `git ls-remote` instead of publishing the local tarball.
+        run: npm publish ./release/orbit-bots-*.tgz --provenance --access public
       - name: No NPM_TOKEN secret
         if: env.PUBLISH == 'true' && env.HAS_NPM_TOKEN != 'true'
         run: echo "::warning::NPM_TOKEN is not set; orbit-bots was not published to npm."
