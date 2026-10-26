@@ -16,8 +16,6 @@ test-results/
 .orbit/
 # scratch folders of the plugin sandbox tests (removed after each run)
 .sandbox-test-*/
-# Agent worktrees (Claude Code)
-.claude/worktrees/
 # orbit-bots build (copied from the root by packaging/npm/scripts/build.ts)
 packaging/npm/LICENSE
 # Tauri

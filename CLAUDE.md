@@ -311,10 +311,3 @@ Plugins depend on `@orbit/plugin-kit` only (they run as separate processes).
   (fake client); update snapshots with `npx vitest run -u --project @orbit/tui`.
 - Tests first for policy, budgets, replay, AuthResolver, driver contract.
 - New guards get a positive-control test that proves they fire.
-
-## Project agents and skills
-
-- `.claude/agents/safety-reviewer.md`: audit at every milestone gate.
-- `.claude/agents/test-engineer.md`: tests-first for invariants.
-- `.claude/agents/ui-polish-reviewer.md`: screenshot/a11y review (M4+).
-- `.claude/skills/milestone-gate`: procedure to close a milestone.

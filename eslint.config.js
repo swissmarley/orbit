@@ -90,7 +90,6 @@ export default tseslint.config(
       '**/playwright-report/**',
       '**/test-results/**',
       '**/src-tauri/target/**',
-      '.claude/worktrees/**',
       '**/*.d.ts',
     ],
   },
