@@ -18,7 +18,7 @@ export default defineConfig({
         },
       },
     ],
-    exclude: ['**/node_modules/**', '**/dist/**', '**/*.live.test.ts', '.claude/worktrees/**'],
+    exclude: ['**/node_modules/**', '**/dist/**', '**/*.live.test.ts'],
     passWithNoTests: false,
   },
 });

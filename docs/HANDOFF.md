@@ -27,7 +27,6 @@ set -o pipefail; pnpm typecheck | tail           # never pipe typecheck without 
 ```
 
 - Real-process tests and scripts set `ORBIT_PORT=0` (or a free port) and a scratch `ORBIT_HOME`; always stop daemons you start.
-- Agent worktrees live in `.claude/worktrees/` (ignored by git, Prettier, ESLint, Vitest and the security guard).
 
 ## What M8 added (details in PLAN §3 M8 and the ADRs)
 

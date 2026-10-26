@@ -233,15 +233,14 @@ allow (scoped rule + expiry). All decisions → audit log.
 ## 3. Milestones
 
 Each milestone ends green (format, lint, typecheck, tests), committed with
-Conventional Commits, audited by the `safety-reviewer` subagent against the
-SAFETY and AUTHENTICATION requirements, and reported (shipped / how to run /
-verified / next).
+Conventional Commits, audited against the SAFETY and AUTHENTICATION
+requirements, and reported (shipped / how to run / verified / next).
 
 ### M0 — Scaffold ✅
 
 pnpm workspace, TS strict base config, ESLint (flat) + Prettier, Vitest
 projects, GitHub Actions CI (no credentials), package skeletons, CLAUDE.md,
-PLAN.md, ADRs, `.claude/agents` + `.claude/skills`.
+PLAN.md, ADRs.
 **Done when:** `pnpm check` (format+lint+typecheck+test) passes locally and in CI.
 
 ### M1 — Core + drivers + one Bot, one Run, minimal CLI ✅
